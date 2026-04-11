@@ -55,6 +55,12 @@ _TOOL_ACCESS_MODES: dict[str, ToolAccessMode] = {
     "list_verifications": ToolAccessMode.READ_ONLY,
     "list_tool_approvals": ToolAccessMode.READ_ONLY,
     "call_llm_api": ToolAccessMode.READ_ONLY,
+    "skill_view": ToolAccessMode.READ_ONLY,
+    "skill_list": ToolAccessMode.READ_ONLY,
+    "skill_evolution_report": ToolAccessMode.READ_ONLY,
+    "search_sessions": ToolAccessMode.READ_ONLY,
+    "get_insights": ToolAccessMode.READ_ONLY,
+    "get_trajectory_stats": ToolAccessMode.READ_ONLY,
     # Write tools
     "write_file": ToolAccessMode.WRITE,
     "append_file": ToolAccessMode.WRITE,
@@ -79,6 +85,9 @@ _TOOL_ACCESS_MODES: dict[str, ToolAccessMode] = {
     "send_private_cli": ToolAccessMode.WRITE,
     "enter_plan_mode": ToolAccessMode.WRITE,
     "exit_plan_mode": ToolAccessMode.WRITE,
+    "skill_manage": ToolAccessMode.WRITE,
+    "skill_evolution_apply": ToolAccessMode.WRITE,
+    "manage_personality": ToolAccessMode.WRITE,
 }
 
 

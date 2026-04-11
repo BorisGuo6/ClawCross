@@ -364,6 +364,8 @@ def build_skills_prompt(user_id: str) -> str:
         "When you complete complex tasks (5+ tool calls), fix tricky errors, or discover non-trivial workflows,",
         "consider creating a new skill with skill_manage(action='create').",
         "When using a skill and finding it outdated or wrong, patch it immediately with skill_manage(action='patch').",
+        "When repeated failures or fresh execution errors appear, run skill_evolution_report first, then skill_evolution_apply",
+        "to refresh the managed self-evolution block and persist the new failure learnings.",
         "",
     ]
     for skill in skills[:30]:  # Cap at 30 skills in prompt

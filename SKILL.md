@@ -14,6 +14,25 @@
 2. **Exception:** if the user already clearly asked to start in the same turn (e.g. “帮我启动 Clawcross”“run start”“执行 start”), you may run `start` / `start-foreground` without asking again.
 3. When Clawcross **is** started, copy the **local URL**, Magic link lines, and (if present) **remote** Tunnel URL from the terminal output into your reply — see [`AGENTS.md`](./AGENTS.md) Zero-Question Install Flow.
 
+### Self-Evolution Protocol
+
+This `SKILL.md` is now **self-evolving**. When you hit a real execution failure while operating this repo, do not just work around it silently. Capture the failure and refresh the managed self-evolution block in this document:
+
+```bash
+# Linux / macOS
+bash selfskill/scripts/run.sh evolve-skill --skill SKILL.md --command "pytest test/test_skill_evolution.py"
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File selfskill/scripts/run.ps1 evolve-skill --skill SKILL.md --command "pytest test/test_skill_evolution.py"
+```
+
+Rules:
+
+1. Run the command **only when there is a meaningful execution error** (failed test, startup failure, CLI/runtime error), or pass `--force` if you intentionally want to refresh the verified guidance after a successful command.
+2. The command writes a managed self-evolution block into this file and stores a report under `docs/self-evolution/`.
+3. After fixing the issue, re-run the narrowest verifier command; if it still fails, refresh the block again so the latest failure evidence is preserved.
+4. Prefer exact failing commands and stderr over vague summaries. This file should accumulate operational guardrails, not generic advice.
+
 ---
 
 ## Standard Install Flow
@@ -485,6 +504,12 @@ See [docs/repo-index.md](./docs/repo-index.md) and [docs/example_team.md](./docs
 
 ## Debug Guide
 
+When a startup/test/CLI command fails while following this guide, refresh the managed self-evolution block first:
+
+```bash
+bash selfskill/scripts/run.sh evolve-skill --skill SKILL.md --command "<failing command>"
+```
+
 ### Python 2 vs Python 3
 
 On macOS, the system `python` may point to **Python 2.7**. Clawcross requires **Python 3.11+**.
@@ -594,3 +619,85 @@ openclaw.cmd channels login --channel openclaw-weixin
 - [docs/openclaw-commands.md](./docs/openclaw-commands.md) — OpenClaw commands
 - [docs/tinyfish-monitor.md](./docs/tinyfish-monitor.md) — TinyFish monitor
 - [docs/ports.md](./docs/ports.md) — service map and ports
+
+<!-- clawcross:self-evolution:begin -->
+## Self-Evolution Loop
+
+This block is auto-maintained by ClawCross's lightweight EvoSkill adapter.
+Prefer `skill_evolution_report` / `skill_evolution_apply` or `selfskill/scripts/evolve_skill.py` over manual edits here.
+
+- Updated at: `2026-04-11T11:50:44.173193+00:00`
+- Heuristic candidate: `blended-structured-output-workspace-preflight`
+- Heuristic score: `0.707`
+
+### Trigger Summary
+
+Command exited with code 1. Command: python -m py_compile src/webot/skill_evolution.py selfskill/scripts/evolve_skill.py src/mcp_servers/skills.py src/webot/trajectory.py src/webot/skills.py src/core/agent.py src/core/streaming_tool_executor.py. Signals: structured-output, workspace-preflight. stderr carried the strongest failure evidence.
+
+### Latest Trigger Command
+
+`python -m py_compile src/webot/skill_evolution.py selfskill/scripts/evolve_skill.py src/mcp_servers/skills.py src/webot/trajectory.py src/webot/skills.py src/core/agent.py src/core/streaming_tool_executor.py`
+
+### Latest Error Excerpt
+
+```text
+File "src/webot/skill_evolution.py", line 69
+    _SIGNAL_LIBRARY: list[dict[str, Any]] = [
+                   ^
+SyntaxError: invalid syntax
+
+  File "selfskill/scripts/evolve_skill.py", line 26
+    def _parse_args() -> argparse.Namespace:
+                      ^
+SyntaxError: invalid syntax
+
+  File "src/mcp_servers/skills.py", line 31
+    async def skill_manage(
+        ^
+SyntaxError: invalid syntax
+
+  File "src/webot/trajectory.py", line 25
+    def _ensure_dir() -> Path:
+                      ^
+SyntaxError: invalid syntax
+
+  File "src/webot/skills.py", line 32
+    _DANGEROUS_PATTERNS: list[tuple[str, str]] = [
+                       ^
+SyntaxError: invalid syntax
+
+  File "src/core/agent.py", line 198
+    SESSION_FORCE_INJECTED_TOOLS: frozenset[str] = frozenset({
+                                ^
+SyntaxError: invalid syntax
+
+  File "src/core/streaming_tool_executor.py", line 33
+    _TOOL_ACCESS_MODES: dict[str, ToolAccessMode] = {
+                      ^
+SyntaxError: invalid syntax
+```
+
+### Operating Adjustments
+
+1. Start from the narrowest reproducible failure before broad retries.
+2. Record repo/cwd/entrypoint assumptions explicitly when failures mention paths or imports.
+3. End every fix attempt with an explicit verifier command and observed result.
+
+### Validation Loop
+
+1. Run the minimal reproducer first, then the broader regression command.
+2. Persist the command and result summary in the evolution report.
+
+### Recent Evidence
+
+- `2026-04-11T11:50:44.173193+00:00` `repo-skill` — File "src/webot/skill_evolution.py", line 69
+    _SIGNAL_LIBRARY: list[dict[str, Any]] = [
+                   ^
+SyntaxError: invalid syntax ...[truncated]
+
+### Candidate Frontier Snapshot
+
+- `blended-structured-output-workspace-preflight` score `0.707` — Blend the strongest recent failure patterns
+- `structured-output-2` score `0.657` — Harden structured-output handling
+- `workspace-preflight-1` score `0.523` — Add repo/workspace preflight checks
+<!-- clawcross:self-evolution:end -->

@@ -18,6 +18,7 @@
 #   bash selfskill/scripts/run.sh configure --show               # 查看当前配置
 #   bash selfskill/scripts/run.sh configure --init               # 从模板初始化 .env
 #   bash selfskill/scripts/run.sh sync-openclaw-llm              # 将 Clawcross 当前 LLM 配置回写到 OpenClaw
+#   bash selfskill/scripts/run.sh evolve-skill --skill SKILL.md --command "pytest ..."   # 根据执行错误更新 Markdown skill
 #   bash selfskill/scripts/run.sh check-openclaw                 # 检测/安装 OpenClaw
 #   bash selfskill/scripts/run.sh cli chat "你好"                # CLI: 发送消息
 #   bash selfskill/scripts/run.sh cli sessions                   # CLI: 查看会话
@@ -663,6 +664,12 @@ case "${1:-help}" in
 
     sync-openclaw-llm)
         python selfskill/scripts/configure_openclaw.py --sync-clawcross-llm
+        exit $?
+        ;;
+
+    evolve-skill)
+        shift
+        "$VENV_PY" selfskill/scripts/evolve_skill.py "$@"
         exit $?
         ;;
 

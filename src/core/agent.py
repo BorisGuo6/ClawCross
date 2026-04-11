@@ -139,6 +139,7 @@ USER_INJECTED_TOOLS = {
     "enter_plan_mode", "exit_plan_mode", "get_session_mode",
     # Self-evolution tools
     "skill_manage", "skill_view", "skill_list",
+    "skill_evolution_report", "skill_evolution_apply",
     "search_sessions", "get_insights", "get_trajectory_stats",
     "manage_personality",
 }
@@ -188,6 +189,8 @@ SESSION_INJECTED_TOOLS = {
     "exit_plan_mode": "source_session",
     "get_session_mode": "source_session",
     # Self-evolution tools
+    "skill_evolution_report": "session_id",
+    "skill_evolution_apply": "session_id",
     "search_sessions": "session_id",
 }
 

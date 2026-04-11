@@ -5,6 +5,8 @@ Exposes skill management tools via FastMCP for agent self-evolution:
 - skill_manage: Create, edit, patch, delete skills
 - skill_view: View full skill content
 - skill_list: List all available skills
+- skill_evolution_report: Build an EvoSkill-style failure analysis report
+- skill_evolution_apply: Apply the top evolution candidate back into a skill
 - skill_run: Apply a skill's instructions in context
 - session_search: Search historical sessions
 - get_insights: Get usage analytics
@@ -131,6 +133,88 @@ async def skill_list(username: str) -> str:
     from webot.skills import list_skills
     skills = list_skills(username)
     return json.dumps({"count": len(skills), "skills": skills}, ensure_ascii=False)
+
+
+# ── Skill Evolution Loop ────────────────────────────────────────────
+
+@mcp.tool()
+async def skill_evolution_report(
+    username: str,
+    name: str,
+    session_id: str = "",
+    days: int = 30,
+    limit: int = 8,
+    error_text: str = "",
+    command: str = "",
+) -> str:
+    """
+    Build a lightweight EvoSkill-style report for a skill using recent failures.
+
+    The report analyzes recent trajectory failures plus any explicit execution
+    error text you pass in, then produces a small candidate frontier of
+    possible skill mutations with heuristic scores.
+
+    :param username: User ID (auto-injected)
+    :param name: Skill name to analyze
+    :param session_id: Optional current session filter
+    :param days: How many recent days to inspect
+    :param limit: Max failure samples to analyze
+    :param error_text: Optional fresh error text to include immediately
+    :param command: Optional command associated with the fresh error
+    """
+    from webot.skill_evolution import analyze_skill_evolution
+
+    result = analyze_skill_evolution(
+        username,
+        name=name,
+        session_id=session_id,
+        days=days,
+        limit=limit,
+        error_text=error_text,
+        command=command,
+    )
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+async def skill_evolution_apply(
+    username: str,
+    name: str,
+    session_id: str = "",
+    days: int = 30,
+    limit: int = 8,
+    error_text: str = "",
+    command: str = "",
+    source: str = "runtime",
+) -> str:
+    """
+    Apply the top self-evolution candidate back into a skill's managed block.
+
+    This turns recent failure evidence into a durable SKILL.md update plus
+    evolution reports and feedback-history artifacts under the skill directory.
+
+    :param username: User ID (auto-injected)
+    :param name: Skill name to update
+    :param session_id: Optional current session filter
+    :param days: How many recent days to inspect
+    :param limit: Max failure samples to analyze
+    :param error_text: Optional fresh error text to include immediately
+    :param command: Optional command associated with the fresh error
+    :param source: Source label for the feedback history
+    """
+    from webot.skill_evolution import apply_skill_evolution
+
+    result = apply_skill_evolution(
+        username,
+        name=name,
+        session_id=session_id,
+        days=days,
+        limit=limit,
+        error_text=error_text,
+        command=command,
+        source=source,
+    )
+    return json.dumps(result, ensure_ascii=False)
 
 
 # ── Session Search ──────────────────────────────────────────────────

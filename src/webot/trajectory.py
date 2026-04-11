@@ -85,6 +85,14 @@ def save_trajectory(
         with path.open("a", encoding="utf-8") as f:
             f.write(line)
 
+    if not completed:
+        try:
+            from webot.skill_evolution import record_failure_feedback
+
+            record_failure_feedback(user_id=user_id, session_id=session_id, entry=entry)
+        except Exception:
+            pass
+
     return path
 
 

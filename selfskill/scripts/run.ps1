@@ -309,6 +309,7 @@ function Show-Help {
     Write-Host "  configure ...                  Run selfskill/scripts/configure.py"
     Write-Host "  auto-model                     Query available models from the configured API"
     Write-Host "  sync-openclaw-llm              Sync Clawcross's current LLM config back to OpenClaw"
+    Write-Host "  evolve-skill ...               Update a Markdown skill from execution failures"
     Write-Host "  cli ...                        Run scripts/cli.py"
     Write-Host "  check-openclaw                 Detect or install OpenClaw"
     Write-Host "  check-openclaw-weixin          Install or inspect the OpenClaw Weixin plugin"
@@ -836,6 +837,11 @@ switch ($Command) {
 
     "sync-openclaw-llm" {
         $code = Invoke-ClawcrossPython -Arguments @("selfskill\scripts\configure_openclaw.py", "--sync-clawcross-llm")
+        exit $code
+    }
+
+    "evolve-skill" {
+        $code = Invoke-ClawcrossPython -Arguments (@("selfskill\scripts\evolve_skill.py") + $Rest)
         exit $code
     }
 
