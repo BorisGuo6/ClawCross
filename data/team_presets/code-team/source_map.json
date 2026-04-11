@@ -1,0 +1,29 @@
+{
+  "preset_id": "code-team",
+  "roles": {
+    "pm": {
+      "name": "Product Manager",
+      "source_file": "wecli/custom/code-team#pm"
+    },
+    "architect": {
+      "name": "Architect",
+      "source_file": "wecli/custom/code-team#architect"
+    },
+    "frontend": {
+      "name": "Frontend Engineer",
+      "source_file": "wecli/custom/code-team#frontend"
+    },
+    "backend": {
+      "name": "Backend Engineer",
+      "source_file": "wecli/custom/code-team#backend"
+    },
+    "qa": {
+      "name": "QA Lead",
+      "source_file": "wecli/custom/code-team#qa"
+    },
+    "devops": {
+      "name": "DevOps",
+      "source_file": "wecli/custom/code-team#devops"
+    }
+  }
+}

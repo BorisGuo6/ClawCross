@@ -1,0 +1,18 @@
+{
+  "preset_id": "tang-sansheng-beta",
+  "name": "唐朝三省制",
+  "description": "中书省起草、门下省审核、尚书省派发六部执行、御史台独立监察的制衡型团队制度。",
+  "source": "wanikua/danghuangshang",
+  "regime": "tang-sansheng",
+  "role_count": 11,
+  "workflow_files": [
+    "tang_sansheng_baseline.yaml",
+    "tang_sansheng_review_loop.yaml"
+  ],
+  "default_team_name": "唐朝三省制",
+  "tags": [
+    "imperial",
+    "review",
+    "checks-and-balances"
+  ]
+}

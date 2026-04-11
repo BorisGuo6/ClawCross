@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Product Manager",
+    "tag": "pm"
+  },
+  {
+    "name": "Architect",
+    "tag": "architect"
+  },
+  {
+    "name": "Frontend Engineer",
+    "tag": "frontend"
+  },
+  {
+    "name": "Backend Engineer",
+    "tag": "backend"
+  },
+  {
+    "name": "QA Lead",
+    "tag": "qa"
+  },
+  {
+    "name": "DevOps",
+    "tag": "devops"
+  }
+]

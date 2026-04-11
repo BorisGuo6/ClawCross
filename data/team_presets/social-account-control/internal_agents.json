@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Strategy Lead",
+    "tag": "strategy"
+  },
+  {
+    "name": "Content Lead",
+    "tag": "content"
+  },
+  {
+    "name": "Creative Designer",
+    "tag": "design"
+  },
+  {
+    "name": "Platform Operator",
+    "tag": "operator"
+  },
+  {
+    "name": "Community Manager",
+    "tag": "community"
+  },
+  {
+    "name": "Risk & Compliance",
+    "tag": "risk"
+  },
+  {
+    "name": "Analytics Lead",
+    "tag": "analytics"
+  }
+]

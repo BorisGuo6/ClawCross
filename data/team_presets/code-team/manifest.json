@@ -1,0 +1,18 @@
+{
+  "preset_id": "code-team",
+  "name": "Code Team",
+  "description": "PM / Architect / Frontend / Backend / QA / DevOps 协作的小项目交付团队，适合从需求拆解、开发联调到上线验收。",
+  "source": "wecli/custom",
+  "regime": "code-team",
+  "role_count": 6,
+  "workflow_files": [
+    "code_team_small_project.yaml"
+  ],
+  "default_team_name": "Code Team",
+  "tags": [
+    "engineering",
+    "delivery",
+    "small-project",
+    "software"
+  ]
+}

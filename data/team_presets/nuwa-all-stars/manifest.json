@@ -1,0 +1,17 @@
+{
+  "preset_id": "nuwa-all-stars",
+  "name": "女娲全明星顾问团",
+  "description": "14位顶级思想家的认知框架全集——科技、投资、内容、第一性原理、中国视角一次集齐。适合需要多元视角碰撞的复杂决策。",
+  "source": "alchaincyf/nuwa-skill",
+  "regime": "nuwa-all-stars",
+  "role_count": 14,
+  "workflow_files": [
+    "nuwa_all_stars_advisory.yaml"
+  ],
+  "default_team_name": "女娲全明星顾问团",
+  "tags": [
+    "nuwa",
+    "all-stars",
+    "advisory"
+  ]
+}

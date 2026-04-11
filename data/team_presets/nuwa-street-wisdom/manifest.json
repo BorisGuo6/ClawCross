@@ -1,0 +1,18 @@
+{
+  "preset_id": "nuwa-street-wisdom",
+  "name": "江湖智慧团",
+  "description": "户晨风 × 童锦程 × 峰哥 × 陈震——接地气的现实主义决策视角，适合职业选择、人生决策、产品评审。",
+  "source": "awesome-human-distillation",
+  "regime": "nuwa-street-wisdom",
+  "role_count": 4,
+  "workflow_files": [
+    "nuwa_street_wisdom_advisory.yaml"
+  ],
+  "default_team_name": "江湖智慧团",
+  "tags": [
+    "nuwa",
+    "street-wisdom",
+    "career",
+    "reality-check"
+  ]
+}

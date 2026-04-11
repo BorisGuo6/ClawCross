@@ -1,0 +1,61 @@
+{
+  "preset_id": "modern-ceo",
+  "roles": {
+    "board": {
+      "name": "Board",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[board]"
+    },
+    "ceo": {
+      "name": "CEO",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[ceo]"
+    },
+    "cto": {
+      "name": "CTO",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[cto]"
+    },
+    "coo": {
+      "name": "COO",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[coo]"
+    },
+    "cfo": {
+      "name": "CFO",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[cfo]"
+    },
+    "cmo": {
+      "name": "CMO",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[cmo]"
+    },
+    "eng": {
+      "name": "Engineering",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[eng]"
+    },
+    "prod": {
+      "name": "Product",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[prod]"
+    },
+    "qa": {
+      "name": "Quality",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[qa]"
+    },
+    "sales": {
+      "name": "Sales",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[sales]"
+    },
+    "cs": {
+      "name": "Customer Success",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[cs]"
+    },
+    "hr": {
+      "name": "Human Resources",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[hr]"
+    },
+    "legal": {
+      "name": "Legal",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[legal]"
+    },
+    "data": {
+      "name": "Data",
+      "source_file": "configs/modern-ceo/openclaw.json#agents.list[data]"
+    }
+  }
+}

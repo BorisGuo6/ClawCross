@@ -1,0 +1,61 @@
+# Auto-generated Clawcross preset workflow: 明朝内阁制基线流程
+version: 2
+repeat: false
+plan:
+- id: n0
+  manual:
+    author: begin
+    content: "朝会开始"
+- id: n1
+  expert: silijian#oasis#司礼监
+- id: n2
+  expert: neige#oasis#内阁
+- id: n3
+  expert: bingbu#oasis#兵部
+- id: n4
+  expert: hubu#oasis#户部
+- id: n5
+  expert: libu#oasis#礼部
+- id: n6
+  expert: gongbu#oasis#工部
+- id: n7
+  expert: libu2#oasis#吏部
+- id: n8
+  expert: xingbu#oasis#刑部
+- id: n9
+  expert: duchayuan#oasis#都察院
+- id: n10
+  manual:
+    author: bend
+    content: "朝会结束"
+edges:
+- - n0
+  - n1
+- - n1
+  - n2
+- - n2
+  - n3
+- - n2
+  - n4
+- - n2
+  - n5
+- - n2
+  - n6
+- - n2
+  - n7
+- - n2
+  - n8
+- - n3
+  - n9
+- - n4
+  - n9
+- - n5
+  - n9
+- - n6
+  - n9
+- - n7
+  - n9
+- - n8
+  - n9
+- - n9
+  - n10

@@ -1,0 +1,18 @@
+{
+  "preset_id": "modern-ceo",
+  "name": "现代企业制",
+  "description": "Board/CEO/C-level 分工明确的现代企业协作团队，适合产品、工程、运营和增长并行决策。",
+  "source": "wanikua/danghuangshang",
+  "regime": "modern-ceo",
+  "role_count": 14,
+  "workflow_files": [
+    "modern_ceo_baseline.yaml",
+    "modern_ceo_operating_model.yaml"
+  ],
+  "default_team_name": "现代企业制",
+  "tags": [
+    "enterprise",
+    "c-suite",
+    "operations"
+  ]
+}

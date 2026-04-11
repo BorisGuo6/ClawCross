@@ -1,0 +1,35 @@
+{
+  "preset_id": "llm-council",
+  "roles": {
+    "contrarian": {
+      "name": "反驳者",
+      "name_en": "Devil's Advocate",
+      "source_repo": "karpathy/llm-council",
+      "source_file": "council_roles.md"
+    },
+    "essence_prober": {
+      "name": "本质追问者",
+      "name_en": "First Principles Prober",
+      "source_repo": "karpathy/llm-council",
+      "source_file": "council_roles.md"
+    },
+    "expander": {
+      "name": "扩张者",
+      "name_en": "Opportunity Expander",
+      "source_repo": "karpathy/llm-council",
+      "source_file": "council_roles.md"
+    },
+    "outsider": {
+      "name": "局外人",
+      "name_en": "Outside Perspective",
+      "source_repo": "karpathy/llm-council",
+      "source_file": "council_roles.md"
+    },
+    "executor": {
+      "name": "执行者",
+      "name_en": "Execution Advisor",
+      "source_repo": "karpathy/llm-council",
+      "source_file": "council_roles.md"
+    }
+  }
+}

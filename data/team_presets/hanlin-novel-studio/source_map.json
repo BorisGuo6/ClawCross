@@ -1,0 +1,13 @@
+{
+  "preset_id": "hanlin-novel-studio",
+  "roles": {
+    "hanlin_zhang": {
+      "name": "翰林院·掌院学士",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[hanlin_zhang]"
+    },
+    "qijuzhu": {
+      "name": "起居注官",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[qijuzhu]"
+    }
+  }
+}

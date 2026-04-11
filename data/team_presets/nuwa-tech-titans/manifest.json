@@ -1,0 +1,18 @@
+{
+  "preset_id": "nuwa-tech-titans",
+  "name": "科技巨擘",
+  "description": "Jobs × Musk × Karpathy × Ilya × 张一鸣——五位科技远见者的思维模型组合，适合技术战略、产品方向、AI决策。",
+  "source": "alchaincyf/nuwa-skill",
+  "regime": "nuwa-tech-titans",
+  "role_count": 5,
+  "workflow_files": [
+    "nuwa_tech_titans_advisory.yaml"
+  ],
+  "default_team_name": "科技巨擘",
+  "tags": [
+    "nuwa",
+    "tech",
+    "ai",
+    "product"
+  ]
+}

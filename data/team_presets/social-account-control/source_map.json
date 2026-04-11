@@ -1,0 +1,33 @@
+{
+  "preset_id": "social-account-control",
+  "roles": {
+    "strategy": {
+      "name": "Strategy Lead",
+      "source_file": "wecli/custom/social-account-control#strategy"
+    },
+    "content": {
+      "name": "Content Lead",
+      "source_file": "wecli/custom/social-account-control#content"
+    },
+    "design": {
+      "name": "Creative Designer",
+      "source_file": "wecli/custom/social-account-control#design"
+    },
+    "operator": {
+      "name": "Platform Operator",
+      "source_file": "wecli/custom/social-account-control#operator"
+    },
+    "community": {
+      "name": "Community Manager",
+      "source_file": "wecli/custom/social-account-control#community"
+    },
+    "risk": {
+      "name": "Risk & Compliance",
+      "source_file": "wecli/custom/social-account-control#risk"
+    },
+    "analytics": {
+      "name": "Analytics Lead",
+      "source_file": "wecli/custom/social-account-control#analytics"
+    }
+  }
+}

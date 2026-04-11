@@ -1,0 +1,32 @@
+# nuwa-money-minds — auto-generated workflow
+# 芒格 × 塔勒布 × Naval × PG——四位投资/创业大脑的认知叠加，适合投资决策、风险评估、创业评估。
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "请提出你的问题或议题，各位顾问将依次给出分析。"
+- id: m1
+  expert: paul_graham#oasis#保罗·格雷厄姆
+- id: m2
+  expert: munger#oasis#查理·芒格
+- id: m3
+  expert: naval#oasis#纳瓦尔·拉维坎特
+- id: m4
+  expert: taleb#oasis#纳西姆·塔勒布
+- id: m5
+  manual:
+    author: bend
+    content: "所有顾问已发言完毕。"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3
+- - m3
+  - m4
+- - m4
+  - m5

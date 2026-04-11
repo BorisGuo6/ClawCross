@@ -1,0 +1,18 @@
+{
+  "preset_id": "nuwa-content-empire",
+  "name": "内容增长帝国",
+  "description": "MrBeast × X增长导师 × Trump——内容创作、受众增长和说服力三合一，适合内容策略、社媒增长、个人品牌。",
+  "source": "alchaincyf/nuwa-skill",
+  "regime": "nuwa-content-empire",
+  "role_count": 3,
+  "workflow_files": [
+    "nuwa_content_empire_advisory.yaml"
+  ],
+  "default_team_name": "内容增长帝国",
+  "tags": [
+    "nuwa",
+    "content",
+    "growth",
+    "persuasion"
+  ]
+}

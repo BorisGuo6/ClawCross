@@ -1,0 +1,72 @@
+# nuwa-all-stars — auto-generated workflow
+# 14位顶级思想家的认知框架全集——科技、投资、内容、第一性原理、中国视角一次集齐。适合需要多元视角碰撞的复杂决策。
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "请提出你的问题或议题，各位顾问将依次给出分析。"
+- id: m1
+  expert: paul_graham#oasis#保罗·格雷厄姆
+- id: m2
+  expert: zhang_yiming#oasis#张一鸣
+- id: m3
+  expert: karpathy#oasis#安德烈·卡帕西
+- id: m4
+  expert: ilya_sutskever#oasis#伊利亚·苏茨克维
+- id: m5
+  expert: mrbeast#oasis#MrBeast
+- id: m6
+  expert: trump#oasis#唐纳德·特朗普
+- id: m7
+  expert: steve_jobs#oasis#史蒂夫·乔布斯
+- id: m8
+  expert: elon_musk#oasis#埃隆·马斯克
+- id: m9
+  expert: munger#oasis#查理·芒格
+- id: m10
+  expert: feynman#oasis#理查德·费曼
+- id: m11
+  expert: naval#oasis#纳瓦尔·拉维坎特
+- id: m12
+  expert: taleb#oasis#纳西姆·塔勒布
+- id: m13
+  expert: zhangxuefeng#oasis#张雪峰
+- id: m14
+  expert: x_mentor#oasis#X增长导师
+- id: m15
+  manual:
+    author: bend
+    content: "所有顾问已发言完毕。"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3
+- - m3
+  - m4
+- - m4
+  - m5
+- - m5
+  - m6
+- - m6
+  - m7
+- - m7
+  - m8
+- - m8
+  - m9
+- - m9
+  - m10
+- - m10
+  - m11
+- - m11
+  - m12
+- - m12
+  - m13
+- - m13
+  - m14
+- - m14
+  - m15

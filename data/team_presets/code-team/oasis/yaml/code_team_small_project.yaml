@@ -1,0 +1,45 @@
+# code-team — small project delivery workflow
+version: 2
+repeat: false
+plan:
+- id: c0
+  manual:
+    author: begin
+    content: "请描述你要完成的小项目：目标用户、核心功能、技术边界、交付时间。Code Team 会按 PM → 架构 → 前后端 → QA → 发布 的节奏协作。"
+- id: c1
+  expert: pm#oasis#Product Manager
+- id: c2
+  expert: architect#oasis#Architect
+- id: c3
+  expert: frontend#oasis#Frontend Engineer
+- id: c4
+  expert: backend#oasis#Backend Engineer
+- id: c5
+  expert: qa#oasis#QA Lead
+- id: c6
+  expert: devops#oasis#DevOps
+- id: c7
+  expert: pm#oasis#Product Manager
+- id: c8
+  manual:
+    author: bend
+    content: "Code Team 已完成一次小项目协作闭环：需求、方案、前后端、测试与发布建议都已给出。请基于以上输出进入实现或验收。"
+edges:
+- - c0
+  - c1
+- - c1
+  - c2
+- - c2
+  - c3
+- - c2
+  - c4
+- - c3
+  - c5
+- - c4
+  - c5
+- - c5
+  - c6
+- - c6
+  - c7
+- - c7
+  - c8

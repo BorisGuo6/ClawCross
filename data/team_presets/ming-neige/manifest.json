@@ -1,0 +1,18 @@
+{
+  "preset_id": "ming-neige",
+  "name": "明朝内阁制",
+  "description": "司礼监统筹、内阁优化、六部执行、都察院监察的高响应团队制度。",
+  "source": "wanikua/danghuangshang",
+  "regime": "ming-neige",
+  "role_count": 19,
+  "workflow_files": [
+    "ming_neige_baseline.yaml",
+    "ming_neige_governance.yaml"
+  ],
+  "default_team_name": "明朝内阁制",
+  "tags": [
+    "imperial",
+    "coordination",
+    "review"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "preset_id": "nuwa-first-principles",
+  "roles": {
+    "elon_musk": {
+      "name": "埃隆·马斯克",
+      "name_en": "Elon Musk",
+      "source_repo": "alchaincyf/elon-musk-skill",
+      "source_file": "SKILL.md"
+    },
+    "munger": {
+      "name": "查理·芒格",
+      "name_en": "Charlie Munger",
+      "source_repo": "alchaincyf/munger-skill",
+      "source_file": "SKILL.md"
+    },
+    "feynman": {
+      "name": "理查德·费曼",
+      "name_en": "Richard Feynman",
+      "source_repo": "alchaincyf/feynman-skill",
+      "source_file": "SKILL.md"
+    },
+    "taleb": {
+      "name": "纳西姆·塔勒布",
+      "name_en": "Nassim Taleb",
+      "source_repo": "alchaincyf/taleb-skill",
+      "source_file": "SKILL.md"
+    }
+  }
+}

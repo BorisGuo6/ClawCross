@@ -1,0 +1,18 @@
+{
+  "preset_id": "nuwa-money-minds",
+  "name": "投资智囊团",
+  "description": "芒格 × 塔勒布 × Naval × PG——四位投资/创业大脑的认知叠加，适合投资决策、风险评估、创业评估。",
+  "source": "alchaincyf/nuwa-skill",
+  "regime": "nuwa-money-minds",
+  "role_count": 4,
+  "workflow_files": [
+    "nuwa_money_minds_advisory.yaml"
+  ],
+  "default_team_name": "投资智囊团",
+  "tags": [
+    "nuwa",
+    "investment",
+    "startup",
+    "risk"
+  ]
+}

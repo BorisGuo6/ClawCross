@@ -1,0 +1,17 @@
+{
+  "preset_id": "nuwa-first-principles",
+  "name": "第一性原理思考团",
+  "description": "费曼 × 马斯克 × 芒格 × 塔勒布——四位第一性原理大师的深度分析组合，适合拆解复杂问题、挑战假设。",
+  "source": "alchaincyf/nuwa-skill",
+  "regime": "nuwa-first-principles",
+  "role_count": 4,
+  "workflow_files": [
+    "nuwa_first_principles_advisory.yaml"
+  ],
+  "default_team_name": "第一性原理思考团",
+  "tags": [
+    "nuwa",
+    "first-principles",
+    "analysis"
+  ]
+}

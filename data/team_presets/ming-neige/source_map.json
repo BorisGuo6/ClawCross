@@ -1,0 +1,81 @@
+{
+  "preset_id": "ming-neige",
+  "roles": {
+    "silijian": {
+      "name": "司礼监",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[silijian]"
+    },
+    "neige": {
+      "name": "内阁",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[neige]"
+    },
+    "duchayuan": {
+      "name": "都察院",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[duchayuan]"
+    },
+    "bingbu": {
+      "name": "兵部",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[bingbu]"
+    },
+    "hubu": {
+      "name": "户部",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[hubu]"
+    },
+    "libu": {
+      "name": "礼部",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[libu]"
+    },
+    "gongbu": {
+      "name": "工部",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[gongbu]"
+    },
+    "libu2": {
+      "name": "吏部",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[libu2]"
+    },
+    "xingbu": {
+      "name": "刑部",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[xingbu]"
+    },
+    "hanlin_zhang": {
+      "name": "翰林院·掌院学士",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[hanlin_zhang]"
+    },
+    "hanlin_xiuzhuan": {
+      "name": "翰林院·修撰",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[hanlin_xiuzhuan]"
+    },
+    "hanlin_bianxiu": {
+      "name": "翰林院·编修",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[hanlin_bianxiu]"
+    },
+    "hanlin_jiantao": {
+      "name": "翰林院·检讨",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[hanlin_jiantao]"
+    },
+    "hanlin_shujishi": {
+      "name": "翰林院·庶吉士",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[hanlin_shujishi]"
+    },
+    "qijuzhu": {
+      "name": "起居注官",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[qijuzhu]"
+    },
+    "guozijian": {
+      "name": "国子监",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[guozijian]"
+    },
+    "taiyiyuan": {
+      "name": "太医院",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[taiyiyuan]"
+    },
+    "neiwufu": {
+      "name": "内务府",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[neiwufu]"
+    },
+    "yushanfang": {
+      "name": "御膳房",
+      "source_file": "configs/ming-neige/openclaw.json#agents.list[yushanfang]"
+    }
+  }
+}

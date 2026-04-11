@@ -1,0 +1,23 @@
+{
+  "preset_id": "nuwa-content-empire",
+  "roles": {
+    "mrbeast": {
+      "name": "MrBeast",
+      "name_en": "MrBeast",
+      "source_repo": "alchaincyf/mrbeast-skill",
+      "source_file": "SKILL.md"
+    },
+    "trump": {
+      "name": "唐纳德·特朗普",
+      "name_en": "Donald Trump",
+      "source_repo": "alchaincyf/trump-skill",
+      "source_file": "SKILL.md"
+    },
+    "x_mentor": {
+      "name": "X增长导师",
+      "name_en": "X Growth Mentor",
+      "source_repo": "alchaincyf/x-mentor-skill",
+      "source_file": "SKILL.md"
+    }
+  }
+}

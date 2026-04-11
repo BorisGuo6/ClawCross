@@ -1,0 +1,49 @@
+{
+  "preset_id": "tang-sansheng-beta",
+  "roles": {
+    "zhongshu": {
+      "name": "中书省",
+      "source_file": "configs/tang-sansheng/agents/zhongshusheng.md"
+    },
+    "menxia": {
+      "name": "门下省",
+      "source_file": "configs/tang-sansheng/agents/menxiasheng.md"
+    },
+    "shangshu": {
+      "name": "尚书省",
+      "source_file": "configs/tang-sansheng/agents/shangshusheng.md"
+    },
+    "bingbu": {
+      "name": "兵部",
+      "source_file": "configs/tang-sansheng/agents/bingbu.md"
+    },
+    "hubu": {
+      "name": "户部",
+      "source_file": "configs/tang-sansheng/agents/hubu.md"
+    },
+    "libu": {
+      "name": "礼部",
+      "source_file": "configs/tang-sansheng/agents/libu.md"
+    },
+    "gongbu": {
+      "name": "工部",
+      "source_file": "configs/tang-sansheng/agents/gongbu.md"
+    },
+    "xingbu": {
+      "name": "刑部",
+      "source_file": "configs/tang-sansheng/agents/xingbu.md"
+    },
+    "libu2": {
+      "name": "吏部",
+      "source_file": "configs/tang-sansheng/agents/libu2.md"
+    },
+    "yushitai": {
+      "name": "御史台",
+      "source_file": "configs/tang-sansheng/agents/yushitai.md"
+    },
+    "shiguan": {
+      "name": "史馆",
+      "source_file": "configs/tang-sansheng/agents/shiguan.md"
+    }
+  }
+}

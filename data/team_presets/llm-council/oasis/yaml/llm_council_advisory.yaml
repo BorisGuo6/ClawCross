@@ -1,0 +1,62 @@
+# llm-council — Karpathy Council方法
+# 5位不同思维风格的AI顾问同时回答，然后匿名互相挑刺，给出经得起质疑的建议。
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "请提出你正在纠结的决策或问题。5位顾问将分两轮进行分析：第一轮各自独立发言，第二轮互相审阅质疑。"
+- id: m1
+  expert: contrarian#oasis#反驳者
+- id: m2
+  expert: essence_prober#oasis#本质追问者
+- id: m3
+  expert: expander#oasis#扩张者
+- id: m4
+  expert: outsider#oasis#局外人
+- id: m5
+  expert: executor#oasis#执行者
+- id: m6
+  manual:
+    author: begin
+    content: "第一轮发言完毕。现在进入第二轮：各顾问匿名审阅其他顾问的观点，互相挑刺，补充遗漏，指出矛盾。请基于以上所有发言进行交叉审阅。"
+- id: m7
+  expert: contrarian#oasis#反驳者
+- id: m8
+  expert: essence_prober#oasis#本质追问者
+- id: m9
+  expert: expander#oasis#扩张者
+- id: m10
+  expert: outsider#oasis#局外人
+- id: m11
+  expert: executor#oasis#执行者
+- id: m12
+  manual:
+    author: bend
+    content: "两轮审议完毕。以上是5位顾问从不同角度给出的分析和互相质疑，请综合考虑后做出你的决策。"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3
+- - m3
+  - m4
+- - m4
+  - m5
+- - m5
+  - m6
+- - m6
+  - m7
+- - m7
+  - m8
+- - m8
+  - m9
+- - m9
+  - m10
+- - m10
+  - m11
+- - m11
+  - m12

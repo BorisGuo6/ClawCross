@@ -1,0 +1,18 @@
+{
+  "preset_id": "llm-council",
+  "name": "LLM顾问团",
+  "description": "基于Andrej Karpathy的Council方法——5位不同思维风格的AI顾问同时回答同一个问题，然后匿名互相挑刺，最终给出经得起质疑的建议。适合纠结超过几天的重大决策。",
+  "source": "karpathy/llm-council",
+  "regime": "llm-council",
+  "role_count": 5,
+  "workflow_files": [
+    "llm_council_advisory.yaml"
+  ],
+  "default_team_name": "LLM顾问团",
+  "tags": [
+    "council",
+    "decision-making",
+    "critical-thinking",
+    "karpathy"
+  ]
+}

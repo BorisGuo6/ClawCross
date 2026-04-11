@@ -1,0 +1,89 @@
+{
+  "preset_id": "nuwa-all-stars",
+  "roles": {
+    "paul_graham": {
+      "name": "保罗·格雷厄姆",
+      "name_en": "Paul Graham",
+      "source_repo": "alchaincyf/paul-graham-skill",
+      "source_file": "SKILL.md"
+    },
+    "zhang_yiming": {
+      "name": "张一鸣",
+      "name_en": "张一鸣",
+      "source_repo": "alchaincyf/zhang-yiming-skill",
+      "source_file": "SKILL.md"
+    },
+    "karpathy": {
+      "name": "安德烈·卡帕西",
+      "name_en": "Andrej Karpathy",
+      "source_repo": "alchaincyf/karpathy-skill",
+      "source_file": "SKILL.md"
+    },
+    "ilya_sutskever": {
+      "name": "伊利亚·苏茨克维",
+      "name_en": "Ilya Sutskever",
+      "source_repo": "alchaincyf/ilya-sutskever-skill",
+      "source_file": "SKILL.md"
+    },
+    "mrbeast": {
+      "name": "MrBeast",
+      "name_en": "MrBeast",
+      "source_repo": "alchaincyf/mrbeast-skill",
+      "source_file": "SKILL.md"
+    },
+    "trump": {
+      "name": "唐纳德·特朗普",
+      "name_en": "Donald Trump",
+      "source_repo": "alchaincyf/trump-skill",
+      "source_file": "SKILL.md"
+    },
+    "steve_jobs": {
+      "name": "史蒂夫·乔布斯",
+      "name_en": "Steve Jobs",
+      "source_repo": "alchaincyf/steve-jobs-skill",
+      "source_file": "SKILL.md"
+    },
+    "elon_musk": {
+      "name": "埃隆·马斯克",
+      "name_en": "Elon Musk",
+      "source_repo": "alchaincyf/elon-musk-skill",
+      "source_file": "SKILL.md"
+    },
+    "munger": {
+      "name": "查理·芒格",
+      "name_en": "Charlie Munger",
+      "source_repo": "alchaincyf/munger-skill",
+      "source_file": "SKILL.md"
+    },
+    "feynman": {
+      "name": "理查德·费曼",
+      "name_en": "Richard Feynman",
+      "source_repo": "alchaincyf/feynman-skill",
+      "source_file": "SKILL.md"
+    },
+    "naval": {
+      "name": "纳瓦尔·拉维坎特",
+      "name_en": "Naval Ravikant",
+      "source_repo": "alchaincyf/naval-skill",
+      "source_file": "SKILL.md"
+    },
+    "taleb": {
+      "name": "纳西姆·塔勒布",
+      "name_en": "Nassim Taleb",
+      "source_repo": "alchaincyf/taleb-skill",
+      "source_file": "SKILL.md"
+    },
+    "zhangxuefeng": {
+      "name": "张雪峰",
+      "name_en": "张雪峰",
+      "source_repo": "alchaincyf/zhangxuefeng-skill",
+      "source_file": "SKILL.md"
+    },
+    "x_mentor": {
+      "name": "X增长导师",
+      "name_en": "X Growth Mentor",
+      "source_repo": "alchaincyf/x-mentor-skill",
+      "source_file": "SKILL.md"
+    }
+  }
+}

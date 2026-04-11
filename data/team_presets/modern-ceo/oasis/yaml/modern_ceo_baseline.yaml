@@ -1,0 +1,79 @@
+# Auto-generated Clawcross preset workflow: 现代企业制基线流程
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "Board review begins"
+- id: m1
+  expert: board#oasis#Board
+- id: m2
+  expert: ceo#oasis#CEO
+- id: m3
+  expert: prod#oasis#Product
+- id: m4
+  expert: cto#oasis#CTO
+- id: m5
+  expert: eng#oasis#Engineering
+- id: m6
+  expert: qa#oasis#Quality
+- id: m7
+  expert: coo#oasis#COO
+- id: m8
+  expert: cfo#oasis#CFO
+- id: m9
+  expert: cmo#oasis#CMO
+- id: m10
+  expert: sales#oasis#Sales
+- id: m11
+  expert: cs#oasis#Customer Success
+- id: m12
+  expert: legal#oasis#Legal
+- id: m13
+  expert: data#oasis#Data
+- id: m14
+  manual:
+    author: bend
+    content: "Board review closed"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3
+- - m3
+  - m4
+- - m4
+  - m5
+- - m5
+  - m6
+- - m2
+  - m7
+- - m2
+  - m8
+- - m2
+  - m9
+- - m9
+  - m10
+- - m9
+  - m11
+- - m2
+  - m12
+- - m2
+  - m13
+- - m6
+  - m14
+- - m7
+  - m14
+- - m8
+  - m14
+- - m10
+  - m14
+- - m11
+  - m14
+- - m12
+  - m14
+- - m13
+  - m14

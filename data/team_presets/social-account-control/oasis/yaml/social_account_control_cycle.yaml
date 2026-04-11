@@ -1,0 +1,51 @@
+# social-account-control — social ops workflow
+version: 2
+repeat: false
+plan:
+- id: s0
+  manual:
+    author: begin
+    content: "请描述你要控制的社交账号目标：平台、受众、发布主题、限制条件和时间窗口。团队会按策略 → 内容 → 设计 → 发布 → 社区 → 风控 → 数据复盘协作。"
+- id: s1
+  expert: strategy#oasis#Strategy Lead
+- id: s2
+  expert: content#oasis#Content Lead
+- id: s3
+  expert: design#oasis#Creative Designer
+- id: s4
+  expert: operator#oasis#Platform Operator
+- id: s5
+  expert: community#oasis#Community Manager
+- id: s6
+  expert: risk#oasis#Risk & Compliance
+- id: s7
+  expert: analytics#oasis#Analytics Lead
+- id: s8
+  expert: operator#oasis#Platform Operator
+- id: s9
+  manual:
+    author: bend
+    content: "社交账号控制台已完成一次完整运营闭环：策略、内容、素材、发布、评论管理、风控和复盘建议均已给出。"
+edges:
+- - s0
+  - s1
+- - s1
+  - s2
+- - s1
+  - s3
+- - s2
+  - s4
+- - s3
+  - s4
+- - s4
+  - s5
+- - s4
+  - s6
+- - s5
+  - s7
+- - s6
+  - s7
+- - s7
+  - s8
+- - s8
+  - s9

@@ -1,0 +1,32 @@
+# nuwa-street-wisdom — auto-generated workflow
+# 户晨风 × 童锦程 × 峰哥 × 陈震——接地气的现实主义决策视角，适合职业选择、人生决策、产品评审。
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "请提出你的问题或议题，各位专家将依次给出分析。"
+- id: m1
+  expert: hu_chenfeng#oasis#户晨风
+- id: m2
+  expert: tong_jincheng#oasis#童锦程
+- id: m3
+  expert: fengge#oasis#峰哥
+- id: m4
+  expert: zhen_ge#oasis#陈震
+- id: m5
+  manual:
+    author: bend
+    content: "所有专家已发言完毕。"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3
+- - m3
+  - m4
+- - m4
+  - m5

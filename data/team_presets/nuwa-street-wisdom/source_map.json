@@ -1,0 +1,21 @@
+{
+  "preset_id": "nuwa-street-wisdom",
+  "roles": {
+    "hu_chenfeng": {
+      "name": "户晨风",
+      "source_repo": "awesome-human-distillation/hu-chen-feng-skill"
+    },
+    "tong_jincheng": {
+      "name": "童锦程",
+      "source_repo": "awesome-human-distillation/tong-jincheng-skill"
+    },
+    "fengge": {
+      "name": "峰哥",
+      "source_repo": "awesome-human-distillation/fengge-wangmingtianya-perspective"
+    },
+    "zhen_ge": {
+      "name": "陈震",
+      "source_repo": "awesome-human-distillation/zhen-ge-skill"
+    }
+  }
+}

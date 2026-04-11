@@ -1,0 +1,18 @@
+{
+  "preset_id": "social-account-control",
+  "name": "社交账号控制台",
+  "description": "策略、内容、设计、发布、社区、风控、数据协作的社交账号控制团队，适合多平台账号运营、发布和复盘。",
+  "source": "wecli/custom",
+  "regime": "social-account-control",
+  "role_count": 7,
+  "workflow_files": [
+    "social_account_control_cycle.yaml"
+  ],
+  "default_team_name": "社交账号控制台",
+  "tags": [
+    "social-media",
+    "operations",
+    "risk-control",
+    "content"
+  ]
+}

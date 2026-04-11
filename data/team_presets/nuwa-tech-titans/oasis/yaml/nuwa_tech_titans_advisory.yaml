@@ -1,0 +1,36 @@
+# nuwa-tech-titans — auto-generated workflow
+# Jobs × Musk × Karpathy × Ilya × 张一鸣——五位科技远见者的思维模型组合，适合技术战略、产品方向、AI决策。
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "请提出你的问题或议题，各位顾问将依次给出分析。"
+- id: m1
+  expert: zhang_yiming#oasis#张一鸣
+- id: m2
+  expert: karpathy#oasis#安德烈·卡帕西
+- id: m3
+  expert: ilya_sutskever#oasis#伊利亚·苏茨克维
+- id: m4
+  expert: steve_jobs#oasis#史蒂夫·乔布斯
+- id: m5
+  expert: elon_musk#oasis#埃隆·马斯克
+- id: m6
+  manual:
+    author: bend
+    content: "所有顾问已发言完毕。"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3
+- - m3
+  - m4
+- - m4
+  - m5
+- - m5
+  - m6

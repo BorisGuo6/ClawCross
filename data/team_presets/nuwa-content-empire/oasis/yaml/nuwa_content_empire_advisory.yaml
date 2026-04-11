@@ -1,0 +1,28 @@
+# nuwa-content-empire — auto-generated workflow
+# MrBeast × X增长导师 × Trump——内容创作、受众增长和说服力三合一，适合内容策略、社媒增长、个人品牌。
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "请提出你的问题或议题，各位顾问将依次给出分析。"
+- id: m1
+  expert: mrbeast#oasis#MrBeast
+- id: m2
+  expert: trump#oasis#唐纳德·特朗普
+- id: m3
+  expert: x_mentor#oasis#X增长导师
+- id: m4
+  manual:
+    author: bend
+    content: "所有顾问已发言完毕。"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3
+- - m3
+  - m4

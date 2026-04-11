@@ -1,0 +1,22 @@
+[
+  {
+    "name": "反驳者",
+    "tag": "contrarian"
+  },
+  {
+    "name": "本质追问者",
+    "tag": "essence_prober"
+  },
+  {
+    "name": "扩张者",
+    "tag": "expander"
+  },
+  {
+    "name": "局外人",
+    "tag": "outsider"
+  },
+  {
+    "name": "执行者",
+    "tag": "executor"
+  }
+]

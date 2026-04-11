@@ -1,0 +1,18 @@
+{
+  "preset_id": "nuwa-china-guide",
+  "name": "中国职场向导",
+  "description": "张一鸣 × 张雪峰——创业思维与职场实战双视角，适合中国市场的职业规划、创业决策、行业选择。",
+  "source": "alchaincyf/nuwa-skill",
+  "regime": "nuwa-china-guide",
+  "role_count": 2,
+  "workflow_files": [
+    "nuwa_china_guide_advisory.yaml"
+  ],
+  "default_team_name": "中国职场向导",
+  "tags": [
+    "nuwa",
+    "china",
+    "career",
+    "startup"
+  ]
+}

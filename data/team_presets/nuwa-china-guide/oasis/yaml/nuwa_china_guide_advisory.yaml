@@ -1,0 +1,24 @@
+# nuwa-china-guide — auto-generated workflow
+# 张一鸣 × 张雪峰——创业思维与职场实战双视角，适合中国市场的职业规划、创业决策、行业选择。
+version: 2
+repeat: false
+plan:
+- id: m0
+  manual:
+    author: begin
+    content: "请提出你的问题或议题，各位顾问将依次给出分析。"
+- id: m1
+  expert: zhang_yiming#oasis#张一鸣
+- id: m2
+  expert: zhangxuefeng#oasis#张雪峰
+- id: m3
+  manual:
+    author: bend
+    content: "所有顾问已发言完毕。"
+edges:
+- - m0
+  - m1
+- - m1
+  - m2
+- - m2
+  - m3

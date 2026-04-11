@@ -1,0 +1,58 @@
+[
+  {
+    "name": "Board",
+    "tag": "board"
+  },
+  {
+    "name": "CEO",
+    "tag": "ceo"
+  },
+  {
+    "name": "CTO",
+    "tag": "cto"
+  },
+  {
+    "name": "COO",
+    "tag": "coo"
+  },
+  {
+    "name": "CFO",
+    "tag": "cfo"
+  },
+  {
+    "name": "CMO",
+    "tag": "cmo"
+  },
+  {
+    "name": "Engineering",
+    "tag": "eng"
+  },
+  {
+    "name": "Product",
+    "tag": "prod"
+  },
+  {
+    "name": "Quality",
+    "tag": "qa"
+  },
+  {
+    "name": "Sales",
+    "tag": "sales"
+  },
+  {
+    "name": "Customer Success",
+    "tag": "cs"
+  },
+  {
+    "name": "Human Resources",
+    "tag": "hr"
+  },
+  {
+    "name": "Legal",
+    "tag": "legal"
+  },
+  {
+    "name": "Data",
+    "tag": "data"
+  }
+]

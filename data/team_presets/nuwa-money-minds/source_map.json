@@ -1,0 +1,29 @@
+{
+  "preset_id": "nuwa-money-minds",
+  "roles": {
+    "paul_graham": {
+      "name": "保罗·格雷厄姆",
+      "name_en": "Paul Graham",
+      "source_repo": "alchaincyf/paul-graham-skill",
+      "source_file": "SKILL.md"
+    },
+    "munger": {
+      "name": "查理·芒格",
+      "name_en": "Charlie Munger",
+      "source_repo": "alchaincyf/munger-skill",
+      "source_file": "SKILL.md"
+    },
+    "naval": {
+      "name": "纳瓦尔·拉维坎特",
+      "name_en": "Naval Ravikant",
+      "source_repo": "alchaincyf/naval-skill",
+      "source_file": "SKILL.md"
+    },
+    "taleb": {
+      "name": "纳西姆·塔勒布",
+      "name_en": "Nassim Taleb",
+      "source_repo": "alchaincyf/taleb-skill",
+      "source_file": "SKILL.md"
+    }
+  }
+}

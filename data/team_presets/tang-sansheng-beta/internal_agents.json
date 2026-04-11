@@ -1,0 +1,46 @@
+[
+  {
+    "name": "中书省",
+    "tag": "zhongshu"
+  },
+  {
+    "name": "门下省",
+    "tag": "menxia"
+  },
+  {
+    "name": "尚书省",
+    "tag": "shangshu"
+  },
+  {
+    "name": "兵部",
+    "tag": "bingbu"
+  },
+  {
+    "name": "户部",
+    "tag": "hubu"
+  },
+  {
+    "name": "礼部",
+    "tag": "libu"
+  },
+  {
+    "name": "工部",
+    "tag": "gongbu"
+  },
+  {
+    "name": "刑部",
+    "tag": "xingbu"
+  },
+  {
+    "name": "吏部",
+    "tag": "libu2"
+  },
+  {
+    "name": "御史台",
+    "tag": "yushitai"
+  },
+  {
+    "name": "史馆",
+    "tag": "shiguan"
+  }
+]

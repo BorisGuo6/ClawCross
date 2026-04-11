@@ -1,0 +1,17 @@
+{
+  "preset_id": "nuwa-china-guide",
+  "roles": {
+    "zhang_yiming": {
+      "name": "张一鸣",
+      "name_en": "张一鸣",
+      "source_repo": "alchaincyf/zhang-yiming-skill",
+      "source_file": "SKILL.md"
+    },
+    "zhangxuefeng": {
+      "name": "张雪峰",
+      "name_en": "张雪峰",
+      "source_repo": "alchaincyf/zhangxuefeng-skill",
+      "source_file": "SKILL.md"
+    }
+  }
+}
