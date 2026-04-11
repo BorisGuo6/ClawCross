@@ -1,0 +1,10 @@
+Audio files in this directory are reused from:
+https://github.com/AGI-Villa/agent-town
+
+Source files:
+- town-morning.mp3
+- town-afternoon.mp3
+- town-evening.mp3
+
+Upstream repository license: Apache License 2.0
+See agent-town-LICENSE.txt in this directory for the license text.

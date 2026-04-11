@@ -1,0 +1,104 @@
+.tc-markdown {
+    white-space: normal;
+    /* 横向：宽表格/长代码在气泡内可滑动；纵向交给外层滚动 */
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    /* flex 子项默认 min-width:auto，会撑破窄屏；与主聊/群聊气泡配合 */
+    min-width: 0;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.tc-markdown > :first-child {
+    margin-top: 0 !important;
+}
+
+.tc-markdown > :last-child {
+    margin-bottom: 0 !important;
+}
+
+.tc-markdown p {
+    margin: 0 0 0.45em 0;
+}
+
+.tc-markdown ul,
+.tc-markdown ol {
+    margin: 0.35em 0;
+    padding-left: 1.5em;
+    list-style-position: outside;
+}
+
+.tc-markdown ul {
+    list-style-type: disc;
+}
+
+.tc-markdown ol {
+    list-style-type: decimal;
+}
+
+.tc-markdown ul ul {
+    list-style-type: circle;
+}
+
+.tc-markdown ul ul ul {
+    list-style-type: square;
+}
+
+.tc-markdown li {
+    margin: 0.22em 0;
+}
+
+.tc-markdown li > p {
+    margin: 0.2em 0;
+}
+
+.tc-markdown pre {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    box-sizing: border-box;
+}
+
+.tc-markdown pre code {
+    overflow-wrap: normal;
+    word-break: normal;
+}
+
+/* 保持 table 布局语义；横向滚动由 .tc-markdown 承担，避免 display:block 导致 Safari 下错乱 */
+.tc-markdown table {
+    display: table;
+    width: max-content;
+    max-width: none;
+    border-collapse: collapse;
+    margin: 0.5em 0;
+    font-size: 0.94em;
+}
+
+.tc-markdown th,
+.tc-markdown td {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    padding: 4px 8px;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    vertical-align: top;
+}
+
+.tc-markdown img {
+    max-width: 100%;
+    height: auto;
+}
+
+.msg-bubble.markdown-body.tc-markdown,
+.message-agent.markdown-body.tc-markdown,
+.group-msg-content.markdown-body.tc-markdown,
+.oasis-post-content.markdown-body.tc-markdown,
+.oasis-town-speech.markdown-body.tc-markdown,
+.oasis-conclusion-text.markdown-body.tc-markdown,
+.oasis-conclusion-content.markdown-body.tc-markdown {
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    min-width: 0;
+}
