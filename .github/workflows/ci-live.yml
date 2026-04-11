@@ -1,0 +1,189 @@
+name: CI Live
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  llm-live:
+    name: ci-live / llm
+    runs-on: ubuntu-latest
+    env:
+      LLM_LIVE_API_KEY: ${{ secrets.LLM_LIVE_API_KEY }}
+      LLM_LIVE_BASE_URL: ${{ vars.LLM_LIVE_BASE_URL }}
+      LLM_LIVE_MODEL: ${{ vars.LLM_LIVE_MODEL }}
+      LLM_LIVE_PROVIDER: ${{ vars.LLM_LIVE_PROVIDER || '' }}
+      LLM_LIVE_PROMPT: ${{ vars.LLM_LIVE_PROMPT || 'Reply with exactly LIVE_OK and nothing else.' }}
+      LLM_LIVE_EXPECT: ${{ vars.LLM_LIVE_EXPECT || 'LIVE_OK' }}
+      LLM_LIVE_TIMEOUT: ${{ vars.LLM_LIVE_TIMEOUT || '60' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v8.0.0
+      - name: Detect LLM live configuration
+        id: gate
+        run: |
+          if [ -n "$LLM_LIVE_API_KEY" ] && [ -n "$LLM_LIVE_BASE_URL" ] && [ -n "$LLM_LIVE_MODEL" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping LLM live smoke because required secrets/variables are not fully configured."
+          fi
+      - name: Create virtualenv
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: uv venv .venv --python 3.11
+      - name: Install Python test deps
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: uv pip install --python .venv/bin/python -r config/requirements-dev.txt
+      - name: Run LLM live smoke
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: >
+          .venv/bin/python test/llm_live_smoke.py
+          --prompt "$LLM_LIVE_PROMPT"
+          --expect "$LLM_LIVE_EXPECT"
+          --timeout "$LLM_LIVE_TIMEOUT"
+
+  openclaw-live:
+    name: ci-live / openclaw
+    runs-on: ubuntu-latest
+    env:
+      OPENCLAW_LIVE_API_KEY: ${{ secrets.OPENCLAW_LIVE_API_KEY || secrets.LLM_LIVE_API_KEY }}
+      OPENCLAW_LIVE_BASE_URL: ${{ vars.OPENCLAW_LIVE_BASE_URL || vars.LLM_LIVE_BASE_URL }}
+      OPENCLAW_LIVE_MODEL: ${{ vars.OPENCLAW_LIVE_MODEL || vars.LLM_LIVE_MODEL }}
+      OPENCLAW_LIVE_PROVIDER: ${{ vars.OPENCLAW_LIVE_PROVIDER || vars.LLM_LIVE_PROVIDER || '' }}
+      OPENCLAW_LIVE_PROMPT: ${{ vars.OPENCLAW_LIVE_PROMPT || 'Reply with exactly OPENCLAW_LIVE_OK and nothing else.' }}
+      OPENCLAW_LIVE_EXPECT: ${{ vars.OPENCLAW_LIVE_EXPECT || 'OPENCLAW_LIVE_OK' }}
+      OPENCLAW_LIVE_TIMEOUT: ${{ vars.OPENCLAW_LIVE_TIMEOUT || '90' }}
+      OPENCLAW_LIVE_GATEWAY_PORT: ${{ vars.OPENCLAW_LIVE_GATEWAY_PORT || '19017' }}
+      OPENCLAW_LIVE_CLI_VERSION: ${{ vars.OPENCLAW_LIVE_CLI_VERSION || '2026.3.23-2' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v8.0.0
+      - name: Detect OpenClaw live configuration
+        id: gate
+        run: |
+          if [ -n "$OPENCLAW_LIVE_API_KEY" ] && [ -n "$OPENCLAW_LIVE_BASE_URL" ] && [ -n "$OPENCLAW_LIVE_MODEL" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping OpenClaw live smoke because required secrets/variables are not fully configured."
+          fi
+      - name: Create virtualenv
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: uv venv .venv --python 3.11
+      - name: Install Python test deps
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: uv pip install --python .venv/bin/python -r config/requirements-dev.txt
+      - uses: actions/setup-node@v6
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        with:
+          node-version: "22"
+      - name: Install OpenClaw CLI
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/openclaw-cli" "openclaw@$OPENCLAW_LIVE_CLI_VERSION" --ignore-scripts
+          echo "$RUNNER_TEMP/openclaw-cli/bin" >> "$GITHUB_PATH"
+      - name: Run OpenClaw live smoke
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: >
+          .venv/bin/python test/openclaw_live_smoke.py
+          --gateway-port "$OPENCLAW_LIVE_GATEWAY_PORT"
+          --prompt "$OPENCLAW_LIVE_PROMPT"
+          --expect "$OPENCLAW_LIVE_EXPECT"
+          --timeout "$OPENCLAW_LIVE_TIMEOUT"
+
+  tinyfish-live:
+    name: ci-live / tinyfish
+    runs-on: ubuntu-latest
+    env:
+      TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
+      TINYFISH_BASE_URL: ${{ vars.TINYFISH_BASE_URL || 'https://agent.tinyfish.ai' }}
+      TINYFISH_LIVE_SITE_KEY: ${{ vars.TINYFISH_LIVE_SITE_KEY }}
+      TINYFISH_LIVE_SITE_URL: ${{ vars.TINYFISH_LIVE_SITE_URL }}
+      TINYFISH_LIVE_SITE_NAME: ${{ vars.TINYFISH_LIVE_SITE_NAME || 'TinyFish Live Site' }}
+      TINYFISH_LIVE_SITE_GOAL: ${{ vars.TINYFISH_LIVE_SITE_GOAL || 'Return plan names, prices, billing periods, and availability.' }}
+      TINYFISH_LIVE_MAX_WAIT: ${{ vars.TINYFISH_LIVE_MAX_WAIT || '240' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v8.0.0
+      - name: Detect TinyFish live configuration
+        id: gate
+        run: |
+          if [ -n "$TINYFISH_API_KEY" ] && [ -n "$TINYFISH_LIVE_SITE_KEY" ] && [ -n "$TINYFISH_LIVE_SITE_URL" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping TinyFish live smoke because required secrets/variables are not fully configured."
+          fi
+      - name: Create virtualenv
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: uv venv .venv --python 3.11
+      - name: Install Python test deps
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: uv pip install --python .venv/bin/python -r config/requirements-dev.txt
+      - name: Build live TinyFish target file
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          target = {
+              "targets": [
+                  {
+                      "site_key": os.environ["TINYFISH_LIVE_SITE_KEY"],
+                      "name": os.environ["TINYFISH_LIVE_SITE_NAME"],
+                      "url": os.environ["TINYFISH_LIVE_SITE_URL"],
+                      "goal": os.environ["TINYFISH_LIVE_SITE_GOAL"],
+                  }
+              ]
+          }
+          out = Path("/tmp/tinyfish_live_targets.json")
+          out.write_text(json.dumps(target, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          print(out)
+          PY
+      - name: Run TinyFish live smoke
+        if: ${{ steps.gate.outputs.ready == 'true' }}
+        run: >
+          .venv/bin/python test/tinyfish_live_smoke.py
+          --targets /tmp/tinyfish_live_targets.json
+          --site "$TINYFISH_LIVE_SITE_KEY"
+          --max-wait "$TINYFISH_LIVE_MAX_WAIT"
+
+  cloudflare-live:
+    name: ci-live / cloudflare
+    if: ${{ vars.CLOUDFLARE_LIVE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_LIVE_PORT: ${{ vars.CLOUDFLARE_LIVE_PORT || '51239' }}
+      CLOUDFLARE_LIVE_TIMEOUT: ${{ vars.CLOUDFLARE_LIVE_TIMEOUT || '180' }}
+      CLOUDFLARE_LIVE_SENTINEL: ${{ vars.CLOUDFLARE_LIVE_SENTINEL || 'CLAWCROSS_CLOUDFLARE_SMOKE_OK' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v8.0.0
+      - name: Create virtualenv
+        run: uv venv .venv --python 3.11
+      - name: Install Python test deps
+        run: uv pip install --python .venv/bin/python -r config/requirements-dev.txt
+      - name: Run Cloudflare live smoke
+        run: >
+          .venv/bin/python test/cloudflare_live_smoke.py
+          --port "$CLOUDFLARE_LIVE_PORT"
+          --timeout "$CLOUDFLARE_LIVE_TIMEOUT"
+          --sentinel "$CLOUDFLARE_LIVE_SENTINEL"

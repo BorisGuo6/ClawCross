@@ -1,0 +1,49 @@
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from langchain_core.messages import HumanMessage, ToolMessage
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import webot.context as webot_context
+from webot.context import budget_tool_messages, compact_history_messages
+
+
+class WeBotContextTests(unittest.TestCase):
+    def test_budget_tool_messages_replaces_large_payload_with_reference(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"WEBOT_RUNTIME_ARTIFACTS_ENABLED": "1"}):
+                with patch.object(webot_context, "USER_FILES_DIR", Path(tmpdir)):
+                    messages = [
+                        ToolMessage(content="x" * 5000, tool_call_id="call-1", name="read_file"),
+                    ]
+                    budgeted = budget_tool_messages(
+                        user_id="alice",
+                        session_id="session-1",
+                        messages=messages,
+                        total_char_budget=100,
+                        item_char_limit=80,
+                    )
+                    self.assertEqual(len(budgeted), 1)
+                    text = budgeted[0].content
+                    self.assertIn("[Tool result budgeted]", text)
+                    self.assertIn("saved_to=", text)
+
+    def test_compact_history_messages_inserts_summary_and_keeps_recent(self):
+        messages = [HumanMessage(content=f"message-{index} " * 20) for index in range(20)]
+        compacted = compact_history_messages(messages, max_messages=8, preserve_recent=4, context_token_budget=200)
+        self.assertLessEqual(len(compacted), 8)
+        self.assertIn("压缩摘要", compacted[0].content)
+        self.assertIn("message-19", compacted[-1].content)
+
+
+if __name__ == "__main__":
+    unittest.main()
