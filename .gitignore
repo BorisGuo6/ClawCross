@@ -1,0 +1,90 @@
+# 虚拟环境
+.venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 环境变量配置（含密钥）
+config/.env
+
+# 但 .env.example 模板需要上传
+!config/.env.example
+
+# 用户密码配置（含哈希）
+config/users.json
+!config/users.json.example
+
+# 但 requirements.txt 需要上传
+!config/requirements.txt
+
+# IDE
+.vscode/
+.idea/
+
+# pyright 配置
+pyrightconfig.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# cloudflared / bark-server 二进制
+bin/
+
+# 打包产物
+build/
+dist/
+node_modules/
+.npm-cache/
+.playwright-browsers/
+.uv-cache/
+playwright-report/
+test-results/
+*.spec
+Clawcross.exe
+*.dmg
+
+
+chatbot/logs/
+chatbot/botpy.log
+
+# 运行日志
+logs/
+!logs/.gitkeep
+
+# PID 文件
+.clawcross.pid
+
+# 重启信号文件
+.restart_flag
+
+.tunnel.pid
+/test-results
+
+# 运行时数据（保留 data/team_presets 等可版本化资产）
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+data/checkpoint_export_*.json
+data/user_files/
+data/oasis_discussions/
+data/timeset/
+
+# src 下运行时 SQLite / 用户数据（与 data/ 规则对齐）
+src/data/*.db
+src/data/*.db-wal
+src/data/*.db-shm
+src/data/*.db-journal
+src/data/user_files/
+
+# 大体积演示素材（本地保留即可，不进仓库）
+docs/clawcross.pptx
+docs/media/clawcross-demo.mp4
+docs/media/teamclaw-demo.mp4
+
+# 临时 LLM 请求调试导出（CLAWCROSS_DEBUG_LLM_PAYLOAD=1）
+data/debug_llm_payload_last.json
+.claude/settings.local.json
