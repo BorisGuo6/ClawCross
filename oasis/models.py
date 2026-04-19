@@ -50,6 +50,7 @@ class CreateTopicRequest(BaseModel):
     team: Optional[str] = None         # 团队名称（用于分组代理存储）
     autogen_swarm: bool = False        # 是否自动生成 swarm / GraphRAG 蓝图
     swarm_mode: Optional[str] = "prediction"  # swarm blueprint 模式
+    allow_empty: bool = False          # 允许创建无引擎的纯人工 topic
 
 
 class ManualPostRequest(BaseModel):
@@ -58,6 +59,21 @@ class ManualPostRequest(BaseModel):
     author: Optional[str] = None          # 作者名称
     content: str = Field(min_length=1, max_length=8000)  # 帖子内容
     reply_to: Optional[int] = None        # 回复目标帖子ID
+
+
+class ManualVoteRequest(BaseModel):
+    """向现有 topic 帖子投票。"""
+    user_id: str = "anonymous"
+    voter: Optional[str] = None
+    post_id: int = Field(ge=1)
+    direction: str = Field(pattern="^(up|down)$")
+
+
+class ManualConclusionRequest(BaseModel):
+    """手动结束一个纯人工或外部脚本驱动的话题。"""
+    user_id: str = "anonymous"
+    conclusion: str = Field(min_length=1, max_length=16000)
+    author: Optional[str] = None
 
 
 class AgentCallbackRequest(BaseModel):

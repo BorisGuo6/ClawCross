@@ -71,6 +71,8 @@ data/*.db-journal
 data/checkpoint_export_*.json
 data/user_files/
 data/oasis_discussions/
+data/python_workflow_runs/
+data/trajectories/
 data/timeset/
 
 # src 下运行时 SQLite / 用户数据（与 data/ 规则对齐）

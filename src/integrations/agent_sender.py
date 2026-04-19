@@ -27,6 +27,9 @@ class SendToAgentResult:
     error: str | None = None
     meta: dict[str, Any] | None = None
 
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
 
 SenderFunc = Callable[[SendToAgentRequest], Awaitable[SendToAgentResult]]
 _SENDERS: dict[str, SenderFunc] = {}

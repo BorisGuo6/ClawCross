@@ -419,14 +419,23 @@ def _user_root(user_id: str) -> Path:
     return root
 
 
-def _evolution_root(user_id: str) -> Path:
-    root = _user_root(user_id) / "skill_evolution"
+def _team_root(user_id: str, team: str) -> Path:
+    clean_team = (team or "").strip()
+    if not clean_team or "/" in clean_team or "\\" in clean_team or clean_team.startswith(".") or ".." in clean_team:
+        raise ValueError(f"Invalid team name '{team}'")
+    root = _user_root(user_id) / "teams" / clean_team
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-def _skill_evolution_dir(user_id: str, skill_name: str) -> Path:
-    root = _evolution_root(user_id) / "skills" / slugify(skill_name, "skill")
+def _evolution_root(user_id: str, team: str = "") -> Path:
+    root = (_team_root(user_id, team) if team else _user_root(user_id)) / "skill_evolution"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _skill_evolution_dir(user_id: str, skill_name: str, team: str = "") -> Path:
+    root = _evolution_root(user_id, team=team) / "skills" / slugify(skill_name, "skill")
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -470,8 +479,8 @@ def _intent_counts(signal_counts: Counter[str]) -> Counter[str]:
     return counts
 
 
-def _feedback_history_path(user_id: str, skill_name: str) -> Path:
-    return _skill_evolution_dir(user_id, skill_name) / "feedback_history.jsonl"
+def _feedback_history_path(user_id: str, skill_name: str, team: str = "") -> Path:
+    return _skill_evolution_dir(user_id, skill_name, team=team) / "feedback_history.jsonl"
 
 
 def _history_signal_ids(entry: dict[str, Any]) -> list[str]:
@@ -494,8 +503,8 @@ def _entry_counts_as_failure(entry: dict[str, Any]) -> bool:
     return int(entry.get("failure_count") or 0) > 0
 
 
-def _analyze_recent_history(user_id: str, skill_name: str) -> dict[str, Any]:
-    history = _load_jsonl(_feedback_history_path(user_id, skill_name), limit=10)
+def _analyze_recent_history(user_id: str, skill_name: str, team: str = "") -> dict[str, Any]:
+    history = _load_jsonl(_feedback_history_path(user_id, skill_name, team=team), limit=10)
     tail = history[-8:]
     signal_freq: Counter[str] = Counter()
     recent_intents = [str(entry.get("intent") or "repair") for entry in history]
@@ -625,11 +634,11 @@ def _resolve_strategy(
     return resolved
 
 
-def _capture_local_state(user_id: str, skill_name: str, skill: dict[str, Any]) -> dict[str, Any]:
+def _capture_local_state(user_id: str, skill_name: str, skill: dict[str, Any], team: str = "") -> dict[str, Any]:
     from webot.trajectory import get_trajectory_stats
 
-    history_entries = len(_load_jsonl(_feedback_history_path(user_id, skill_name)))
-    runtime_failures = len(_load_jsonl(_evolution_root(user_id) / "runtime_failures.jsonl"))
+    history_entries = len(_load_jsonl(_feedback_history_path(user_id, skill_name, team=team)))
+    runtime_failures = len(_load_jsonl(_evolution_root(user_id, team=team) / "runtime_failures.jsonl"))
 
     return {
         "repo_root": str(PROJECT_ROOT),
@@ -955,6 +964,7 @@ def analyze_skill_evolution(
     user_id: str,
     *,
     name: str,
+    team: str = "",
     session_id: str = "",
     days: int = 30,
     limit: int = 8,
@@ -962,7 +972,7 @@ def analyze_skill_evolution(
     command: str = "",
     strategy: str = "auto",
 ) -> dict[str, Any]:
-    skill = get_skill(user_id, name=name)
+    skill = get_skill(user_id, name=name, team=team, fallback_to_personal=bool(team))
     if not skill:
         return {"success": False, "error": f"Skill '{name}' not found"}
 
@@ -982,7 +992,7 @@ def analyze_skill_evolution(
         signal_counts.update(_detect_signals(failure["searchable_text"]))
         vocabulary.update(_tokenize(failure["searchable_text"]))
 
-    history_diagnostics = _analyze_recent_history(user_id, name)
+    history_diagnostics = _analyze_recent_history(user_id, name, team=team if skill.get("scope") == "team" else "")
     signal_counts = _augment_signal_counts(signal_counts, history_diagnostics)
     resolved_strategy = _resolve_strategy(
         strategy=strategy,
@@ -1005,7 +1015,7 @@ def analyze_skill_evolution(
         }
         for signal_id, count in signal_counts.most_common(5)
     ]
-    local_state = _capture_local_state(user_id, name, skill)
+    local_state = _capture_local_state(user_id, name, skill, team=team if skill.get("scope") == "team" else "")
     validation_report = _build_validation_report(
         skill_name=name,
         candidate_id=(frontier[0]["candidate_id"] if frontier else ""),
@@ -1042,6 +1052,7 @@ def analyze_skill_evolution(
         "success": True,
         "generated_at": _utc_now_iso(),
         "skill_name": name,
+        "team": team if skill.get("scope") == "team" else "",
         "session_id": session_id,
         "window_days": days,
         "failure_count": len(failures),
@@ -1294,6 +1305,7 @@ def _persist_skill_evolution_state(
     *,
     user_id: str,
     skill_name: str,
+    team: str = "",
     report: dict[str, Any],
     applied_candidate: dict[str, Any],
     report_path: str,
@@ -1306,7 +1318,7 @@ def _persist_skill_evolution_state(
     empty_cycle: bool,
     updated: bool,
 ) -> tuple[Path, Path]:
-    state_dir = _skill_evolution_dir(user_id, skill_name)
+    state_dir = _skill_evolution_dir(user_id, skill_name, team=team)
     feedback_path = state_dir / "feedback_history.jsonl"
     frontier_path = state_dir / "frontier.json"
 
@@ -1350,6 +1362,7 @@ def apply_skill_evolution(
     user_id: str,
     *,
     name: str,
+    team: str = "",
     session_id: str = "",
     days: int = 30,
     limit: int = 8,
@@ -1358,13 +1371,14 @@ def apply_skill_evolution(
     source: str = "manual",
     strategy: str = "auto",
 ) -> dict[str, Any]:
-    skill = get_skill(user_id, name=name)
+    skill = get_skill(user_id, name=name, team=team, fallback_to_personal=bool(team))
     if not skill:
         return {"success": False, "error": f"Skill '{name}' not found"}
 
     report = analyze_skill_evolution(
         user_id,
         name=name,
+        team=team,
         session_id=session_id,
         days=days,
         limit=limit,
@@ -1394,7 +1408,8 @@ def apply_skill_evolution(
         command=command,
         error_text=error_text,
     )
-    previous_entries = _load_jsonl(_feedback_history_path(user_id, name), limit=1)
+    write_team = team if skill.get("scope") == "team" else ""
+    previous_entries = _load_jsonl(_feedback_history_path(user_id, name, team=write_team), limit=1)
     previous_signature = previous_entries[0].get("cycle_signature") if previous_entries else ""
     empty_cycle = bool(previous_signature and previous_signature == cycle_signature)
 
@@ -1410,7 +1425,7 @@ def apply_skill_evolution(
         updated_content = _upsert_managed_block(str(skill.get("content") or ""), managed_block)
         updated = updated_content != str(skill.get("content") or "")
         if updated:
-            edit_result = edit_skill(user_id, name=name, content=updated_content)
+            edit_result = edit_skill(user_id, name=name, content=updated_content, team=write_team)
             if not edit_result.get("success"):
                 return edit_result
             edit_path = edit_result.get("path", edit_path)
@@ -1419,8 +1434,8 @@ def apply_skill_evolution(
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     latest_file = f"references/evolution/latest-report.md"
     stamped_file = f"references/evolution/report-{stamp}.md"
-    latest_result = write_skill_file(user_id, name=name, file_path=latest_file, file_content=report_md)
-    stamped_result = write_skill_file(user_id, name=name, file_path=stamped_file, file_content=report_md)
+    latest_result = write_skill_file(user_id, name=name, file_path=latest_file, file_content=report_md, team=write_team)
+    stamped_result = write_skill_file(user_id, name=name, file_path=stamped_file, file_content=report_md, team=write_team)
     validation_report = report.get("validation_report") or {}
     validation_json = json.dumps(validation_report, ensure_ascii=False, indent=2)
     latest_validation_file = "references/evolution/latest-validation-report.json"
@@ -1430,12 +1445,14 @@ def apply_skill_evolution(
         name=name,
         file_path=latest_validation_file,
         file_content=validation_json,
+        team=write_team,
     )
     stamped_validation_result = write_skill_file(
         user_id,
         name=name,
         file_path=stamped_validation_file,
         file_content=validation_json,
+        team=write_team,
     )
 
     report_path = (
@@ -1452,6 +1469,7 @@ def apply_skill_evolution(
     feedback_path, frontier_path = _persist_skill_evolution_state(
         user_id=user_id,
         skill_name=name,
+        team=write_team,
         report=report,
         applied_candidate=candidate,
         report_path=str(report_path),

@@ -7,6 +7,7 @@ import os
 import json
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 from integrations.acpx_cli_tools import acpx_agent_command_names
@@ -16,7 +17,7 @@ from dotenv import load_dotenv
 from utils.env_settings import read_env_all, write_env_settings
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from utils.cron_utils import get_agent_cron_jobs, restore_cron_jobs
-from services.llm_factory import infer_provider
+from services.llm_factory import create_chat_model, extract_text, infer_provider
 from routes.front_group_routes import register_group_routes
 from routes.front_oasis_routes import register_oasis_routes
 from routes.front_session_routes import register_session_routes
@@ -55,11 +56,16 @@ from services.team_creator_service import (
     PRESET_POOL,
 )
 from services.team_preset_assets import install_team_preset, list_team_presets
+from services.team_snapshot_skills import add_team_skills_to_zip, add_user_skills_to_zip, restore_skills_from_team_dir
 
 # 加载 .env 配置
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
 load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
+WORKFLOW_PYTHON = os.path.join(root_dir, ".venv", "bin", "python")
+if not os.path.isfile(WORKFLOW_PYTHON):
+    WORKFLOW_PYTHON = _sys.executable
+WORKFLOW_IMPORT_PATHS = os.pathsep.join([root_dir, os.path.join(root_dir, "src")])
 
 app = Flask(__name__,
             template_folder=os.path.join(root_dir, 'frontend', 'templates'),
@@ -3400,11 +3406,117 @@ except Exception:
     _vis_yaml_to_layout = None
 
 
+def _extract_tagged_block(text: str, tag: str) -> str:
+    """Extract a tagged payload like <TAG>...</TAG> from LLM output."""
+    if not text:
+        return ""
+    pattern = rf"<{tag}>\s*(.*?)\s*</{tag}>"
+    match = _re.search(pattern, text, _re.DOTALL | _re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def _extract_python_from_response(text: str) -> str:
+    """Extract workflowpy code from possible wrappers or markdown fences."""
+    tagged = _extract_tagged_block(text, "WORKFLOWPY_CODE")
+    if tagged:
+        return tagged
+
+    fenced = _re.search(r"```(?:python)?\s*\n(.*?)```", text or "", _re.DOTALL | _re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+
+    return (text or "").strip()
+
+
+def _extract_python_explain_from_response(text: str) -> str:
+    """Extract workflow explanation from LLM output."""
+    tagged = _extract_tagged_block(text, "WORKFLOWPY_EXPLAIN")
+    return tagged or ""
+
+
+def _extract_yaml_explain_from_response(text: str) -> str:
+    """Extract YAML workflow explanation from LLM output."""
+    tagged = _extract_tagged_block(text, "OASIS_EXPLAIN")
+    return tagged or ""
+
+
 def _yaml_dir(user_id: str, team: str = "") -> str:
     """Return the YAML workflow directory path for a user (team-scoped when team is provided)."""
     if team:
         return os.path.join(root_dir, "data", "user_files", user_id, "teams", team, "oasis", "yaml")
     return os.path.join(root_dir, "data", "user_files", user_id, "oasis", "yaml")
+
+
+def _python_dir(user_id: str, team: str = "") -> str:
+    """Return the workflowpy directory path for a user (team-scoped when team is provided)."""
+    if team:
+        return os.path.join(root_dir, "data", "user_files", user_id, "teams", team, "oasis", "python")
+    return os.path.join(root_dir, "data", "user_files", user_id, "oasis", "python")
+
+
+def _workflow_mode() -> str:
+    mode = (request.args.get("mode") or request.form.get("mode") or "").strip().lower()
+    if not mode and request.is_json:
+        body = request.get_json(silent=True) or {}
+        mode = str(body.get("mode") or "").strip().lower()
+    return "python" if mode == "python" else "yaml"
+
+
+def _workflow_dir(user_id: str, team: str = "", mode: str = "yaml") -> str:
+    return _python_dir(user_id, team) if mode == "python" else _yaml_dir(user_id, team)
+
+
+def _workflow_ext(mode: str = "yaml") -> str:
+    return ".py" if mode == "python" else ".yaml"
+
+
+def _spawn_standalone_python_workflow(
+    *,
+    user_id: str,
+    python_file: str,
+    question: str,
+    team: str = "",
+) -> dict[str, str | int]:
+    runs_dir = os.path.join(root_dir, "data", "python_workflow_runs")
+    os.makedirs(runs_dir, exist_ok=True)
+    run_id = uuid.uuid4().hex[:12]
+    log_path = os.path.join(runs_dir, f"{run_id}.log")
+    result_path = os.path.join(runs_dir, f"{run_id}.json")
+    cmd = [
+        WORKFLOW_PYTHON,
+        python_file,
+        "--user-id",
+        user_id or "default",
+        "--question",
+        question or "",
+        "--result-file",
+        result_path,
+    ]
+    if team:
+        cmd.extend(["--team", team])
+
+    log_file = open(log_path, "a", encoding="utf-8")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=root_dir,
+        env={
+            **os.environ,
+            "CLAWCROSS_PROJECT_ROOT": root_dir,
+            "CLAWCROSS_PYTHONPATH": WORKFLOW_IMPORT_PATHS,
+        },
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    log_file.close()
+    return {
+        "run_id": run_id,
+        "pid": proc.pid,
+        "log_file": log_path,
+        "result_file": result_path,
+        "python_file": python_file,
+        "python_executable": WORKFLOW_PYTHON,
+    }
 
 
 @app.route("/proxy_visual/experts", methods=["GET"])
@@ -3507,124 +3619,315 @@ def proxy_visual_generate_yaml():
 
 @app.route("/proxy_visual/agent-generate-yaml", methods=["POST"])
 def proxy_visual_agent_generate_yaml():
-    """Build prompt + send to main agent using session credentials → get YAML."""
+    """Build prompt + call the configured LLM directly for one-shot workflow generation."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data"}), 400
 
-    user_id = session.get("user_id", "")
+    mode = str(data.get("mode") or "yaml").strip().lower()
+    mode = "python" if mode == "python" else "yaml"
+    guidance = str(data.get("guidance") or "").strip()
+    current_code = str(data.get("current_code") or "").rstrip()
+    prompt_context = data.get("prompt_context")
 
     try:
-        prompt = _vis_build_llm_prompt(data) if _vis_build_llm_prompt else "Error: visual module unavailable"
+        if mode == "python":
+            prompt = (
+                "Write a self-bootstrapping standalone Python workflow script for ClawCross/OASIS.\n"
+                "Output exactly these two tagged blocks, in this order:\n"
+                "<WORKFLOWPY_EXPLAIN>\n"
+                "Short workflow explanation here.\n"
+                "</WORKFLOWPY_EXPLAIN>\n"
+                "<WORKFLOWPY_CODE>\n"
+                "# code\n"
+                "</WORKFLOWPY_CODE>\n"
+                "No text before or after the tags.\n"
+                "Reference docs/workflowpy.md and docs/oasis-reference.md.\n"
+                "The script must run as:\n"
+                "python my_workflow.py --question '...' --user-id '...' --team '...'\n"
+                "Required structure:\n"
+                "- import StandaloneWorkflowContext and run_cli from oasis.python_workflow_cli\n"
+                "- from oasis.python_workflow_cli import StandaloneWorkflowContext, run_cli\n"
+                "- define async def main(ctx: StandaloneWorkflowContext)\n"
+                "- end with: if __name__ == '__main__': raise SystemExit(run_cli(main))\n"
+                "Use ctx for:\n"
+                "- ctx.question, ctx.user_id, ctx.team, ctx.topic_id, ctx.run_id\n"
+                "- ctx.list_agents(), ctx.list_personas(), ctx.get_agent(), ctx.get_persona()\n"
+                "- await ctx.send_agent(...), await ctx.send_persona(...), await ctx.publish(...)\n"
+                "- ctx.set_conclusion(...), ctx.set_result(...)\n"
+                "- await ctx.create_empty_topic(...), await ctx.publish_to_topic(...), await ctx.conclude_topic(...)\n"
+                "Rules:\n"
+                "- Use async/await.\n"
+                "- Keep the script directly executable with plain Python.\n"
+                "- If oasis.python_workflow_cli is already importable, do not add any bootstrap path logic.\n"
+                "- If imports do not work yet, you may use any import bootstrap you want: set PYTHONPATH, append custom sys.path entries, use a wrapper, or read CLAWCROSS_PYTHONPATH / CLAWCROSS_PROJECT_ROOT from the environment.\n"
+                "- Do not assume that searching upward for a repository root is required, or that the workflow file lives inside the repo tree.\n"
+                "- Import extra modules only when needed.\n"
+                "- By default the runtime auto-creates an OASIS topic before main(ctx) starts, so ctx.topic_id is usually already set.\n"
+                "- ctx.publish(...) writes local logs and also mirrors the message into the auto-created topic when one exists.\n"
+                "- Only call ctx.create_empty_topic(...) yourself if you intentionally want extra topics beyond the default one.\n"
+                "- ctx.list_agents() and ctx.list_personas() are synchronous helpers; do not write await ctx.list_agents() or await ctx.list_personas().\n"
+                "- Do not assume tags like creative or critical are unique. Prefer selecting from ctx.list_agents() and then pass the chosen agent['id'] into ctx.send_agent(...).\n"
+                "- If you call ctx.get_agent(...), use a unique agent id when possible, not a broad role tag.\n"
+                "- If the task is 'ask a role/persona to respond' (for example creative, critical, entrepreneur), prefer await ctx.send_persona(persona_tag, prompt) instead of trying to find an agent with the same tag.\n"
+                "- Use send_agent(...) for existing concrete agents; use send_persona(...) for role-based one-off speaking.\n"
+                "- send_agent(...) and send_persona(...) return a SendToAgentResult object with fields like .ok, .content, .error, and .meta.\n"
+                "- Prefer attribute access such as reply.content or reply.ok. Do not treat the return value as a plain dict.\n"
+                "- send_agent(...) may use an existing session and therefore may have memory, but workflow-critical context should still be passed explicitly when a later step depends on earlier outputs.\n"
+                "- send_persona(...) should be treated as a lightweight role-based call; do not rely on implicit long-term memory there.\n"
+                "- A strong default pattern is: get ctx.list_agents() for the current team scope, run them sequentially, and splice prior outputs into the next prompt when later agents should see earlier results.\n"
+                "- For a 'team discussion' workflow, prefer serial execution over hidden concurrency unless the task clearly benefits from parallel fan-out.\n"
+                "- Another strong pattern is hybrid orchestration: fan out to several agents in parallel with asyncio.gather(...), publish or collect their replies, then use one later serial step to synthesize the combined results.\n"
+                "- For multi-round workflows, explicitly include the relevant prior outputs when building the next prompt.\n"
+                "- If round 2 depends on round 1, manually splice round-1 content into the round-2 prompt instead of relying on hidden session memory.\n"
+                "- Avoid fallback logic like 'pick the first agent'. If a required agent is missing, fail clearly with ctx.set_result(...) or raise a clear error.\n"
+                "- When storing send_agent/send_persona results, only keep JSON-serializable fields such as response.content, not the raw response object.\n"
+                "- ctx.set_conclusion(...) should be a short string summary. Put structured data into ctx.set_result(...).\n"
+                "- Finish with ctx.set_conclusion(...) or ctx.set_result(...), or return a natural final value.\n"
+                "- No prose, no markdown fences, no explanation.\n\n"
+                "For WORKFLOWPY_EXPLAIN:\n"
+                "- 3-6 short bullet lines.\n"
+                "- Summarize what the workflow does, whether it creates an OASIS topic, which agents/personas it uses, and the final output shape.\n"
+                "- Do not repeat the code.\n\n"
+                f"Task:\n{data.get('question') or 'Implement a useful workflowpy script'}\n"
+            )
+            if current_code:
+                prompt += (
+                    "\nExisting workflowpy script to revise or extend:\n"
+                    "<EXISTING_WORKFLOWPY>\n"
+                    f"{current_code}\n"
+                    "</EXISTING_WORKFLOWPY>\n"
+                    "Preserve the user's working structure when possible. Improve or complete it instead of rewriting everything unless the current code is fundamentally wrong for the task.\n"
+                )
+        else:
+            base_prompt = _vis_build_llm_prompt(data) if _vis_build_llm_prompt else "Error: visual module unavailable"
+            prompt = (
+                "You are designing a YAML workflow for the OASIS orchestration engine.\n"
+                "Return exactly these two tagged blocks, in this order:\n"
+                "<OASIS_EXPLAIN>\n"
+                "Short workflow explanation here.\n"
+                "</OASIS_EXPLAIN>\n"
+                "<OASIS_YAML>\n"
+                "version: 2\n"
+                "...\n"
+                "</OASIS_YAML>\n"
+                "Do not output anything before or after those tags.\n"
+                "This is a one-shot generation request, not a chat session.\n"
+                "The YAML must be directly runnable by OASIS.\n\n"
+                "Reference behavior from docs/create_workflow.md and docs/oasis-reference.md.\n"
+                "Hard rules:\n"
+                "- Use version: 2 graph mode.\n"
+                "- Every node in plan must have a unique id.\n"
+                "- Nodes with no incoming edges are entry points.\n"
+                "- Use regular edges for normal fan-out/fan-in dependencies.\n"
+                "- Use conditional_edges only for true runtime branching.\n"
+                "- If a node has selector: true, its outgoing branches MUST be declared in selector_edges, not regular edges.\n"
+                "- Manual begin/bend nodes are allowed when they make the flow clearer.\n"
+                "- Keep the schedule valid for OASIS discussion/execution mode without unsupported fields.\n\n"
+                "Design goals:\n"
+                "- Keep the workflow compact and practical.\n"
+                "- Preserve real branching, review loops, or selectors only when they add value.\n"
+                "- Avoid redundant nodes and decorative complexity.\n\n"
+                "For OASIS_EXPLAIN:\n"
+                "- 3-6 short bullet lines.\n"
+                "- Summarize what the workflow does, key stages/branches, which agents/personas are used, and the final output shape.\n"
+                "- Do not repeat the YAML.\n\n"
+                f"{base_prompt}"
+            )
+        if prompt_context:
+            try:
+                prompt += "\n\nCurrent ClawCross workspace context:\n"
+                prompt += json.dumps(prompt_context, ensure_ascii=False, indent=2)
+                prompt += "\nUse this context when deciding whether to design for public scope vs team scope, which personas are actually available in the current expert pool, and which internal agent sessions already exist or are currently running.\n"
+            except Exception:
+                pass
+        if guidance:
+            prompt += f"\n\nAdditional user guidance:\n{guidance}\n"
 
-        # Call main agent with INTERNAL_TOKEN credentials
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {INTERNAL_TOKEN}:{user_id}",
-        }
-        payload = {
-            "model": "webot",
-            "messages": [
-                {"role": "system", "content": (
-                    "You are a YAML schedule generator for the OASIS expert orchestration engine. "
-                    "Output ONLY valid YAML, no markdown fences, no explanations, no commentary. "
-                    "The YAML must start with 'version: 1' and contain a 'plan:' section."
-                )},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": False,
-            "session_id": data.get("target_session_id") or "visual_orchestrator",
-            "temperature": 0.3,
-        }
-        resp = requests.post(LOCAL_OPENAI_COMPLETIONS_URL, json=payload, headers=headers, timeout=60)
-        if resp.status_code != 200:
-            return jsonify({"prompt": prompt, "error": f"Agent returned HTTP {resp.status_code}: {resp.text[:500]}", "agent_yaml": None})
+        llm = create_chat_model(
+            temperature=0.2 if mode == "yaml" else 0.25,
+            max_tokens=4096,
+            timeout=90,
+        )
+        response = llm.invoke(prompt)
+        agent_reply = extract_text(response.content if hasattr(response, "content") else str(response)).strip()
 
-        result = resp.json()
-        agent_reply = ""
-        try:
-            agent_reply = result["choices"][0]["message"]["content"]
-        except (KeyError, IndexError):
-            agent_reply = str(result)
+        if mode == "yaml":
+            tagged_yaml = _extract_tagged_block(agent_reply, "OASIS_YAML")
+            agent_yaml = tagged_yaml or (_vis_extract_yaml(agent_reply) if _vis_extract_yaml else agent_reply)
+            agent_explain = _extract_yaml_explain_from_response(agent_reply)
+        else:
+            agent_yaml = _extract_python_from_response(agent_reply)
+            agent_explain = _extract_python_explain_from_response(agent_reply)
+        validation = (
+            _vis_validate_yaml(agent_yaml) if (mode == "yaml" and _vis_validate_yaml)
+            else {"valid": bool(str(agent_yaml).strip()), "steps": 0, "step_types": ["python"] if mode == "python" else []}
+        )
 
-        agent_yaml = _vis_extract_yaml(agent_reply) if _vis_extract_yaml else agent_reply
-        validation = _vis_validate_yaml(agent_yaml) if _vis_validate_yaml else {"valid": False, "error": "validator unavailable"}
-
-        # Auto-save valid YAML to user's oasis/yaml directory (team-scoped)
+        user_id = session.get("user_id", "")
+        # Auto-save valid workflow to user's oasis directory (team-scoped)
         saved_path = None
         if validation.get("valid"):
             try:
                 import time as _time
                 team = data.get("team", "")
-                yd = _yaml_dir(user_id, team)
+                yd = _workflow_dir(user_id, team, mode)
                 os.makedirs(yd, exist_ok=True)
                 fname = data.get("save_name") or f"orch_{_time.strftime('%Y%m%d_%H%M%S')}"
-                if not fname.endswith((".yaml", ".yml")):
+                if mode == "python":
+                    if not fname.endswith(".py"):
+                        fname += ".py"
+                elif not fname.endswith((".yaml", ".yml")):
                     fname += ".yaml"
                 fpath = os.path.join(yd, fname)
                 with open(fpath, "w", encoding="utf-8") as _yf:
-                    _yf.write(f"# Auto-generated from visual orchestrator\n{agent_yaml}")
+                    if mode == "python":
+                        _yf.write(agent_yaml if str(agent_yaml).endswith("\n") else f"{agent_yaml}\n")
+                    else:
+                        _yf.write(f"# Auto-generated from visual orchestrator\n{agent_yaml}")
                 saved_path = fname
             except Exception as save_err:
                 saved_path = f"save_error: {save_err}"
 
-        return jsonify({"prompt": prompt, "agent_yaml": agent_yaml, "agent_reply_raw": agent_reply, "validation": validation, "saved_file": saved_path})
+        return jsonify({"prompt": prompt, "mode": mode, "agent_yaml": agent_yaml, "agent_explain": agent_explain, "agent_reply_raw": agent_reply, "validation": validation, "saved_file": saved_path})
 
-    except requests.exceptions.ConnectionError:
-        prompt = _vis_build_llm_prompt(data) if _vis_build_llm_prompt else ""
-        return jsonify({"prompt": prompt, "error": "Cannot connect to main agent. Is mainagent.py running?", "agent_yaml": None})
-    except requests.exceptions.Timeout:
-        prompt = _vis_build_llm_prompt(data) if _vis_build_llm_prompt else ""
-        return jsonify({"prompt": prompt, "error": "Agent request timed out (60s).", "agent_yaml": None})
+    except ValueError as e:
+        return jsonify({"prompt": "", "error": str(e), "agent_yaml": None}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/proxy_visual/save-layout", methods=["POST"])
 def proxy_visual_save_layout():
-    """Save canvas layout as YAML (no separate layout JSON stored)."""
+    """Save a workflow in either YAML(canvas) or workflowpy mode."""
     user_id = session.get("user_id", "")
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data"}), 400
-    if not _vis_layout_to_yaml:
-        return jsonify({"error": "Layout-to-YAML converter unavailable"}), 500
+    mode = str(data.get("mode") or "yaml").strip().lower()
+    mode = "python" if mode == "python" else "yaml"
     name = data.get("name", "untitled")
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip() or "untitled"
+    team = data.get("team", "")
+    yd = _workflow_dir(user_id, team, mode)
+    os.makedirs(yd, exist_ok=True)
+    ext = _workflow_ext(mode)
+    fpath = os.path.join(yd, f"{safe}{ext}")
+    if mode == "python":
+        content = str(data.get("content") or "")
+        if not content.strip():
+            return jsonify({"error": "No python workflow content"}), 400
+        with open(fpath, "w", encoding="utf-8") as f:
+            f.write(content if content.endswith("\n") else content + "\n")
+        return jsonify({"saved": True, "mode": mode, "file": os.path.basename(fpath), "path": fpath, "name": safe})
+
+    if not _vis_layout_to_yaml:
+        return jsonify({"error": "Layout-to-YAML converter unavailable"}), 500
     try:
         yaml_out = _vis_layout_to_yaml(data)
     except Exception as e:
         return jsonify({"error": f"YAML conversion failed: {e}"}), 500
-    team = data.get("team", "")
-    yd = _yaml_dir(user_id, team)
-    os.makedirs(yd, exist_ok=True)
-    fpath = os.path.join(yd, f"{safe}.yaml")
     with open(fpath, "w", encoding="utf-8") as f:
         f.write(f"# Saved from visual orchestrator\n{yaml_out}")
-    return jsonify({"saved": True})
+    return jsonify({"saved": True, "mode": mode, "file": os.path.basename(fpath), "path": fpath, "name": safe})
+
+
+@app.route("/proxy_visual/import-python-template", methods=["POST"])
+def proxy_visual_import_python_template():
+    user_id = session.get("user_id", "")
+    data = request.get_json(silent=True) or {}
+    template_name = str(data.get("template") or "").strip().lower()
+    team = str(data.get("team") or "").strip()
+    template_map = {
+        "sequential": "team_all_agents_sequential.py",
+        "parallel": "team_all_agents_parallel.py",
+    }
+    filename = template_map.get(template_name)
+    if not filename:
+        return jsonify({"error": "Unknown template"}), 400
+    template_path = os.path.join(root_dir, "oasis", "workflow_templates", filename)
+    if not os.path.isfile(template_path):
+        return jsonify({"error": "Template file not found"}), 404
+    with open(template_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    yd = _workflow_dir(user_id, team, "python")
+    os.makedirs(yd, exist_ok=True)
+    workflow_name = filename[:-3]
+    fpath = os.path.join(yd, filename)
+    with open(fpath, "w", encoding="utf-8") as f:
+        f.write(content if content.endswith("\n") else content + "\n")
+    return jsonify({
+        "saved": True,
+        "mode": "python",
+        "template": template_name,
+        "file": filename,
+        "path": fpath,
+        "name": workflow_name,
+    })
 
 
 @app.route("/proxy_visual/load-layouts", methods=["GET"])
 def proxy_visual_load_layouts():
-    """List saved YAML workflows as available layouts (team-scoped)."""
+    """List saved workflows for the selected mode (team-scoped)."""
     user_id = session.get("user_id", "")
     team = request.args.get("team", "")
-    yd = _yaml_dir(user_id, team)
+    mode = _workflow_mode()
+    yd = _workflow_dir(user_id, team, mode)
     if not os.path.isdir(yd):
         return jsonify([])
+    if mode == "python":
+        return jsonify([f[:-3] for f in sorted(os.listdir(yd)) if f.endswith(".py")])
     return jsonify([f.replace('.yaml', '').replace('.yml', '') for f in sorted(os.listdir(yd)) if f.endswith((".yaml", ".yml"))])
+
+
+@app.route("/proxy_visual/run-python-workflow", methods=["POST"])
+def proxy_visual_run_python_workflow():
+    """Run a saved python workflow through the standalone runner used by current frontends.
+
+    The script itself decides whether to auto-create and conclude an OASIS topic.
+    """
+    user_id = session.get("user_id", "")
+    data = request.get_json(silent=True) or {}
+    python_file = str(data.get("python_file") or "").strip()
+    question = str(data.get("question") or "").strip()
+    team = str(data.get("team") or "").strip()
+    if not python_file:
+        return jsonify({"error": "Missing python_file"}), 400
+    if not question:
+        return jsonify({"error": "Missing question"}), 400
+    try:
+        payload = _spawn_standalone_python_workflow(
+            user_id=user_id,
+            python_file=python_file,
+            question=question,
+            team=team,
+        )
+        return jsonify({
+            "started": True,
+            "mode": "standalone_python",
+            **payload,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/proxy_visual/load-layout/<name>", methods=["GET"])
 def proxy_visual_load_layout(name):
-    """Load a layout by reading the YAML file and converting to layout on-the-fly."""
+    """Load a workflow by mode."""
     user_id = session.get("user_id", "")
-    if not _vis_yaml_to_layout:
-        return jsonify({"error": "YAML-to-layout converter unavailable"}), 500
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip()
     team = request.args.get("team", "")
-    yd = _yaml_dir(user_id, team)
-    # Try .yaml then .yml
+    mode = _workflow_mode()
+    yd = _workflow_dir(user_id, team, mode)
+    if mode == "python":
+        fpath = os.path.join(yd, f"{safe}.py")
+        if not os.path.isfile(fpath):
+            return jsonify({"error": "Not found"}), 404
+        with open(fpath, "r", encoding="utf-8") as f:
+            return jsonify({"name": safe, "mode": mode, "content": f.read(), "path": fpath})
+
+    if not _vis_yaml_to_layout:
+        return jsonify({"error": "YAML-to-layout converter unavailable"}), 500
     fpath = os.path.join(yd, f"{safe}.yaml")
     if not os.path.isfile(fpath):
         fpath = os.path.join(yd, f"{safe}.yml")
@@ -3653,19 +3956,23 @@ def proxy_visual_load_yaml_raw(name):
     if not os.path.isfile(fpath):
         return jsonify({"error": "Not found"}), 404
     with open(fpath, "r", encoding="utf-8") as f:
-        return jsonify({"yaml": f.read()})
+        return jsonify({"yaml": f.read(), "path": fpath, "name": safe, "mode": "yaml"})
 
 
 @app.route("/proxy_visual/delete-layout/<name>", methods=["DELETE"])
 def proxy_visual_delete_layout(name):
-    """Delete a saved YAML workflow."""
+    """Delete a saved workflow for the selected mode."""
     user_id = session.get("user_id", "")
     safe = "".join(c for c in name if c.isalnum() or c in "-_ ").strip()
     team = request.args.get("team", "")
-    yd = _yaml_dir(user_id, team)
-    fpath = os.path.join(yd, f"{safe}.yaml")
-    if not os.path.isfile(fpath):
-        fpath = os.path.join(yd, f"{safe}.yml")
+    mode = _workflow_mode()
+    yd = _workflow_dir(user_id, team, mode)
+    if mode == "python":
+        fpath = os.path.join(yd, f"{safe}.py")
+    else:
+        fpath = os.path.join(yd, f"{safe}.yaml")
+        if not os.path.isfile(fpath):
+            fpath = os.path.join(yd, f"{safe}.yml")
     if os.path.isfile(fpath):
         os.remove(fpath)
         return jsonify({"deleted": True})
@@ -4523,6 +4830,122 @@ def update_external_member(team_name):
 
 
 # ------------------------------------------------------------------
+# Team-level settings (fallback_agent, etc.)
+# Stored in data/user_files/<user>/teams/<team>/team_settings.json
+# ------------------------------------------------------------------
+
+def _team_settings_path(user_id: str, team_name: str) -> str:
+    return os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name, "team_settings.json")
+
+
+def _team_settings_load(user_id: str, team_name: str) -> dict:
+    """Load team settings. Returns default empty dict if not found."""
+    path = _team_settings_path(user_id, team_name)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _team_settings_save(user_id: str, team_name: str, settings: dict) -> None:
+    """Save team settings."""
+    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    os.makedirs(team_dir, exist_ok=True)
+    path = _team_settings_path(user_id, team_name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+
+
+@app.route("/teams/<team_name>/settings", methods=["GET"])
+def get_team_settings(team_name):
+    """Get team-level settings including fallback_agent."""
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    if "/" in team_name or "\\" in team_name or team_name.startswith("."):
+        return jsonify({"error": "Invalid team name"}), 400
+    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    if not os.path.exists(team_dir):
+        return jsonify({"error": "Team not found"}), 404
+    settings = _team_settings_load(user_id, team_name)
+    return jsonify({"ok": True, "settings": settings})
+
+
+@app.route("/teams/<team_name>/settings", methods=["PUT"])
+def update_team_settings(team_name):
+    """Update team-level settings (e.g., fallback_agent)."""
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    if "/" in team_name or "\\" in team_name or team_name.startswith("."):
+        return jsonify({"error": "Invalid team name"}), 400
+    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    if not os.path.exists(team_dir):
+        return jsonify({"error": "Team not found"}), 404
+    body = request.get_json(force=True) or {}
+    settings = _team_settings_load(user_id, team_name)
+    # Only update provided fields
+    if "fallback_agent" in body:
+        settings["fallback_agent"] = str(body["fallback_agent"] or "").strip()
+    if "fallback_agent_config" in body:
+        settings["fallback_agent_config"] = body["fallback_agent_config"]
+    _team_settings_save(user_id, team_name, settings)
+    return jsonify({"ok": True, "settings": settings})
+
+
+@app.route("/teams/<team_name>/skills", methods=["GET"])
+def get_team_skills(team_name):
+    """List team-scoped and shared managed skills for a team."""
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    if "/" in team_name or "\\" in team_name or team_name.startswith("."):
+        return jsonify({"error": "Invalid team name"}), 400
+    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    if not os.path.exists(team_dir):
+        return jsonify({"error": "Team not found"}), 404
+
+    from webot.skills import list_skills
+
+    return jsonify({
+        "ok": True,
+        "team": team_name,
+        "skills": {
+            "team": list_skills(user_id, team=team_name),
+            "personal": list_skills(user_id),
+        },
+    })
+
+
+@app.route("/teams/<team_name>/skills/<skill_name>", methods=["GET"])
+def get_team_skill_detail(team_name, skill_name):
+    """Get a single team/shared managed skill detail including SKILL.md content."""
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    if "/" in team_name or "\\" in team_name or team_name.startswith("."):
+        return jsonify({"error": "Invalid team name"}), 400
+    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    if not os.path.exists(team_dir):
+        return jsonify({"error": "Team not found"}), 404
+
+    scope = str(request.args.get("scope") or "team").strip().lower()
+    if scope not in {"team", "personal"}:
+        return jsonify({"error": "Invalid scope"}), 400
+
+    from webot.skills import get_skill
+
+    skill = get_skill(user_id, name=skill_name, team=team_name if scope == "team" else "")
+    if not skill:
+        return jsonify({"error": f"Skill '{skill_name}' not found"}), 404
+
+    return jsonify({"ok": True, "skill": skill})
+
+
+# ------------------------------------------------------------------
 # User-level external_agents.json  (data/user_files/<user>/external_agents.json)
 # Same entry shape as team external_agents.json; used for non-team Ext + fast contacts.
 # ------------------------------------------------------------------
@@ -4971,7 +5394,8 @@ def preview_team_snapshot():
     """Preview what would be exported in a team snapshot.
     Returns a JSON summary of all exportable sections:
     agents (internal_agents), personas (oasis_experts),
-    skills (openclaw workspace/managed skills), cron jobs, workflows (yaml files).
+    skills (openclaw workspace/managed skills), cron jobs, workflows (yaml/python files),
+    and preset metadata files.
     """
     user_id = session.get("user_id", "")
 
@@ -5048,7 +5472,7 @@ def preview_team_snapshot():
             pass
     result["sections"]["external_agents"] = {"count": len(external_agents_info), "items": external_agents_info}
 
-    # --- 4. skills (workspace + managed) for openclaw agents ---
+    # --- 4. skills (workspace + managed) for openclaw agents + ClawCross managed skills ---
     skills_info = []
     managed_skills_info = []  # [{"name": ..., "source": "managed"}]
     if isinstance(ext_data, list):
@@ -5098,6 +5522,20 @@ def preview_team_snapshot():
         "details": skills_info,
         "managed": managed_skills_info,
     }
+    try:
+        from webot.skills import list_skills as list_managed_skills
+
+        result["sections"]["skills"]["clawcross_personal"] = [
+            {"name": item.get("name", ""), "category": item.get("category", "")}
+            for item in list_managed_skills(user_id)
+        ]
+        result["sections"]["skills"]["clawcross_team"] = [
+            {"name": item.get("name", ""), "category": item.get("category", "")}
+            for item in list_managed_skills(user_id, team=team)
+        ]
+    except Exception:
+        result["sections"]["skills"]["clawcross_personal"] = []
+        result["sections"]["skills"]["clawcross_team"] = []
 
     # --- 5. cron jobs ---
     cron_info = {}
@@ -5119,15 +5557,22 @@ def preview_team_snapshot():
                 cron_info[short_name] = {"count": 0}
     result["sections"]["cron"] = cron_info
 
-    # --- 6. workflows (yaml files) ---
-    yaml_files = []
+    # --- 6. workflows (yaml + python files) ---
+    workflow_files = []
     for root_path, dirs, files in os.walk(team_dir):
         for file in files:
-            if file.endswith(('.yaml', '.yml')):
+            if file.endswith(('.yaml', '.yml', '.py')):
                 file_path = os.path.join(root_path, file)
                 rel_path = os.path.relpath(file_path, team_dir)
-                yaml_files.append(rel_path)
-    result["sections"]["workflows"] = {"count": len(yaml_files), "items": yaml_files}
+                workflow_files.append(rel_path)
+    result["sections"]["workflows"] = {"count": len(workflow_files), "items": workflow_files}
+
+    # --- 7. preset metadata ---
+    preset_files = []
+    for filename in ("clawcross_preset_manifest.json", "clawcross_preset_source_map.json"):
+        if os.path.isfile(os.path.join(team_dir, filename)):
+            preset_files.append(filename)
+    result["sections"]["preset_metadata"] = {"count": len(preset_files), "items": preset_files}
 
     return jsonify(result)
 
@@ -5135,8 +5580,8 @@ def preview_team_snapshot():
 @app.route("/teams/snapshot/download", methods=["POST"])
 def download_team_snapshot():
     """Download a compressed snapshot of the team's data.
-    Includes: internal_agents.json, oasis_experts.json, 
-             external_agents.json, all .yaml files,
+    Includes: internal_agents.json, oasis_experts.json,
+             external_agents.json, preset metadata, all .yaml/.yml/.py workflow files,
              and skill folders (workspace + managed) for each openclaw agent.
     Note: session fields inside internal_agents.json are excluded (private).
     Supports selective export via 'include' field in request body.
@@ -5185,6 +5630,27 @@ def download_team_snapshot():
                 if skill_name is None:
                     return True  # agent is selected, check skills individually
                 return skill_name in agent_val
+        return True
+
+    def _inc_managed_skill(scope: str, skill_name: str | None = None) -> bool:
+        if include is None:
+            return True
+        skills_val = include.get("skills", False)
+        if skills_val is True:
+            return True
+        if skills_val is False or not skills_val:
+            return False
+        if isinstance(skills_val, dict):
+            key = "_managed_team" if scope == "team" else "_managed_personal"
+            scope_val = skills_val.get(key, False)
+            if scope_val is True:
+                return True
+            if scope_val is False or not scope_val:
+                return False
+            if isinstance(scope_val, list):
+                if skill_name is None:
+                    return True
+                return skill_name in scope_val
         return True
 
     team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
@@ -5256,11 +5722,17 @@ def download_team_snapshot():
                     else:
                         zipf.write(file_path, json_file)
             
-            # Add all .yaml files (workflows)
+            # Add preset metadata files
+            for preset_file in ("clawcross_preset_manifest.json", "clawcross_preset_source_map.json"):
+                preset_path = os.path.join(team_dir, preset_file)
+                if os.path.isfile(preset_path):
+                    zipf.write(preset_path, preset_file)
+
+            # Add workflow files (.yaml/.yml/.py)
             if _inc("workflows"):
                 for root_path, dirs, files in os.walk(team_dir):
                     for file in files:
-                        if file.endswith(('.yaml', '.yml')):
+                        if file.endswith(('.yaml', '.yml', '.py')):
                             file_path = os.path.join(root_path, file)
                             # Use relative path inside zip
                             rel_path = os.path.relpath(file_path, team_dir)
@@ -5347,6 +5819,22 @@ def download_team_snapshot():
             # Save cron jobs to zip: cron_jobs.json
             if cron_jobs_data:
                 zipf.writestr("cron_jobs.json", json.dumps(cron_jobs_data, ensure_ascii=False, indent=2))
+
+            # Add ClawCross managed skills (personal + team scoped).
+            if _inc("skills"):
+                personal_names = None
+                team_names = None
+                if include is not None and isinstance(include.get("skills"), dict):
+                    skills_val = include.get("skills", {})
+                    personal_raw = skills_val.get("_managed_personal", False)
+                    team_raw = skills_val.get("_managed_team", False)
+                    personal_names = {str(item) for item in personal_raw} if isinstance(personal_raw, list) else None
+                    team_names = {str(item) for item in team_raw} if isinstance(team_raw, list) else None
+
+                if _inc_managed_skill("personal"):
+                    add_user_skills_to_zip(zipf, user_id, selected_names=personal_names)
+                if _inc_managed_skill("team"):
+                    add_team_skills_to_zip(zipf, user_id, team, selected_names=team_names)
         
         zip_buffer.seek(0)
         
@@ -5358,7 +5846,7 @@ def download_team_snapshot():
             zip_buffer.read(),
             mimetype='application/zip',
             headers={
-                'Content-Disposition': f'attachment; filename="{filename}"'
+                'Content-Disposition': build_attachment_content_disposition(filename)
             }
         )
     except Exception as e:
@@ -5415,10 +5903,14 @@ def upload_team_snapshot():
                 # Skip directories and absolute paths
                 if filename.endswith('/') or filename.startswith('/'):
                     continue
-                # Allow files inside skills/ directory (any file type)
-                # For other files, only allow json and yaml
-                if not filename.startswith('skills/'):
-                    if not (filename.endswith(('.json', '.yaml', '.yml'))):
+                # Allow files inside skills/, clawcross_user_skills/, and clawcross_team_skills/ directories (any file type)
+                # For other files, allow team metadata plus workflow formats (json/yaml/python)
+                if not (
+                    filename.startswith('skills/')
+                    or filename.startswith('clawcross_user_skills/')
+                    or filename.startswith('clawcross_team_skills/')
+                ):
+                    if not filename.endswith(('.json', '.yaml', '.yml', '.py')):
                         return jsonify({"error": f"Invalid file type in zip: {filename}"}), 400
                 # Preserve relative directory structure from zip
                 target_path = os.path.join(team_dir, filename)
@@ -5474,13 +5966,18 @@ def upload_team_snapshot():
         # Save agents using _ia_save (writes unified internal_agents.json)
         if agents_data:
             _ia_save(user_id, agents_data, team)
-        
+
         # After internal agents, restore runtime identifiers in external_agents.json.
         openclaw_agents_path = os.path.join(team_dir, "external_agents.json")
         openclaw_restored = 0
         openclaw_errors = []
         openclaw_restore_details = []
-        
+
+        # Load team settings for fallback agent
+        team_settings = _team_settings_load(user_id, team)
+        fallback_agent = team_settings.get("fallback_agent", "")
+        fallback_agent_config = team_settings.get("fallback_agent_config", {})
+
         # Paths for extracted skill folders
         extracted_skills_dir = os.path.join(team_dir, "skills")
         managed_skills_src = os.path.join(extracted_skills_dir, "_managed")
@@ -5559,9 +6056,50 @@ def upload_team_snapshot():
                                                 shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
                                     skills_ms = round((time.perf_counter() - t_skills) * 1000, 2)
                             else:
-                                openclaw_errors.append(
-                                    f"{target_name}: {result.get('errors', result.get('error', 'failed'))}"
-                                )
+                                # Restore failed — try fallback agent if configured
+                                if fallback_agent and fallback_agent_config:
+                                    _logger_oc_restore.info(
+                                        "[clawcross-restore] route=snapshot_upload agent=%s restore failed, trying fallback=%s",
+                                        target_name,
+                                        fallback_agent,
+                                    )
+                                    try:
+                                        t_fb = time.perf_counter()
+                                        fb_r = requests.post(
+                                            f"{OASIS_BASE_URL}/sessions/openclaw/agent-restore",
+                                            json={
+                                                "agent_name": fallback_agent,
+                                                "display_name": display_oc_name,
+                                                "config": fallback_agent_config,
+                                                "workspace_files": {},
+                                            },
+                                            timeout=60,
+                                        )
+                                        fb_result = fb_r.json()
+                                        fb_ms = round((time.perf_counter() - t_fb) * 1000, 2)
+                                        if fb_result.get("ok"):
+                                            result = fb_result
+                                            result["fallback_used"] = True
+                                            openclaw_restored += 1
+                                            agent_entry["global_name"] = fallback_agent
+                                            agent_entry["_fallback"] = True
+                                            _logger_oc_restore.info(
+                                                "[clawcross-restore] route=snapshot_upload agent=%s fallback=ok agent=%s",
+                                                target_name,
+                                                fallback_agent,
+                                            )
+                                        else:
+                                            openclaw_errors.append(
+                                                f"{target_name}: {result.get('errors', result.get('error', 'failed'))} (fallback={fallback_agent} also failed)"
+                                            )
+                                    except Exception as fb_e:
+                                        openclaw_errors.append(
+                                            f"{target_name}: {result.get('errors', result.get('error', 'failed'))} (fallback exception: {fb_e})"
+                                        )
+                                else:
+                                    openclaw_errors.append(
+                                        f"{target_name}: {result.get('errors', result.get('error', 'failed'))}"
+                                    )
                             detail = {
                                 "agent": target_name,
                                 "ok": bool(result.get("ok")),
@@ -5602,6 +6140,8 @@ def upload_team_snapshot():
         # Clean up extracted skills directory from team folder (it was only temporary)
         if os.path.isdir(extracted_skills_dir):
             shutil.rmtree(extracted_skills_dir, ignore_errors=True)
+
+        skill_restore_result = restore_skills_from_team_dir(team_dir, user_id, team)
         
         # --- Restore cron jobs from cron_jobs.json ---
         cron_jobs_path = os.path.join(team_dir, "cron_jobs.json")
@@ -5632,6 +6172,12 @@ def upload_team_snapshot():
         
         msg_parts = [f"Team '{team}' snapshot uploaded"]
         msg_parts.append(f"{len(agents_data)} internal agents restored")
+        restored_skills_total = (
+            int(skill_restore_result.get("restored_user_skill_dirs", 0) or 0)
+            + int(skill_restore_result.get("restored_team_skill_dirs", 0) or 0)
+        )
+        if restored_skills_total:
+            msg_parts.append(f"{restored_skills_total} managed skills restored")
         if openclaw_restored > 0 or openclaw_errors:
             msg_parts.append(f"{openclaw_restored} OpenClaw agents restored")
         if cron_restored_total > 0 or cron_errors:
@@ -5640,6 +6186,7 @@ def upload_team_snapshot():
         return jsonify({
             "success": True,
             "message": ", ".join(msg_parts),
+            "skill_restore": skill_restore_result,
             "openclaw_errors": openclaw_errors if openclaw_errors else None,
             "openclaw_restore_details": openclaw_restore_details if openclaw_restore_details else None,
             "cron_errors": cron_errors if cron_errors else None,

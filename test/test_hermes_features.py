@@ -142,6 +142,17 @@ class TestSkillSystem(unittest.TestCase):
         skills = list_skills("alice")
         self.assertEqual(len(skills), 1)
 
+    def test_create_team_skill_and_list_with_personal(self):
+        from webot.skills import create_skill, list_skills
+        create_skill("alice", name="shared-skill", content=self._make_skill_content("shared-skill", "Shared"))
+        result = create_skill("alice", name="team-skill", content=self._make_skill_content("team-skill", "Team"), team="ops")
+        self.assertTrue(result["success"])
+
+        team_skills = list_skills("alice", team="ops", include_personal=True)
+        self.assertEqual({item["scope"] for item in team_skills}, {"team", "personal"})
+        self.assertTrue(any(item["name"] == "team-skill" and item["scope"] == "team" for item in team_skills))
+        self.assertTrue(any(item["name"] == "shared-skill" and item["scope"] == "personal" for item in team_skills))
+
     def test_create_duplicate_fails(self):
         from webot.skills import create_skill
         create_skill("alice", name="test-skill", content=self._make_skill_content())
@@ -184,10 +195,16 @@ class TestSkillSystem(unittest.TestCase):
         skill = get_skill("alice", name="test-skill")
         self.assertIn("references/notes.md", skill["support_files"])
 
-    def test_invalid_support_dir_rejected(self):
+    def test_custom_support_dir_allowed(self):
         from webot.skills import create_skill, write_skill_file
         create_skill("alice", name="test-skill", content=self._make_skill_content())
         result = write_skill_file("alice", name="test-skill", file_path="malicious/exploit.py", file_content="bad stuff")
+        self.assertTrue(result["success"])
+
+    def test_support_file_path_traversal_rejected(self):
+        from webot.skills import create_skill, write_skill_file
+        create_skill("alice", name="test-skill", content=self._make_skill_content())
+        result = write_skill_file("alice", name="test-skill", file_path="../outside.py", file_content="bad stuff")
         self.assertFalse(result["success"])
 
     def test_security_scan_blocks_malicious_skill(self):
@@ -219,6 +236,36 @@ class TestSkillSystem(unittest.TestCase):
         from webot.skills import build_skills_prompt
         prompt = build_skills_prompt("nonexistent-user")
         self.assertEqual(prompt, "")
+
+    def test_agent_user_skills_prompt_uses_managed_skills(self):
+        from core.agent import TeamAgent
+        from webot.skills import create_skill
+
+        create_skill("alice", name="deploy-script", content=self._make_skill_content("deploy-script", "Deploy to prod"))
+
+        agent = TeamAgent(str(SRC_DIR), str(self.tmppath / "checkpoints.db"))
+        agent._prompts["_user_files_dir"] = str(self.tmppath / "user_files")
+
+        prompt = agent._get_user_skills("alice")
+        self.assertIn("deploy-script", prompt)
+        self.assertIn("skill_view", prompt)
+        self.assertNotIn("skills_manifest.json", prompt)
+
+    def test_agent_user_skills_prompt_uses_team_and_personal_sections(self):
+        from core.agent import TeamAgent
+        from webot.skills import create_skill
+
+        create_skill("alice", name="shared-skill", content=self._make_skill_content("shared-skill", "Shared"))
+        create_skill("alice", name="team-skill", content=self._make_skill_content("team-skill", "Team"), team="ops")
+
+        agent = TeamAgent(str(SRC_DIR), str(self.tmppath / "checkpoints.db"))
+        agent._prompts["_user_files_dir"] = str(self.tmppath / "user_files")
+
+        prompt = agent._get_user_skills("alice", team="ops")
+        self.assertIn("团队技能", prompt)
+        self.assertIn("共享技能", prompt)
+        self.assertIn("team-skill", prompt)
+        self.assertIn("shared-skill", prompt)
 
     def test_get_nonexistent_skill(self):
         from webot.skills import get_skill

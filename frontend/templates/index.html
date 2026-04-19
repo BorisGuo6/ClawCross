@@ -365,7 +365,7 @@
                                 <input type="file" id="image-input" accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.log,.py,.js,.ts,.html,.css,.java,.c,.cpp,.h,.go,.rs,.sh,.bat,.ini,.toml,.cfg,.conf,.sql,.r,.rb,.mp3,.wav,.ogg,.m4a,.webm,.flac,.aac,.avi,.mp4,.mkv,.mov" multiple style="display:none;" onchange="handleFileSelect(event)">
                             </label>
                             <button id="record-btn" class="audio-record-btn" data-i18n-title="recording_title" title="录音" onclick="toggleRecording()">🎤</button>
-                            <button id="workflow-add-btn" class="workflow-add-btn" data-i18n-title="wf_btn_title" title="添加工作流" onclick="showWorkflowPopup()"><span class="wf-icon">📋</span><span class="wf-label" data-i18n="wf_btn_label">+ 工作流</span></button>
+                            <button id="workflow-add-btn" class="workflow-add-btn" data-i18n-title="wf_btn_title" title="添加工作流" onclick="showWorkflowPopup()"><span class="wf-label" data-i18n="wf_btn_label">添加工作流</span></button>
                             <button id="persona-add-btn" class="persona-add-btn" data-i18n-title="persona_btn_title" title="引入专家人设" onclick="showPersonaPopup()"><span class="persona-icon">🎭</span><span class="persona-label" data-i18n="persona_btn_label">+ 人设</span></button>
                         </div>
                         <div class="chat-composer-input-row">
@@ -649,18 +649,18 @@
                 <div class="orch-divider" id="orch-divider-left"></div>
 
                 <!-- Center: Canvas -->
-                <div class="orch-canvas-wrapper">
-                    <!-- Toolbar -->
-                    <div class="orch-toolbar">
+                    <div class="orch-canvas-wrapper">
+                        <!-- Toolbar -->
+                        <div class="orch-toolbar">
                         <button onclick="orchAutoArrange()" class="orch-btn" data-i18n-title="orch_tip_arrange" title="自动排列"><span data-i18n="orch_btn_arrange">🔄 排列</span></button>
                         <button onclick="orchSaveLayout()" class="orch-btn" data-i18n-title="orch_tip_save" title="保存工作流"><span data-i18n="orch_btn_save">💾 保存工作流</span></button>
                         <button onclick="orchLoadLayout()" class="orch-btn" data-i18n-title="orch_tip_load" title="加载工作流"><span data-i18n="orch_btn_load">📂 加载工作流</span></button>
-                        <button onclick="orchGenerateAgentYaml()" class="orch-btn orch-btn-primary" data-i18n-title="orch_tip_ai" title="AI 优化工作流"><span data-i18n="orch_btn_ai">🤖 AI优化工作流</span></button>
-                        <button onclick="orchExportYaml()" class="orch-btn orch-btn-primary" data-i18n-title="orch_tip_export" title="复制工作流到粘贴板"><span data-i18n="orch_btn_export">📋 复制工作流到粘贴板</span></button>
-                        <button onclick="orchDownloadYaml()" class="orch-btn" data-i18n-title="orch_tip_download" title="导出工作流"><span data-i18n="orch_btn_download">⬇️ 导出工作流</span></button>
-                        <button onclick="orchUploadYamlClick()" class="orch-btn" data-i18n-title="orch_tip_upload" title="导入工作流"><span data-i18n="orch_btn_upload">⬆️ 导入工作流</span></button>
+                        <button id="orch-export-btn" onclick="orchExportYaml()" class="orch-btn orch-btn-primary" data-i18n-title="orch_tip_export" title="复制工作流到粘贴板"><span id="orch-export-btn-label" data-i18n="orch_btn_export">📋 复制工作流到粘贴板</span></button>
+                        <button id="orch-download-btn" onclick="orchDownloadYaml()" class="orch-btn" data-i18n-title="orch_tip_download" title="导出工作流"><span id="orch-download-btn-label" data-i18n="orch_btn_download">⬇️ 导出工作流</span></button>
+                        <button id="orch-upload-btn" onclick="orchUploadYamlClick()" class="orch-btn" data-i18n-title="orch_tip_upload" title="导入工作流"><span id="orch-upload-btn-label" data-i18n="orch_btn_upload">⬆️ 导入工作流</span></button>
                         <input type="file" id="orch-yaml-upload-input" accept=".yaml,.yml" style="display:none;" onchange="orchHandleYamlUpload(event)">
                         <input type="file" id="orch-team-snapshot-input" accept=".zip" style="display:none;" onchange="orchHandleSnapshotUpload(event)">
+                        <button id="orch-run-btn" onclick="orchRunWorkflow()" class="orch-btn orch-btn-run" title="直接运行当前工作流"><span id="orch-run-btn-label">▶️ 运行工作流</span></button>
                         <button onclick="orchRefreshSessions()" class="orch-btn" data-i18n-title="orch_tip_status" title="刷新 session 状态"><span data-i18n="orch_btn_status">🔄 状态</span></button>
                         <button onclick="orchClearCanvas()" class="orch-btn orch-btn-danger" data-i18n-title="orch_tip_clear" title="清空工作流"><span data-i18n="orch_btn_clear">🗑️ 清空工作流</span></button>
                         <button onclick="toggleOrchFocusMode()" id="orch-focus-btn" class="orch-btn" title="专注模式：隐藏两侧面板"><span data-i18n="orch_btn_focus">🎯 专注</span></button>
@@ -704,6 +704,20 @@
                             </div>
                         </div>
                     </div>
+                    <div id="orch-python-canvas-panel" class="orch-python-canvas-panel" style="display:none;">
+                        <div class="orch-mobile-toggle left" onclick="orchToggleMobileSidebar()">☰ <span class="orch-toggle-label" data-i18n="orch_expert_pool_text">人设池</span></div>
+                        <div class="orch-mobile-toggle right" onclick="orchToggleMobilePanel()">⚙ <span class="orch-toggle-label" data-i18n="orch_btn_ai">AI编排</span></div>
+                        <div class="orch-python-canvas-head">
+                            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+                                <div>
+                                    <div class="orch-python-canvas-title">🐍 Python Workflow Editor</div>
+                                    <div class="orch-python-caption">Python workflow 会和 YAML 一样按名称保存，并落到 `oasis/python/` 目录。</div>
+                                </div>
+                                <button id="orch-python-restore-btn" class="orch-btn" onclick="orchRestorePythonDraft()" style="display:none;">↩️ 回退 AI 覆盖</button>
+                            </div>
+                        </div>
+                        <textarea id="orch-python-editor" class="orch-python-editor orch-python-editor-canvas" spellcheck="false" placeholder="# 在这里写 workflowpy 代码&#10;await publish('hello', author='workflowpy')&#10;set_conclusion('done')"></textarea>
+                    </div>
                 </div>
 
                 <!-- Divider: 画布 ↔ 右侧设置面板 -->
@@ -711,33 +725,56 @@
 
                 <!-- Right: Settings + YAML -->
                 <div class="orch-right-panel">
-                    <div class="orch-right-section">
+                    <div class="orch-mode-switch-wrap">
+                        <button id="orch-mode-yaml-btn" class="orch-mode-switch active" onclick="orchSetWorkflowMode('yaml')">
+                            <span class="orch-mode-title">YAML</span>
+                            <span class="orch-mode-sub">Canvas schedule</span>
+                        </button>
+                        <button id="orch-mode-python-btn" class="orch-mode-switch" onclick="orchSetWorkflowMode('python')">
+                            <span class="orch-mode-title">Python</span>
+                            <span class="orch-mode-sub">workflowpy editor</span>
+                        </button>
+                    </div>
+
+                    <div id="orch-settings-section" class="orch-right-section">
                         <div class="text-xs font-bold text-gray-500 uppercase tracking-wide px-3 pt-3 pb-1" data-i18n="orch_settings">⚙️ 设置</div>
                         <div class="px-3 pb-2 space-y-1 text-xs text-gray-600 border-b border-gray-100">
                             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="orch-repeat" class="accent-blue-600"> <span data-i18n="orch_repeat">每轮重复计划</span></label>
                             <label class="flex items-center gap-2"><span data-i18n="orch_rounds">轮次:</span> <input type="number" id="orch-rounds" value="5" min="1" max="20" class="w-12 px-1 py-0.5 border border-gray-300 rounded text-xs"></label>
                             <label class="flex items-center gap-2"><span data-i18n="orch_threshold">聚类阈值:</span> <input type="range" id="orch-threshold" min="50" max="400" value="150" class="flex-1 accent-blue-600"><span id="orch-threshold-val" class="text-[10px] text-gray-400">150</span></label>
+                            <div id="orch-settings-hint" class="orch-python-caption">这些参数用于 YAML 编排：是否每轮重跑计划、最大轮数，以及画布自动分组的聚类阈值。</div>
                         </div>
                     </div>
 
-                    <div class="orch-right-section">
-                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide px-3 pt-2 pb-1" data-i18n="orch_ai_gen">🤖 AI 生成</div>
-                        <div id="orch-agent-status" class="mx-3 mb-1 px-2 py-1 rounded text-[10px] bg-gray-50 border border-gray-200 text-gray-400" data-i18n="orch_ai_hint">
+                    <div id="orch-ai-section" class="orch-right-section">
+                        <div id="orch-ai-section-title" class="text-xs font-bold text-gray-500 uppercase tracking-wide px-3 pt-2 pb-1" data-i18n="orch_ai_gen">🤖 AI 生成</div>
+                        <div class="px-3 pb-2">
+                            <button id="orch-ai-btn" onclick="orchGenerateAgentYaml()" class="orch-ai-big-btn" data-i18n-title="orch_tip_ai" title="AI 优化工作流">
+                                <span id="orch-ai-btn-label" data-i18n="orch_btn_ai">🤖 AI优化工作流</span>
+                            </button>
+                        </div>
+                        <div class="px-3 pb-1">
+                            <div id="orch-guidance-label" class="text-[10px] text-gray-400 mb-1">🧭 优化指引</div>
+                            <textarea id="orch-guidance-input" class="orch-side-textarea orch-side-textarea-guidance" spellcheck="false" placeholder="例如：优先减少节点数量，但保留 reviewer 回环；Python 模式下输出 async workflowpy。"></textarea>
+                        </div>
+                        <div id="orch-agent-status" class="mx-3 mb-1 px-2 py-1 rounded text-[10px] bg-gray-50 border border-gray-200 text-gray-400">
                             点击「🤖 AI编排」自动生成 YAML
                         </div>
                         <div class="px-3 pb-1">
-                            <div class="text-[10px] text-gray-400 mb-1"><span data-i18n="orch_prompt_label">📨 发送的 Prompt</span> <button onclick="orchCopyPrompt()" class="text-[10px] text-blue-500 hover:underline float-right" data-i18n="orch_prompt_copy">复制</button></div>
-                            <div class="orch-yaml-box text-[10px] text-amber-600" id="orch-prompt-content" style="max-height:100px;" data-i18n="orch_prompt_hint">点击 AI编排 后显示</div>
+                            <div class="text-[10px] text-gray-400 mb-1"><span id="orch-prompt-label" data-i18n="orch_prompt_label">📨 发送的 Prompt</span> <button onclick="orchCopyPrompt()" class="text-[10px] text-blue-500 hover:underline float-right" data-i18n="orch_prompt_copy">复制</button></div>
+                            <div class="orch-yaml-box orch-prompt-box text-[10px] text-amber-600" id="orch-prompt-content" data-i18n="orch_prompt_hint">点击 AI编排 后显示</div>
                         </div>
                         <div class="px-3 pb-1">
-                            <div class="text-[10px] text-gray-400 mb-1"><span data-i18n="orch_agent_yaml_label">🤖 Agent YAML</span> <button onclick="orchCopyAgentYaml()" class="text-[10px] text-blue-500 hover:underline float-right" data-i18n="orch_agent_yaml_copy">复制</button></div>
-                            <div class="orch-yaml-box text-[10px] text-green-600" id="orch-agent-yaml" style="max-height:140px;" data-i18n="orch_agent_yaml_hint">等待 Agent 生成</div>
+                            <div class="text-[10px] text-gray-400 mb-1"><span id="orch-agent-output-label" data-i18n="orch_agent_yaml_label">🤖 Agent YAML</span> <button onclick="orchCopyAgentYaml()" class="text-[10px] text-blue-500 hover:underline float-right" data-i18n="orch_agent_yaml_copy">复制</button></div>
+                            <div class="orch-yaml-box orch-agent-output-box text-[10px] text-green-600" id="orch-agent-yaml" data-i18n="orch_agent_yaml_hint">等待 Agent 生成</div>
                         </div>
                     </div>
 
                     <div class="orch-right-section flex-1 flex flex-col min-h-0">
-                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide px-3 pt-2 pb-1" data-i18n="orch_rule_yaml">📄 规则 YAML</div>
-                        <div class="orch-yaml-box flex-1 mx-3 mb-2 text-xs text-green-700" id="orch-yaml-content" data-i18n="orch_rule_yaml_hint">拖入专家后自动生成...</div>
+                        <div id="orch-code-panel-title" class="text-xs font-bold text-gray-500 uppercase tracking-wide px-3 pt-2 pb-1" data-i18n="orch_rule_yaml">📄 规则 YAML</div>
+                        <div id="orch-yaml-panel" class="flex-1 flex flex-col min-h-0">
+                            <div class="orch-yaml-box orch-rule-box flex-1 mx-3 mb-2 text-xs text-green-700" id="orch-yaml-content" data-i18n="orch_rule_yaml_hint">拖入专家后自动生成...</div>
+                        </div>
                     </div>
 
                     <div class="orch-status-bar" id="orch-status-bar" data-i18n="orch_status_bar_init">节点: 0 | 连线: 0 | 分组: 0</div>
@@ -846,9 +883,13 @@
                                                 <div id="oasis-town-composer-title" class="oasis-town-composer-title">LIVE PROMPT</div>
                                                 <p id="oasis-town-composer-note" class="oasis-town-composer-note">Town will accept new nudges while the discussion is running.</p>
                                             </div>
-                                            <button id="oasis-town-submit-btn" onclick="submitOasisTopicPost()" class="oasis-town-submit-btn" type="button">NUDGE</button>
                                         </div>
                                         <textarea id="oasis-town-input" class="oasis-town-input" rows="3" placeholder="Push the next angle into the town..." onkeydown="handleOasisTownComposerKeydown(event)"></textarea>
+                                        <div id="oasis-workflow-preview-area" class="oasis-workflow-preview-area"></div>
+                                        <div class="oasis-town-composer-actions">
+                                            <button id="oasis-workflow-add-btn" onclick="showOasisWorkflowPopup()" class="oasis-town-workflow-btn" type="button">添加工作流</button>
+                                            <button id="oasis-town-submit-btn" onclick="submitOasisTopicPost()" class="oasis-town-submit-btn" type="button">NUDGE</button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -977,7 +1018,7 @@
                 <label class="agent-meta-label">Name</label>
                 <input type="text" id="agent-meta-name" class="agent-meta-input" placeholder="(None)">
                 <label class="agent-meta-label">Tools</label>
-                <div id="agent-meta-tools-container" style="max-height:150px;overflow-y:auto;border:1px solid #d1d5db;border-radius:8px;padding:8px;display:flex;flex-wrap:wrap;gap:6px;">
+                <div id="agent-meta-tools-container" class="agent-meta-tools-container" style="max-height:150px;overflow-y:auto;border:1px solid #d1d5db;border-radius:8px;padding:8px;">
                     <span style="color:#9ca3af;font-size:12px;">Loading tools...</span>
                 </div>
                 <input type="hidden" id="agent-meta-tools">

@@ -13,6 +13,7 @@ from typing import Any, Callable, Literal
 import httpx
 from fastapi import HTTPException
 
+from api.external_agent_registry import build_external_agents_map_for_owner
 from utils.auth_utils import extract_user_password_session, is_internal_bearer, parse_bearer_parts
 from utils.checkpoint_repository import list_thread_ids_by_prefix
 from api.group_repository import (
@@ -334,25 +335,6 @@ def _load_team_external_agents(user_id: str, team: str) -> list[dict]:
         return []
     path = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "external_agents.json")
     return _parse_external_agents_file(path, owner_user_id=user_id, team=team)
-
-
-def build_external_agents_map_for_owner(owner_uid: str) -> dict[str, dict]:
-    """Merge user-level + all teams' external_agents.json by global_id (same as broadcast_to_group)."""
-    external_agents_map: dict[str, dict] = {}
-    if not owner_uid:
-        return external_agents_map
-    for ea in _load_public_external_agents(owner_uid):
-        gid = str(ea.get("global_id") or ea.get("global_name") or "").strip()
-        if gid:
-            external_agents_map[gid] = ea
-    teams_dir = os.path.join(_PROJECT_ROOT, "data", "user_files", owner_uid, "teams")
-    if os.path.isdir(teams_dir):
-        for team_dir in os.listdir(teams_dir):
-            for ea in _load_team_external_agents(owner_uid, team_dir):
-                gid = str(ea.get("global_id", "") or "").strip()
-                if gid:
-                    external_agents_map[gid] = ea
-    return external_agents_map
 
 
 def _load_team_members(user_id: str, team: str) -> list[dict]:

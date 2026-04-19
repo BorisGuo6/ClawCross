@@ -259,11 +259,27 @@ header {
 .tool-toggle-btn:hover { color: #2563eb; }
 .tool-toggle-icon { display: inline-block; transition: transform 0.3s ease; }
 .tool-toggle-icon.open { transform: rotate(180deg); }
-.add-oasis-tools-container { align-items: flex-start; }
-.add-oasis-tool-chip {
-    display: inline-flex;
+.add-oasis-tools-container,
+.agent-meta-tools-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    align-items: start;
+    align-content: start;
+    gap: 6px;
+}
+.add-oasis-tools-actions,
+.agent-meta-tools-actions {
+    grid-column: 1 / -1;
+    display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.add-oasis-tool-chip {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: start;
+    column-gap: 8px;
     padding: 3px 6px;
     border: 1px solid #e5e7eb;
     border-radius: 6px;
@@ -272,15 +288,58 @@ header {
     color: #374151;
     font-size: 10px;
     line-height: 1.2;
-    white-space: nowrap;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    white-space: normal;
 }
 .add-oasis-tool-chip .add-oasis-tool-cb {
     margin: 0;
-    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
 }
 .add-oasis-tool-name {
-    display: inline-block;
-    line-height: 1.2;
+    display: block;
+    min-width: 0;
+    line-height: 1.3;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+.agent-meta-tool-chip {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: start;
+    column-gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 34px;
+    padding: 6px 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    cursor: pointer;
+    background: #f9fafb;
+    color: #374151;
+    font-size: 11px;
+    line-height: 1.25;
+}
+.agent-meta-tool-chip .agent-meta-tool-cb {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+}
+.agent-meta-tool-name {
+    display: block;
+    min-width: 0;
+    line-height: 1.3;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+.config-agent-tag-option-meta {
+    color: #6b7280;
+    font-size: 11px;
 }
 .add-oasis-tag-list {
     display: flex;
@@ -630,6 +689,7 @@ header {
 .oasis-btn-cancel:hover { background: #fef3c7; }
 .oasis-btn-delete:hover { background: #fee2e2; }
 .oasis-detail-action-btn { font-size: 9px; padding: 7px 9px; border-radius: 8px; cursor: pointer; }
+.oasis-detail-action-btn.workflow { color: #60a5fa; border-color: rgba(96,165,250,0.45); cursor: default; }
 .oasis-detail-action-btn.cancel { color: var(--oasis-pixel-gold); border-color: rgba(255,163,0,0.55); }
 .oasis-detail-action-btn.delete { color: #ff7790; border-color: rgba(255,0,77,0.45); }
 .oasis-detail-action-btn.overview { color: var(--oasis-pixel-blue); border-color: rgba(41,173,255,0.55); font-weight: 600; }
@@ -962,6 +1022,36 @@ header {
     color: #9f96a8;
     cursor: not-allowed;
 }
+.oasis-workflow-preview-area {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+.oasis-town-composer-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 12px;
+}
+.oasis-town-workflow-btn {
+    flex-shrink: 0;
+    border: 2px solid #c4b5fd;
+    border-radius: 10px;
+    padding: 9px 12px;
+    background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+    color: #6d28d9;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    cursor: pointer;
+    box-shadow: 0 2px 0 rgba(109,40,217,0.18);
+}
+.oasis-town-workflow-btn:hover:not(:disabled) {
+    border-color: #8b5cf6;
+    background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+}
 .oasis-town-submit-btn {
     flex-shrink: 0;
     border: 3px solid var(--oasis-pixel-border);
@@ -983,6 +1073,19 @@ header {
     opacity: 0.58;
     cursor: not-allowed;
     box-shadow: none;
+}
+@media (max-width: 768px) {
+    .oasis-town-composer-actions {
+        gap: 8px;
+    }
+    .oasis-town-workflow-btn,
+    .oasis-town-submit-btn {
+        min-height: 38px;
+        padding: 8px 10px;
+    }
+    .oasis-town-workflow-btn {
+        font-size: 11px;
+    }
 }
 .oasis-discussion-box {
     height: calc(100vh - 420px);
@@ -2630,12 +2733,162 @@ header {
 .orch-btn-primary:hover { background: #1d4ed8; }
 .orch-btn-danger { color: #dc2626; border-color: #fca5a5; }
 .orch-btn-danger:hover { background: #fef2f2; }
+.orch-btn-run {
+    background: linear-gradient(135deg, #0f766e, #0ea5a4);
+    color: #fff;
+    border-color: #0f766e;
+    box-shadow: 0 6px 18px rgba(15, 118, 110, 0.18);
+}
+.orch-btn-run:hover { background: linear-gradient(135deg, #0d9488, #14b8a6); border-color: #0d9488; }
+.orch-ai-big-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid #1d4ed8;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #1d4ed8, #2563eb 55%, #3b82f6);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    box-shadow: 0 14px 30px rgba(37, 99, 235, 0.22);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.orch-ai-big-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.03);
+    box-shadow: 0 18px 34px rgba(37, 99, 235, 0.28);
+}
+.orch-mode-switch-wrap {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 12px 12px 6px;
+    padding: 6px;
+    border: 1px solid #dbe4f0;
+    border-radius: 16px;
+    background:
+        radial-gradient(circle at top left, rgba(59, 130, 246, 0.14), transparent 42%),
+        linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+}
+.orch-mode-switch {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 10px 12px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    background: transparent;
+    color: #475569;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.orch-mode-switch:hover {
+    background: rgba(255, 255, 255, 0.74);
+    border-color: rgba(148, 163, 184, 0.35);
+    transform: translateY(-1px);
+}
+.orch-mode-switch.active {
+    background: linear-gradient(135deg, #111827, #1e3a8a);
+    border-color: rgba(30, 64, 175, 0.45);
+    color: #fff;
+    box-shadow: 0 12px 24px rgba(30, 64, 175, 0.18);
+}
+.orch-mode-title {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+}
+.orch-mode-sub {
+    font-size: 10px;
+    opacity: 0.78;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.orch-mode-switch.active .orch-mode-sub { opacity: 0.92; }
+.orch-python-caption {
+    font-size: 11px;
+    line-height: 1.5;
+    color: #64748b;
+}
+.orch-python-editor {
+    width: 100%;
+    min-height: 240px;
+    padding: 14px 16px;
+    font-size: 13px;
+    line-height: 1.65;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    tab-size: 4;
+    outline: none;
+}
+.orch-side-textarea {
+    width: 100%;
+    min-height: 88px;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #fff;
+    color: #334155;
+    resize: vertical;
+    font-size: 12px;
+    line-height: 1.55;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+.orch-side-textarea-guidance {
+    min-height: 112px;
+    max-height: 240px;
+}
+.orch-side-textarea:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
 
 .orch-canvas {
     flex: 1; position: relative; overflow: hidden;
     background-color: #fafbfc;
     /* 禁用中键自动滚动 */
     overscroll-behavior: none;
+}
+.orch-python-canvas-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+    background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, 0.08), transparent 34%),
+        linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+}
+.orch-python-canvas-head {
+    padding: 14px 16px 8px;
+    border-bottom: 1px solid #dbe4f0;
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(6px);
+}
+.orch-python-canvas-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1e3a8a;
+    margin-bottom: 4px;
+}
+.orch-python-editor-canvas {
+    flex: 1;
+    margin: 12px;
+    min-height: 0;
+    width: auto;
+    resize: none;
+    border: 1px solid #c7d2fe;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.96);
+    color: #e2e8f0;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 30px rgba(15, 23, 42, 0.12);
 }
 .orch-canvas-inner {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -2749,13 +3002,25 @@ header {
 
 .orch-right-panel {
     width: 280px; flex-shrink: 0; border-left: 1px solid #e5e7eb;
-    display: flex; flex-direction: column; background: white; overflow: hidden;
+    display: flex; flex-direction: column; background: white;
+    overflow-x: hidden; overflow-y: auto; min-height: 0; scrollbar-gutter: stable;
 }
-.orch-right-section { border-bottom: 1px solid #f3f4f6; }
+.orch-right-section { border-bottom: 1px solid #f3f4f6; flex-shrink: 0; }
 .orch-yaml-box {
     font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px;
     background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;
-    padding: 6px 8px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.4;
+    padding: 8px 10px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.45;
+}
+.orch-prompt-box {
+    min-height: 124px;
+    max-height: 220px;
+}
+.orch-agent-output-box {
+    min-height: 168px;
+    max-height: 300px;
+}
+.orch-rule-box {
+    min-height: 220px;
 }
 .orch-status-bar {
     padding: 4px 12px; background: #f9fafb; border-top: 1px solid #e5e7eb;
@@ -2846,6 +3111,12 @@ header {
     .orch-right-panel.mobile-open {
         transform: translateX(0);
         box-shadow: -4px 0 24px rgba(0,0,0,0.18);
+    }
+    .orch-python-canvas-head {
+        padding-top: 48px;
+    }
+    .orch-python-editor-canvas {
+        margin-top: 8px;
     }
     /* backdrop */
     .orch-mobile-backdrop {
@@ -3477,15 +3748,19 @@ body.session-panel-resizing * {
     #message-input, #message-input::placeholder { font-size: 16px !important; }
     .tool-tag { font-size: 14px !important; padding: 6px 12px !important; }
     .add-oasis-tools-actions { flex-wrap: wrap; gap: 6px !important; }
-    .add-oasis-tools-container { gap: 6px !important; padding: 8px !important; }
-    .add-oasis-tool-chip {
-        width: calc(50% - 3px);
+    .add-oasis-tools-container,
+    .agent-meta-tools-container {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px !important;
+        padding: 8px !important;
+    }
+    .add-oasis-tool-chip,
+    .agent-meta-tool-chip {
         min-height: 34px;
         padding: 6px 8px;
         border-radius: 8px;
         font-size: 12px;
         line-height: 1.25;
-        white-space: normal;
         box-sizing: border-box;
     }
     .add-oasis-tool-chip .add-oasis-tool-cb {
@@ -3493,7 +3768,13 @@ body.session-panel-resizing * {
         height: 14px;
         margin-top: 1px;
     }
-    .add-oasis-tool-name {
+    .agent-meta-tool-chip .agent-meta-tool-cb {
+        width: 14px;
+        height: 14px;
+        margin-top: 1px;
+    }
+    .add-oasis-tool-name,
+    .agent-meta-tool-name {
         min-width: 0;
         word-break: break-word;
         overflow-wrap: anywhere;

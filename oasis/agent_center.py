@@ -94,16 +94,51 @@ class AgentCenter:
             effective_persona = str(self.get_persona(persona_tag).get("persona", "") or "")
         if effective_persona and not merged_options.get("system_prompt"):
             merged_options["system_prompt"] = effective_persona
+        effective_connect_type = connect_type or str(agent.get("connect_type", "") or "")
+        effective_platform = platform or str(agent.get("platform", "") or "")
+        effective_session = session if session is not None else agent.get("session")
 
-        return await send_to_agent(
-            SendToAgentRequest(
-                prompt=prompt,
-                connect_type=connect_type or str(agent.get("connect_type", "") or ""),
-                platform=platform or str(agent.get("platform", "") or ""),
-                session=session if session is not None else agent.get("session"),
-                options=merged_options,
-            )
+        def _can_fallback_to_persona() -> bool:
+            return bool(agent.get("kind") == "external" and str(agent.get("tag", "") or "").strip())
+
+        def _fallback_triggered(error_text: str) -> bool:
+            low = str(error_text or "").strip().lower()
+            if not low:
+                return False
+            return any(token in low for token in (
+                "unsupported connect_type",
+                "missing api_url",
+                "unsupported platform",
+                "platform not found",
+                "tool not found",
+                "unknown tool",
+            ))
+
+        request = SendToAgentRequest(
+            prompt=prompt,
+            connect_type=effective_connect_type,
+            platform=effective_platform,
+            session=effective_session,
+            options=merged_options,
         )
+        result = await send_to_agent(request)
+        if result.ok or not _can_fallback_to_persona() or not _fallback_triggered(result.error or ""):
+            return result
+
+        try:
+            fallback_result = await self.send_persona(
+                str(agent.get("tag", "") or ""),
+                prompt,
+                persona_override=effective_persona if effective_persona else None,
+            )
+            fallback_meta = dict(fallback_result.meta or {})
+            fallback_meta["fallback_from_platform"] = effective_platform
+            fallback_meta["fallback_from_connect_type"] = effective_connect_type
+            fallback_meta["fallback_agent_id"] = str(agent.get("id", "") or "")
+            fallback_result.meta = fallback_meta
+            return fallback_result
+        except Exception:
+            return result
 
     async def send_persona(
         self,

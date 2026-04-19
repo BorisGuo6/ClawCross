@@ -19,29 +19,71 @@ Exposes tools for the user's Agent to interact with the OASIS discussion forum:
 Runs as a stdio MCP server, just like the other mcp_*.py tools.
 """
 
+import asyncio
 import json
 import os
 import re
+import subprocess
+import uuid
 
 import httpx
 import aiosqlite
 import yaml as _yaml
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 mcp = FastMCP("OASIS Forum")
 
+load_dotenv(dotenv_path=_os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), "config", ".env"))
+
 OASIS_BASE_URL = os.getenv("OASIS_BASE_URL", "http://127.0.0.1:51202")
 _FALLBACK_USER = os.getenv("MCP_OASIS_USER", "agent_user")
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_WORKFLOW_PYTHON = os.path.join(_PROJECT_ROOT, ".venv", "bin", "python")
+if not os.path.isfile(_WORKFLOW_PYTHON):
+    _WORKFLOW_PYTHON = _sys.executable
+_WORKFLOW_IMPORT_PATHS = os.pathsep.join([_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "src")])
 
 _CONN_ERR = "❌ 无法连接 OASIS 论坛服务器。请确认 OASIS 服务已启动 (端口 51202)。"
+
+
+def _resolve_effective_user(username: str = "") -> str:
+    """Resolve the MCP user more robustly than the old agent_user-only fallback.
+
+    In production the MCP layer should auto-inject username. When that does not
+    happen, prefer obvious local user scopes so Python workflow discovery and
+    startup still behave like the rest of OASIS tooling.
+    """
+    explicit = str(username or "").strip()
+    if explicit:
+        return explicit
+
+    users_root = os.path.join(_PROJECT_ROOT, "data", "user_files")
+    candidates: list[str] = []
+    if os.path.isdir(users_root):
+        for entry in sorted(os.listdir(users_root)):
+            path = os.path.join(users_root, entry)
+            if os.path.isdir(path):
+                candidates.append(entry)
+
+    if "default" in candidates:
+        return "default"
+    if _FALLBACK_USER in candidates:
+        return _FALLBACK_USER
+    if len(candidates) == 1:
+        return candidates[0]
+    return _FALLBACK_USER
 
 
 def _workflow_python_dir(user_id: str, team: str = "") -> str:
     if team:
         return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "oasis", "python")
     return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "oasis", "python")
+
+
+def _python_runs_dir() -> str:
+    return os.path.join(_PROJECT_ROOT, "data", "python_workflow_runs")
 
 
 def resolve_python_workflow_path(user_id: str, python_file: str, team: str = "") -> tuple[str | None, str | None]:
@@ -72,6 +114,139 @@ def resolve_python_workflow_path(user_id: str, python_file: str, team: str = "")
         return None, f"找到多个同名 python workflow: {target_name}（{where}），请指定 team"
     return matches[0][1], None
 
+
+def _spawn_standalone_python_workflow(
+    *,
+    user_id: str,
+    python_file: str,
+    question: str,
+    team: str = "",
+) -> dict[str, str | int]:
+    runs_dir = os.path.join(_PROJECT_ROOT, "data", "python_workflow_runs")
+    os.makedirs(runs_dir, exist_ok=True)
+    run_id = uuid.uuid4().hex[:12]
+    log_path = os.path.join(runs_dir, f"{run_id}.log")
+    result_path = os.path.join(runs_dir, f"{run_id}.json")
+    meta_path = os.path.join(runs_dir, f"{run_id}.meta.json")
+    cmd = [
+        _WORKFLOW_PYTHON,
+        python_file,
+        "--user-id",
+        user_id or _FALLBACK_USER,
+        "--question",
+        question or "",
+        "--result-file",
+        result_path,
+    ]
+    if team:
+        cmd.extend(["--team", team])
+
+    log_file = open(log_path, "a", encoding="utf-8")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=_PROJECT_ROOT,
+        env={
+            **os.environ,
+            "CLAWCROSS_PROJECT_ROOT": _PROJECT_ROOT,
+            "CLAWCROSS_PYTHONPATH": _WORKFLOW_IMPORT_PATHS,
+        },
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    log_file.close()
+    meta = {
+        "run_id": run_id,
+        "pid": proc.pid,
+        "log_file": log_path,
+        "result_file": result_path,
+        "python_file": python_file,
+        "python_executable": _WORKFLOW_PYTHON,
+        "user_id": user_id,
+        "team": team,
+        "question": question,
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return {
+        "run_id": run_id,
+        "pid": proc.pid,
+        "log_file": log_path,
+        "result_file": result_path,
+        "python_file": python_file,
+        "meta_file": meta_path,
+    }
+
+
+def _iter_python_workflow_dirs(user_id: str, team: str = "") -> list[tuple[str, str, str]]:
+    if not user_id:
+        return []
+
+    user_root = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id)
+    if team:
+        return [("team", team, os.path.join(user_root, "teams", team, "oasis", "python"))]
+
+    dirs: list[tuple[str, str, str]] = [
+        ("personal", "", os.path.join(user_root, "oasis", "python"))
+    ]
+    teams_root = os.path.join(user_root, "teams")
+    if os.path.isdir(teams_root):
+        for team_name in sorted(os.listdir(teams_root)):
+            team_dir = os.path.join(teams_root, team_name)
+            if os.path.isdir(team_dir):
+                dirs.append(("team", team_name, os.path.join(team_dir, "oasis", "python")))
+    return dirs
+
+
+def _load_python_run_payload(run_id: str) -> tuple[dict | None, str | None]:
+    safe_run_id = re.sub(r"[^a-zA-Z0-9]", "", str(run_id or "").strip())
+    if not safe_run_id:
+        return None, "无效的 run_id"
+    meta_path = os.path.join(_python_runs_dir(), f"{safe_run_id}.meta.json")
+    result_path = os.path.join(_python_runs_dir(), f"{safe_run_id}.json")
+    meta: dict[str, Any] = {}
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                meta = loaded
+        except Exception:
+            meta = {}
+    if not os.path.isfile(result_path):
+        if meta:
+            meta["_result_file"] = result_path
+            meta["_log_file"] = os.path.join(_python_runs_dir(), f"{safe_run_id}.log")
+            meta["_meta_file"] = meta_path
+            meta["_running"] = _pid_is_running(int(meta.get("pid") or 0))
+            return meta, None
+        return None, f"未找到运行结果文件: {safe_run_id}"
+    try:
+        with open(result_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None, f"运行结果格式无效: {safe_run_id}"
+        for key, value in meta.items():
+            data.setdefault(key, value)
+        data["_result_file"] = result_path
+        data["_log_file"] = os.path.join(_python_runs_dir(), f"{safe_run_id}.log")
+        data["_meta_file"] = meta_path
+        data["_running"] = False
+        return data, None
+    except Exception as e:
+        return None, f"读取运行结果失败: {e}"
+
+
+def _pid_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
 # Checkpoint DB (same as agent.py / mcp_session.py)
 _DB_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -96,7 +271,7 @@ async def list_oasis_experts(username: str = "") -> str:
     Returns:
         Formatted list of experts with their tags, personas, and source (public/custom)
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
@@ -318,7 +493,7 @@ async def list_oasis_sessions(username: str = "") -> str:
     Returns:
         Formatted list of oasis sessions with tag, session_id and message count
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
     # Prefer calling OASIS HTTP API so both MCP and curl can access sessions
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -387,7 +562,11 @@ async def start_new_oasis(
 
     Workflow has two modes:
       - YAML mode: current OASIS graph engine
-      - Python mode: provide python_file; script exports async run(ctx)
+      - Python mode: provide python_file; the script is launched in standalone mode with question/user/team injected.
+
+    Discovery helpers:
+      - Use list_oasis_workflows(...) to find saved YAML workflows.
+      - Use list_oasis_python_workflows(...) to find saved Python workflows.
 
     In YAML mode, expert pool is built entirely from schedule YAML expert names.
     Either schedule_file or schedule_yaml must be provided.
@@ -465,14 +644,41 @@ async def start_new_oasis(
             take priority over public/agency experts for tag→persona resolution.
 
     Returns:
-        The topic_id for later retrieval via check_oasis_discussion()
+        YAML mode returns a topic_id message.
+        Python mode returns a standalone run_id plus log/result file paths.
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
 
     if not python_file and not schedule_yaml and not schedule_file:
         return "❌ 必须提供 python_file 或 schedule_yaml 或 schedule_file（至少一个）。"
 
     try:
+        if python_file:
+            if not os.path.isabs(python_file):
+                resolved_path, resolve_error = resolve_python_workflow_path(
+                    effective_user,
+                    python_file,
+                    team,
+                )
+                if resolve_error:
+                    return f"❌ {resolve_error}"
+                python_file = resolved_path or python_file
+            payload = await asyncio.to_thread(
+                _spawn_standalone_python_workflow,
+                user_id=effective_user,
+                python_file=python_file,
+                question=question,
+                team=team,
+            )
+            return (
+                f"🐍 Python 工作流已启动（standalone）\n"
+                f"任务: {question[:80]}\n"
+                f"Run ID: {payload['run_id']}\n"
+                f"PID: {payload['pid']}\n"
+                f"Log: {payload['log_file']}\n"
+                f"Result: {payload['result_file']}\n"
+            )
+
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=300.0)) as client:
             body: dict = {
                 "question": question,
@@ -491,18 +697,7 @@ async def start_new_oasis(
             body["callback_url"] = f"http://127.0.0.1:{port}/system_trigger"
             body["callback_session_id"] = notify_session or "default"
 
-            if python_file:
-                if not os.path.isabs(python_file):
-                    resolved_path, resolve_error = resolve_python_workflow_path(
-                        effective_user,
-                        python_file,
-                        team,
-                    )
-                    if resolve_error:
-                        return f"❌ {resolve_error}"
-                    python_file = resolved_path or python_file
-                body["python_file"] = python_file
-            elif schedule_file:
+            if schedule_file:
                 if not os.path.isabs(schedule_file):
                     resolved_path, resolve_error = _resolve_workflow_path(
                         effective_user,
@@ -554,7 +749,7 @@ async def check_oasis_discussion(topic_id: str, username: str = "") -> str:
     Returns:
         Formatted discussion status and recent posts
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
@@ -614,7 +809,7 @@ async def cancel_oasis_discussion(topic_id: str, username: str = "") -> str:
     Returns:
         Cancellation result
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.delete(
@@ -650,7 +845,7 @@ async def list_oasis_topics(username: str = "") -> str:
     """
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            effective_user = username or _FALLBACK_USER
+            effective_user = _resolve_effective_user(username)
             resp = await client.get(
                 f"{OASIS_BASE_URL}/topics",
                 params={"user_id": effective_user},
@@ -763,7 +958,7 @@ async def set_oasis_workflow(
     Returns:
         Confirmation with the saved file path
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
     # Proxy to OASIS HTTP API
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -793,6 +988,42 @@ async def set_oasis_workflow(
     except Exception as e:
         return f"❌ 保存失败: {e}"
 
+
+@mcp.tool()
+async def set_oasis_python_workflow(
+    username: str = "",
+    name: str = "",
+    python_code: str = "",
+    team: str = "",
+) -> str:
+    """
+    Save a standalone Python workflow so it can be reused later via start_new_oasis(python_file="name.py").
+
+    Python workflows are stored under data/user_files/{user}/oasis/python/
+    (or teams/{team}/oasis/python/ when team is set).
+    Use list_oasis_python_workflows(...) to see saved Python workflows.
+    """
+    effective_user = _resolve_effective_user(username)
+    safe_name = "".join(c for c in str(name or "") if c.isalnum() or c in "-_ ").strip() or "untitled"
+    if not python_code.strip():
+        return "❌ python_code 不能为空"
+    workflow_dir = _workflow_python_dir(effective_user, team)
+    os.makedirs(workflow_dir, exist_ok=True)
+    filename = safe_name if safe_name.endswith(".py") else f"{safe_name}.py"
+    path = os.path.join(workflow_dir, filename)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(python_code if python_code.endswith("\n") else python_code + "\n")
+        lines = ["✅ Python workflow 已保存"]
+        lines.append(f"  文件: {filename}")
+        lines.append(f"  路径: {path}")
+        if team:
+            lines.append(f"  Team: {team}")
+        lines.append(f"\n💡 使用方式: start_new_oasis(python_file=\"{filename}\", ...)")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ 保存失败: {e}"
+
 @mcp.tool()
 async def list_oasis_workflows(username: str = "", team: str = "") -> str:
     """
@@ -803,9 +1034,10 @@ async def list_oasis_workflows(username: str = "", team: str = "") -> str:
         team: Team name. When provided, lists workflows from the team directory.
 
     Returns:
-        List of saved workflow files with preview
+        List of saved YAML workflow files with preview.
+        For Python workflows, use list_oasis_python_workflows(...).
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
     try:
         items: list[dict] = []
         for scope, team_name, yaml_dir in _iter_workflow_dirs(effective_user, team):
@@ -842,9 +1074,201 @@ async def list_oasis_workflows(username: str = "", team: str = "") -> str:
         else:
             lines.append("\n💡 未指定 team，已展示个人目录和全部 team 的 workflows。")
         lines.append("💡 使用: start_new_oasis(schedule_file=\"文件名\", ...)")
+        lines.append("💡 Python workflows 请使用: list_oasis_python_workflows(...)")
         return "\n".join(lines)
     except Exception as e:
         return f"❌ 查询失败: {e}"
+
+
+@mcp.tool()
+async def list_oasis_python_workflows(username: str = "", team: str = "") -> str:
+    """
+    List all saved Python workflows for the current user.
+
+    Args:
+        username: (auto-injected) current user identity; do NOT set manually
+        team: Team name. When provided, lists workflows from the team directory.
+    """
+    effective_user = _resolve_effective_user(username)
+    try:
+        items: list[dict] = []
+        for scope, team_name, py_dir in _iter_python_workflow_dirs(effective_user, team):
+            if not os.path.isdir(py_dir):
+                continue
+            files = sorted(f for f in os.listdir(py_dir) if f.endswith(".py"))
+            for fname in files:
+                path = os.path.join(py_dir, fname)
+                first_line = ""
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        first_line = f.readline().strip()
+                except Exception:
+                    pass
+                items.append({
+                    "file": fname,
+                    "preview": first_line[:90],
+                    "scope": scope,
+                    "team": team_name,
+                })
+
+        if not items:
+            return "📭 暂无保存的 Python workflow"
+
+        lines = [f"🐍 已保存的 Python Workflows — 共 {len(items)} 个\n"]
+        for item in items:
+            location = f"[team:{item['team']}]" if item["scope"] == "team" else "[personal]"
+            preview = item.get("preview", "")
+            lines.append(f"  • {location} {item.get('file')}" + (f"  — {preview}" if preview else ""))
+        if team:
+            lines.append(f"\n💡 当前只显示 team=\"{team}\" 下的 Python workflows。")
+        else:
+            lines.append("\n💡 未指定 team，已展示个人目录和全部 team 的 Python workflows。")
+        lines.append("💡 使用: start_new_oasis(python_file=\"文件名\", ...)")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ 查询失败: {e}"
+
+
+@mcp.tool()
+async def check_oasis_python_run(run_id: str, username: str = "") -> str:
+    """
+    Check the result of a standalone Python workflow run started via start_new_oasis(python_file=...).
+
+    Args:
+        run_id: The run_id returned by start_new_oasis in Python mode
+        username: (auto-injected) current user identity; do NOT set manually
+    """
+    _ = _resolve_effective_user(username)
+    data, err = _load_python_run_payload(run_id)
+    if err:
+        return f"❌ {err}"
+    assert data is not None
+
+    lines = ["🐍 Python Workflow 运行结果"]
+    lines.append(f"Run ID: {data.get('run_id')}")
+    if "ok" not in data:
+        lines.append(f"状态: {'⏳ 运行中' if data.get('_running') else '❓ 未完成'}")
+    else:
+        lines.append(f"状态: {'✅ 成功' if data.get('ok') else '❌ 失败'}")
+    lines.append(f"Question: {data.get('question', '')}")
+    lines.append(f"User: {data.get('user_id', '')}")
+    if data.get("team"):
+        lines.append(f"Team: {data.get('team')}")
+    if data.get("topic_id"):
+        lines.append(f"Topic ID: {data.get('topic_id')}")
+    if data.get("conclusion"):
+        lines.extend(["", "🏆 结论", str(data.get("conclusion"))])
+    if data.get("error"):
+        lines.extend(["", "❌ 错误", str(data.get("error"))])
+    result = data.get("result")
+    if result is not None:
+        try:
+            rendered = json.dumps(result, ensure_ascii=False, indent=2)
+        except Exception:
+            rendered = str(result)
+        lines.extend(["", "📦 Result", rendered[:4000]])
+    messages = data.get("published_messages") or []
+    if messages:
+        lines.append("")
+        lines.append("--- 最近消息 ---")
+        for item in messages[-5:]:
+            author = item.get("author", "workflowpy")
+            content = str(item.get("content", "") or "")
+            preview = content[:160] + ("..." if len(content) > 160 else "")
+            lines.append(f"  • {author}: {preview}")
+    lines.append("")
+    lines.append(f"Log: {data.get('_log_file')}")
+    lines.append(f"Result File: {data.get('_result_file')}")
+    if data.get("_meta_file"):
+        lines.append(f"Meta File: {data.get('_meta_file')}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def list_oasis_python_runs(username: str = "", team: str = "") -> str:
+    """
+    List recent standalone Python workflow runs started via MCP.
+
+    Args:
+        username: (auto-injected) current user identity; do NOT set manually
+        team: Optional team filter
+    """
+    effective_user = _resolve_effective_user(username)
+    runs_dir = _python_runs_dir()
+    if not os.path.isdir(runs_dir):
+        return "📭 暂无 Python workflow 运行记录"
+    items: list[dict[str, Any]] = []
+    for fname in sorted(os.listdir(runs_dir), reverse=True):
+        if not fname.endswith(".meta.json"):
+            continue
+        path = os.path.join(runs_dir, fname)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if not isinstance(meta, dict):
+                continue
+        except Exception:
+            continue
+        if str(meta.get("user_id") or "") != effective_user:
+            continue
+        if team and str(meta.get("team") or "") != team:
+            continue
+        run_id = str(meta.get("run_id") or "")
+        result, _ = _load_python_run_payload(run_id)
+        status = "running"
+        if result and "ok" in result:
+            status = "ok" if result.get("ok") else "error"
+        elif result and result.get("_running"):
+            status = "running"
+        elif result:
+            status = "pending"
+        items.append({
+            "run_id": run_id,
+            "question": str(meta.get("question") or ""),
+            "team": str(meta.get("team") or ""),
+            "status": status,
+        })
+    if not items:
+        return "📭 暂无 Python workflow 运行记录"
+
+    lines = [f"🐍 Python Workflow Runs — 共 {len(items)} 个\n"]
+    for item in items[:20]:
+        team_label = f"[team:{item['team']}]" if item.get("team") else "[personal]"
+        lines.append(f"  • {team_label} {item['run_id']} | {item['status']} | {item['question'][:70]}")
+    lines.append("\n💡 使用: check_oasis_python_run(run_id=\"...\")")
+    lines.append("💡 使用: cancel_oasis_python_run(run_id=\"...\")")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def cancel_oasis_python_run(run_id: str, username: str = "") -> str:
+    """
+    Cancel a standalone Python workflow run by PID when it is still running.
+
+    Args:
+        run_id: The run_id returned by start_new_oasis in Python mode
+        username: (auto-injected) current user identity; do NOT set manually
+    """
+    effective_user = _resolve_effective_user(username)
+    data, err = _load_python_run_payload(run_id)
+    if err:
+        return f"❌ {err}"
+    assert data is not None
+    if str(data.get("user_id") or "") != effective_user:
+        return f"❌ 无权取消此运行: {run_id}"
+    pid = int(data.get("pid") or 0)
+    if pid <= 0:
+        return f"❌ 运行缺少 PID: {run_id}"
+    if not data.get("_running"):
+        return f"ℹ️ 运行已结束，无需取消: {run_id}"
+    try:
+        os.killpg(pid, 15)
+    except Exception:
+        try:
+            os.kill(pid, 15)
+        except Exception as e:
+            return f"❌ 取消失败: {e}"
+    return f"🛑 Python workflow 已发送终止信号\nRun ID: {run_id}\nPID: {pid}"
 
 
 @mcp.tool()
@@ -855,7 +1279,7 @@ async def list_oasis_agent_catalog(username: str = "", team: str = "") -> str:
     Includes temp experts, internal session agents, and external agents with
     their target id, tag, platform, connect_type, session default, and full persona.
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(
@@ -1931,7 +2355,7 @@ async def yaml_to_layout(
     Returns:
         Confirmation with generated layout summary
     """
-    effective_user = username or _FALLBACK_USER
+    effective_user = _resolve_effective_user(username)
 
     # Use OASIS HTTP API for layout generation
     try:

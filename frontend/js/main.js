@@ -628,7 +628,7 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         // Add Workflow
         wf_btn_title: '添加工作流',
         wf_btn_label: '+ 工作流',
-        wf_popup_title: '📋 选择工作流',
+        wf_popup_title: '选择工作流',
         wf_no_workflows: '暂无已保存的工作流',
         wf_team_no_layouts: '该团队暂无已保存工作流',
         wf_cancel: '取消',
@@ -1389,7 +1389,7 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         // Add Workflow
         wf_btn_title: 'Add Workflow',
         wf_btn_label: '+ Workflow',
-        wf_popup_title: '📋 Select Workflow',
+        wf_popup_title: 'Select Workflow',
         wf_no_workflows: 'No saved workflows',
         wf_team_no_layouts: 'No saved workflows for this team',
         wf_cancel: 'Cancel',
@@ -2016,15 +2016,15 @@ async function openAgentMetaModal(mode, sessionId, existingMeta) {
     // allTools comes from loadTools() global
     if (allTools.length > 0) {
         toolsContainer.innerHTML = `
-            <div style="width:100%;display:flex;gap:6px;margin-bottom:4px;">
+            <div class="agent-meta-tools-actions">
                 <button type="button" onclick="_agentMetaToolsSelectAll(true)" style="font-size:10px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#f0fdf4;color:#16a34a;cursor:pointer;">全选</button>
                 <button type="button" onclick="_agentMetaToolsSelectAll(false)" style="font-size:10px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#fef2f2;color:#dc2626;cursor:pointer;">全不选</button>
             </div>` +
             allTools.map(t => {
                 const checked = (enabledToolNames === null || enabledToolNames.has(t.name)) ? 'checked' : '';
-                return `<label style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:3px 6px;border:1px solid #e5e7eb;border-radius:5px;cursor:pointer;background:#f9fafb;white-space:nowrap;" title="${escapeHtml(t.description || '')}">
+                return `<label class="agent-meta-tool-chip" title="${escapeHtml(t.description || '')}">
                     <input type="checkbox" class="agent-meta-tool-cb" value="${escapeHtml(t.name)}" ${checked} style="margin:0;">
-                    ${escapeHtml(t.name)}
+                    <span class="agent-meta-tool-name">${escapeHtml(t.name)}</span>
                 </label>`;
             }).join('');
     } else {
@@ -5254,6 +5254,57 @@ function escapeHtml(str) {
     return div.innerHTML.replace(/"/g, '&quot;');
 }
 
+function triggerBlobDownload(blob, filename) {
+    const safeName = String(filename || 'download.bin')
+        .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_')
+        .trim() || 'download.bin';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = safeName;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    try {
+        a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    } catch (e) {
+        try {
+            a.click();
+        } catch (_) {
+            window.open(url, '_blank', 'noopener');
+        }
+    }
+    setTimeout(() => {
+        try { a.remove(); } catch (_) {}
+        try { URL.revokeObjectURL(url); } catch (_) {}
+    }, 5000);
+}
+
+function getAttachmentFilename(resp, fallbackName) {
+    const fallback = String(fallbackName || 'download.bin').trim() || 'download.bin';
+    const disposition = resp && typeof resp.headers?.get === 'function'
+        ? (resp.headers.get('Content-Disposition') || '')
+        : '';
+    if (!disposition) return fallback;
+
+    const starMatch = disposition.match(/filename\*\s*=\s*([^;]+)/i);
+    if (starMatch) {
+        let value = starMatch[1].trim();
+        value = value.replace(/^UTF-8''/i, '').replace(/^"(.*)"$/, '$1');
+        try {
+            return decodeURIComponent(value);
+        } catch (_) {
+            return value;
+        }
+    }
+
+    const plainMatch = disposition.match(/filename\s*=\s*"([^"]+)"/i) || disposition.match(/filename\s*=\s*([^;]+)/i);
+    if (plainMatch) {
+        return plainMatch[1].trim();
+    }
+    return fallback;
+}
+
 function closeSettings() {
     document.getElementById('settings-modal').style.display = 'none';
 }
@@ -6518,8 +6569,15 @@ async function handleSend() {
     const fileNames = pendingFiles.map(f => f.name);
     const audiosToSend = pendingAudios.map(a => ({ base64: a.base64, name: a.name, format: a.format }));
     const audioNames = pendingAudios.map(a => a.name);
-    const workflowsToSend = pendingWorkflows.map(w => ({ name: w.name, team: w.team, displayName: w.displayName, yaml: w.yaml }));
-    const workflowNames = pendingWorkflows.map(w => w.displayName);
+    const workflowsToSend = pendingWorkflows.map(w => ({
+        name: w.name,
+        team: w.team,
+        mode: w.mode || 'yaml',
+        displayName: w.displayName,
+        content: w.content || '',
+        path: w.path || '',
+    }));
+    const workflowNames = pendingWorkflows.map(w => `${(w.mode || 'yaml').toUpperCase()} ${w.displayName}`);
 
     const label = text || (imagePreviewSrcs.length ? '('+t('image_placeholder')+')' : audioNames.length ? '('+t('audio_placeholder')+')' : workflowNames.length ? '(workflow)' : '('+t('file_placeholder')+')');
     appendMessage(label, true, imagePreviewSrcs, fileNames, audioNames, workflowNames);
@@ -6556,10 +6614,19 @@ async function handleSend() {
 
         let workflowPrefix = '';
         for (const wf of workflowsToSend) {
-            workflowPrefix += `【oasis workflow, use it now】\n` +
-                `Team Name: ${wf.team || '(non-team)'}\n` +
-                `YAML Name: ${wf.name}\n` +
-                (wf.yaml ? `---\n${wf.yaml}\n---\n` : '');
+            if ((wf.mode || 'yaml') === 'python') {
+                workflowPrefix += `【python workflow, use it now】\n` +
+                    `Team Name: ${wf.team || '(non-team)'}\n` +
+                    `Python Name: ${wf.name}\n` +
+                    `Absolute Path: ${wf.path || '(unknown)'}\n` +
+                    (wf.content ? `---\n${wf.content}\n---\n` : '');
+            } else {
+                workflowPrefix += `【oasis workflow, use it now】\n` +
+                    `Team Name: ${wf.team || '(non-team)'}\n` +
+                    `YAML Name: ${wf.name}\n` +
+                    `Absolute Path: ${wf.path || '(unknown)'}\n` +
+                    (wf.content ? `---\n${wf.content}\n---\n` : '');
+            }
         }
         const fullText_to_send = personaPrefix + workflowPrefix + text;
 
@@ -6818,46 +6885,94 @@ inputField.addEventListener('paste', handlePasteImage);
 // ===== Add Workflow 功能 =====
 // ================================================================
 let pendingWorkflows = [];  // [{name: 'xxx'}, ...]
+let pendingOasisWorkflows = [];  // [{name: 'xxx'}, ...]
 
-function renderWorkflowPreviews() {
-    const area = document.getElementById('workflow-preview-area');
-    if (!pendingWorkflows.length) { area.style.display = 'none'; return; }
+function getWorkflowTargetConfig(target = 'chat') {
+    if (target === 'oasis') {
+        return {
+            list: pendingOasisWorkflows,
+            areaId: 'oasis-workflow-preview-area',
+            inputId: 'oasis-town-input',
+            removeFn: 'removeOasisWorkflow',
+        };
+    }
+    return {
+        list: pendingWorkflows,
+        areaId: 'workflow-preview-area',
+        inputId: 'message-input',
+        removeFn: 'removeWorkflow',
+    };
+}
+
+function renderWorkflowPreviews(target = 'chat') {
+    const cfg = getWorkflowTargetConfig(target);
+    const area = document.getElementById(cfg.areaId);
+    if (!area) return;
+    if (!cfg.list.length) {
+        area.style.display = 'none';
+        area.innerHTML = '';
+        return;
+    }
     area.style.display = 'flex';
-    area.innerHTML = pendingWorkflows.map((wf, i) =>
-        `<span class="workflow-tag">📋 Workflow: ${escapeHtml(wf.displayName)}<span class="wf-remove" onclick="removeWorkflow(${i})">&times;</span></span>`
+    area.innerHTML = cfg.list.map((wf, i) =>
+        `<span class="workflow-tag">${escapeHtml((wf.mode || 'yaml').toUpperCase())} Workflow: ${escapeHtml(wf.displayName)}<span class="wf-remove" onclick="${cfg.removeFn}(${i})">&times;</span></span>`
     ).join('');
 }
 
 function removeWorkflow(idx) {
     pendingWorkflows.splice(idx, 1);
-    renderWorkflowPreviews();
+    renderWorkflowPreviews('chat');
 }
 
-async function showWorkflowPopup() {
+function removeOasisWorkflow(idx) {
+    pendingOasisWorkflows.splice(idx, 1);
+    renderWorkflowPreviews('oasis');
+}
+
+async function showWorkflowPopup(target = 'chat') {
     try {
         // Load team list and global workflows in parallel
-        const [teamsResp, globalResp] = await Promise.all([
+        const [teamsResp, globalYamlResp, globalPyResp] = await Promise.all([
             fetch('/teams'),
             fetch('/proxy_visual/load-layouts'),
+            fetch('/proxy_visual/load-layouts?mode=python'),
         ]);
         const teamsData = await teamsResp.json();
-        const globalLayouts = await globalResp.json();
+        const globalYamlLayouts = await globalYamlResp.json();
+        const globalPyLayouts = await globalPyResp.json();
         const teams = teamsData.teams || [];
 
         // Load team workflows in parallel
         const teamResults = await Promise.all(teams.map(async (teamName) => {
             try {
-                const r = await fetch('/proxy_visual/load-layouts?team=' + encodeURIComponent(teamName));
-                const layouts = await r.json();
-                return { team: teamName, layouts: layouts || [] };
+                const [yamlResp, pyResp] = await Promise.all([
+                    fetch('/proxy_visual/load-layouts?team=' + encodeURIComponent(teamName)),
+                    fetch('/proxy_visual/load-layouts?team=' + encodeURIComponent(teamName) + '&mode=python'),
+                ]);
+                const [yamlLayouts, pyLayouts] = await Promise.all([
+                    yamlResp.json(),
+                    pyResp.json(),
+                ]);
+                return { team: teamName, yamlLayouts: yamlLayouts || [], pyLayouts: pyLayouts || [] };
             } catch { return { team: teamName, layouts: [] }; }
         }));
 
-        // Build grouped data: [{group, team, layouts}]
+        // Build grouped data: [{group, team, items}]
         const groups = [];
-        if (globalLayouts.length) groups.push({ group: '(公共)', team: '', layouts: globalLayouts });
+        const globalItems = [
+            ...(Array.isArray(globalYamlLayouts) ? globalYamlLayouts.map((name) => ({ name, mode: 'yaml' })) : []),
+            ...(Array.isArray(globalPyLayouts) ? globalPyLayouts.map((name) => ({ name, mode: 'python' })) : []),
+        ];
+        if (globalItems.length) groups.push({ group: '(公共)', team: '', items: globalItems });
         teamResults.forEach((tr) => {
-            groups.push({ group: tr.team, team: tr.team, layouts: tr.layouts });
+            groups.push({
+                group: tr.team,
+                team: tr.team,
+                items: [
+                    ...(Array.isArray(tr.yamlLayouts) ? tr.yamlLayouts.map((name) => ({ name, mode: 'yaml' })) : []),
+                    ...(Array.isArray(tr.pyLayouts) ? tr.pyLayouts.map((name) => ({ name, mode: 'python' })) : []),
+                ],
+            });
         });
 
         if (!groups.length) { alert(t('wf_no_workflows')); return; }
@@ -6879,6 +6994,7 @@ async function showWorkflowPopup() {
 
         let selectedName = null;
         let selectedTeam = '';
+        let selectedMode = 'yaml';
         overlay.querySelector('#wf-cancel-btn').addEventListener('click', () => overlay.remove());
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
@@ -6890,19 +7006,21 @@ async function showWorkflowPopup() {
             header.innerHTML = `<span style="font-size:14px;">${grp.team ? '👥' : '🌐'}</span>${escapeHtml(grp.group)}`;
             listEl.appendChild(header);
 
-            if (!grp.layouts.length) {
+            if (!grp.items.length) {
                 const emptyRow = document.createElement('div');
                 emptyRow.className = 'orch-session-item';
                 emptyRow.style.cssText = 'padding:8px 12px 8px 24px;border-radius:8px;cursor:default;opacity:0.65;margin-bottom:2px;display:flex;align-items:center;gap:8px;font-size:12px;color:#6b7280;';
-                emptyRow.innerHTML = `<span style="font-size:14px;">📭</span><span style="flex:1;">${escapeHtml(t('wf_team_no_layouts'))}</span>`;
+                emptyRow.innerHTML = `<span style="flex:1;">${escapeHtml(t('wf_team_no_layouts'))}</span>`;
                 listEl.appendChild(emptyRow);
                 continue;
             }
-            for (const name of grp.layouts) {
+            for (const itemDef of grp.items) {
+                const name = itemDef.name;
+                const mode = itemDef.mode === 'python' ? 'python' : 'yaml';
                 const item = document.createElement('div');
                 item.className = 'orch-session-item';
                 item.style.cssText = 'padding:8px 12px 8px 24px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:2px;display:flex;align-items:center;gap:8px;transition:all 0.15s;';
-                item.innerHTML = `<span style="font-size:14px;">📋</span><span style="flex:1;font-size:13px;color:#374151;">${escapeHtml(name)}</span>`;
+                item.innerHTML = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:2px 8px;border-radius:999px;background:${mode === 'python' ? '#eff6ff' : '#f5f3ff'};border:1px solid ${mode === 'python' ? '#93c5fd' : '#c4b5fd'};font-size:11px;font-weight:700;color:${mode === 'python' ? '#1d4ed8' : '#6d28d9'};">${mode === 'python' ? 'Python' : 'YAML'}</span><span style="flex:1;font-size:13px;color:#374151;">${escapeHtml(name)}</span>`;
                 const teamVal = grp.team;
                 item.addEventListener('click', () => {
                     listEl.querySelectorAll('.orch-session-item').forEach(el => {
@@ -6913,6 +7031,7 @@ async function showWorkflowPopup() {
                     item.style.borderColor = '#c4b5fd';
                     selectedName = name;
                     selectedTeam = teamVal;
+                    selectedMode = mode;
                     const btn = overlay.querySelector('#wf-confirm-btn');
                     btn.disabled = false;
                     btn.style.opacity = '1';
@@ -6920,7 +7039,8 @@ async function showWorkflowPopup() {
                 item.addEventListener('dblclick', async () => {
                     selectedName = name;
                     selectedTeam = teamVal;
-                    await addWorkflowToContext(selectedName, selectedTeam);
+                    selectedMode = mode;
+                    await addWorkflowToContext(selectedName, selectedTeam, selectedMode, target);
                     overlay.remove();
                 });
                 listEl.appendChild(item);
@@ -6929,7 +7049,7 @@ async function showWorkflowPopup() {
 
         overlay.querySelector('#wf-confirm-btn').addEventListener('click', async () => {
             if (selectedName) {
-                await addWorkflowToContext(selectedName, selectedTeam);
+                await addWorkflowToContext(selectedName, selectedTeam, selectedMode, target);
                 overlay.remove();
             }
         });
@@ -6938,26 +7058,42 @@ async function showWorkflowPopup() {
     }
 }
 
-async function addWorkflowToContext(name, team) {
-    team = team || '';
-    const displayName = team ? `${team}/${name}` : name;
-    // Avoid duplicate
-    if (pendingWorkflows.some(w => w.displayName === displayName)) return;
+function showOasisWorkflowPopup() {
+    return showWorkflowPopup('oasis');
+}
 
-    // Load raw YAML content for this workflow (team-scoped)
-    let yamlText = '';
+async function addWorkflowToContext(name, team, mode = 'yaml', target = 'chat') {
+    team = team || '';
+    mode = mode === 'python' ? 'python' : 'yaml';
+    const displayName = team ? `${team}/${name}` : name;
+    const cfg = getWorkflowTargetConfig(target);
+    // Avoid duplicate
+    if (cfg.list.some(w => w.displayName === displayName && (w.mode || 'yaml') === mode)) return;
+
+    let contentText = '';
+    let workflowPath = '';
     try {
-        const teamQ = team ? '?team=' + encodeURIComponent(team) : '';
-        const r = await fetch(`/proxy_visual/load-yaml-raw/${encodeURIComponent(name)}${teamQ}`);
-        const data = await r.json();
-        yamlText = data.yaml || '';
+        const teamQ = team ? `?team=${encodeURIComponent(team)}` : '';
+        if (mode === 'python') {
+            const modeQ = teamQ ? `${teamQ}&mode=python` : '?mode=python';
+            const r = await fetch(`/proxy_visual/load-layout/${encodeURIComponent(name)}${modeQ}`);
+            const data = await r.json();
+            contentText = data.content || '';
+            workflowPath = data.path || '';
+        } else {
+            const r = await fetch(`/proxy_visual/load-yaml-raw/${encodeURIComponent(name)}${teamQ}`);
+            const data = await r.json();
+            contentText = data.yaml || '';
+            workflowPath = data.path || '';
+        }
     } catch(e) {
-        console.warn('Failed to load workflow YAML:', e);
+        console.warn('Failed to load workflow content:', e);
     }
 
-    pendingWorkflows.push({ name: name, team: team, displayName: displayName, yaml: yamlText });
-    renderWorkflowPreviews();
-    inputField.focus();
+    cfg.list.push({ name, team, mode, displayName, content: contentText, path: workflowPath });
+    renderWorkflowPreviews(target);
+    const input = document.getElementById(cfg.inputId);
+    if (input && typeof input.focus === 'function') input.focus();
 }
 
 // ================================================================
@@ -7866,6 +8002,8 @@ function updateOasisTownComposer(detail) {
     const sameTopic = input.dataset.topicId === topicId;
     if (!sameTopic) {
         input.value = '';
+        pendingOasisWorkflows = [];
+        renderWorkflowPreviews('oasis');
     }
     input.dataset.topicId = topicId;
 
@@ -8841,15 +8979,20 @@ function renderTopicDetail(detail) {
     const actionsEl = document.getElementById('oasis-detail-actions');
     const isRunning = detail.status === 'discussing' || detail.status === 'pending';
     let btns = '';
+    if (detail.workflow_mode) {
+        const modeText = detail.workflow_mode === 'python' ? 'Python Workflow' : 'YAML Workflow';
+        const refText = detail.workflow_ref ? ` · ${escapeHtml(detail.workflow_ref)}` : '';
+        btns += `<span class="oasis-detail-action-btn workflow" title="${escapeHtml(modeText)}${detail.workflow_ref ? `: ${escapeHtml(detail.workflow_ref)}` : ''}">${modeText}${refText}</span>`;
+    }
     // Always show overview button when there is data
     const hasData = (detail.posts && detail.posts.length > 0) || (detail.timeline && detail.timeline.length > 0);
     if (hasData) {
-        btns += `<button onclick="showDiscussionOverview()" class="oasis-detail-action-btn overview">📊 ${currentLang==='zh-CN'?'讨论概览':'Overview'}</button>`;
+        btns += `<button onclick="showDiscussionOverview()" class="oasis-detail-action-btn overview">${currentLang==='zh-CN'?'讨论概览':'Overview'}</button>`;
     }
     if (isRunning) {
-        btns += `<button onclick="cancelOasisTopic('${detail.topic_id}')" class="oasis-detail-action-btn cancel">⏹ ${t('oasis_cancel')}</button>`;
+        btns += `<button onclick="cancelOasisTopic('${detail.topic_id}')" class="oasis-detail-action-btn cancel">${t('oasis_cancel')}</button>`;
     }
-    btns += `<button onclick="deleteOasisTopic('${detail.topic_id}')" class="oasis-detail-action-btn delete">🗑 ${t('oasis_delete')}</button>`;
+    btns += `<button onclick="deleteOasisTopic('${detail.topic_id}')" class="oasis-detail-action-btn delete">${t('oasis_delete')}</button>`;
     actionsEl.innerHTML = btns;
 
     renderPosts(detail.posts || [], detail.timeline || [], detail.discussion !== false);
@@ -9259,11 +9402,36 @@ async function submitOasisTopicPost() {
 
     const input = document.getElementById('oasis-town-input');
     if (!input) return;
-    const content = (input.value || '').trim();
-    if (!content) {
+    const baseContent = (input.value || '').trim();
+    const workflowsToSend = pendingOasisWorkflows.map(w => ({
+        name: w.name,
+        team: w.team || '',
+        mode: w.mode || 'yaml',
+        displayName: w.displayName,
+        content: w.content || '',
+        path: w.path || '',
+    }));
+    if (!baseContent && workflowsToSend.length === 0) {
         input.focus();
         return;
     }
+    let workflowPrefix = '';
+    for (const wf of workflowsToSend) {
+        if ((wf.mode || 'yaml') === 'python') {
+            workflowPrefix += `【python workflow, use it now】\n`
+                + `Team Name: ${wf.team || '(non-team)'}\n`
+                + `Python Name: ${wf.name}\n`
+                + `Absolute Path: ${wf.path || '(unknown)'}\n`
+                + (wf.content ? `---\n${wf.content}\n---\n\n` : '\n');
+        } else {
+            workflowPrefix += `【oasis workflow, use it now】\n`
+                + `Team Name: ${wf.team || '(non-team)'}\n`
+                + `YAML Name: ${wf.name}\n`
+                + `Absolute Path: ${wf.path || '(unknown)'}\n`
+                + (wf.content ? `---\n${wf.content}\n---\n\n` : '\n');
+        }
+    }
+    const content = workflowPrefix + baseContent;
 
     oasisManualPostSubmitting = true;
     updateOasisTownComposer(detail);
@@ -9280,10 +9448,14 @@ async function submitOasisTopicPost() {
                 throw new Error(data.error || data.detail || data.message || `HTTP ${resp.status}`);
             }
             input.value = '';
+            pendingOasisWorkflows = [];
+            renderWorkflowPreviews('oasis');
             await loadTopicDetail(oasisCurrentTopicId);
         } else {
             const created = await createOasisTopicFromTownPrompt(content);
             input.value = '';
+            pendingOasisWorkflows = [];
+            renderWorkflowPreviews('oasis');
             await refreshOasisTopics();
             if (created.topic_id) {
                 await openOasisTopic(created.topic_id);
@@ -9845,6 +10017,7 @@ async function openGroup(teamName) {
         '<button id="team-tab-members" onclick="switchTeamTab(\'members\')" style="padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #2563eb;background:#2563eb;color:white;">👥 成员</button>' +
         '<button id="team-tab-experts" onclick="switchTeamTab(\'experts\')" style="padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #d1d5db;background:#f9fafb;color:#374151;">🧑‍💼 人设池</button>' +
         '<button id="team-tab-workflows" onclick="switchTeamTab(\'workflows\')" style="padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #d1d5db;background:#f9fafb;color:#374151;">📂 工作流</button>' +
+        '<button id="team-tab-skills" onclick="switchTeamTab(\'skills\')" style="padding:4px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid #d1d5db;background:#f9fafb;color:#374151;">🧩 Skill</button>' +
         '</div>' +
         '<div style="display:flex;gap:8px;align-items:center;">' +
         '<span id="team-tab-actions-members">' +
@@ -9857,7 +10030,11 @@ async function openGroup(teamName) {
         '</span>' +
         '<span id="team-tab-actions-workflows" style="display:none;">' +
         '<button onclick="loadTeamWorkflows()" class="text-gray-400 hover:text-gray-600 hover:bg-gray-100 px-2 py-1 rounded transition-colors" title="刷新工作流列表">🔄</button>' +
+        '<button onclick="showImportTeamWorkflowTemplateModal()" class="text-xs bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-1 rounded border border-blue-200" title="导入通用 Python 工作流模板">📥 导入模板</button>' +
         '<button onclick="newTeamWorkflowOnCanvas()" class="text-xs bg-purple-50 text-purple-600 hover:bg-purple-100 px-3 py-1 rounded border border-purple-200" title="新建工作流（跳转画布）">➕ 创建工作流</button>' +
+        '</span>' +
+        '<span id="team-tab-actions-skills" style="display:none;">' +
+        '<button onclick="loadTeamSkills()" class="text-gray-400 hover:text-gray-600 hover:bg-gray-100 px-2 py-1 rounded transition-colors" title="刷新 Skill 列表">🔄</button>' +
         '</span>' +
         '<button onclick="toggleTeamMembersView()" class="text-gray-400 hover:text-gray-600 text-sm">&times;</button>' +
         '</div>' +
@@ -9904,6 +10081,25 @@ async function openGroup(teamName) {
         '<tbody id="team-workflows-table-body">' +
         '</tbody>' +
         '</table>' +
+        '</div>' +
+        '<div id="team-panel-skills" class="team-members-table-container" style="display:none;padding:0;">' +
+        '<div style="display:flex;min-height:420px;">' +
+        '<div style="width:280px;border-right:1px solid #e5e7eb;padding:12px;overflow:auto;">' +
+        '<div id="team-skills-list" style="display:flex;flex-direction:column;gap:8px;"></div>' +
+        '</div>' +
+        '<div style="flex:1;min-width:0;padding:16px;overflow:auto;">' +
+        '<div id="team-skill-view-empty" style="color:#9ca3af;font-size:12px;padding:20px 0;">请选择一个 Skill 查看 SKILL.md</div>' +
+        '<div id="team-skill-view" style="display:none;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">' +
+        '<div>' +
+        '<div id="team-skill-view-name" style="font-size:16px;font-weight:700;color:#111827;"></div>' +
+        '<div id="team-skill-view-meta" style="font-size:11px;color:#6b7280;margin-top:4px;"></div>' +
+        '</div>' +
+        '</div>' +
+        '<pre id="team-skill-view-content" style="white-space:pre-wrap;word-break:break-word;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px;font-size:12px;line-height:1.6;color:#1f2937;overflow:auto;"></pre>' +
+        '</div>' +
+        '</div>' +
+        '</div>' +
         '</div>' +
         '</div>';
 
@@ -10298,7 +10494,7 @@ async function loadTeamMembers() {
             // For openclaw type, use the full orchestration config modal (files/tools/channels)
             const configBtn = m.tag === 'openclaw'
                 ? `<button onclick="orchShowAgentConfigModal('${escapeHtml(m.global_name)}')" class="text-purple-500 hover:text-purple-700 text-xs px-2 py-1 rounded hover:bg-purple-50" title="OpenClaw 配置 (Files / Tools / Channels)">🦞⚙️</button>`
-                : `<button onclick="showAgentConfigModal('${m.type}', '${escapeHtml(m.global_name)}', '${escapeHtml(m.name)}', '${escapeHtml(m.tag || '')}', '${escapeHtml(apiUrl)}', '${escapeHtml(apiKey)}', '${escapeHtml(model)}', '${escapeHtml(typeof headers === 'object' ? JSON.stringify(headers).replace(/"/g, '&quot;').replace(/'/g, "\\'") : headers)}')" class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50" title="配置">⚙️</button>`;
+                : `<button onclick="showAgentConfigModal('${m.type}', '${escapeHtml(m.global_name)}', '${escapeHtml(m.name)}', '${escapeHtml(m.tag || '')}', '${escapeHtml(apiUrl)}', '${escapeHtml(apiKey)}', '${escapeHtml(model)}', '${escapeHtml(typeof headers === 'object' ? JSON.stringify(headers).replace(/"/g, '&quot;').replace(/'/g, "\\'") : headers)}', '${escapeHtml(m.platform || '')}')" class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50" title="配置">⚙️</button>`;
             
             return `
                 <tr>
@@ -10320,7 +10516,7 @@ async function loadTeamMembers() {
 
 // Store preview data for export
 let _exportPreviewData = null;
-let _exportSelectedSkills = new Set(); // Store selected skill IDs: "agent/skill" or "managed/skill"
+let _exportSelectedSkills = new Set(); // Store selected skill IDs: "agent/skill", "managed_personal/skill", or "managed_team/skill"
 
 /**
  * Toggle all skills based on the "select all" checkbox
@@ -10508,7 +10704,7 @@ function renderExportPreview(data) {
     }
     
     // Skills - Render by agent with individual checkboxes
-    const skills = sections.skills || { agents: [], details: [], managed: [] };
+    const skills = sections.skills || { agents: [], details: [], managed: [], clawcross_personal: [], clawcross_team: [] };
     let totalSkills = 0;
     const skillsListEl = document.getElementById('export-skills-list');
     let skillsHtml = '';
@@ -10541,12 +10737,54 @@ function renderExportPreview(data) {
         });
     }
     
-    // Managed skills section
+    // OpenClaw managed skills section
     if (skills.managed && skills.managed.length > 0) {
         totalSkills += skills.managed.length;
         skillsHtml += `<div class="mt-3 mb-1 font-medium text-gray-700 text-xs uppercase tracking-wide border-b border-gray-200 pb-1">${t('export_managed_skills')}</div>`;
         skills.managed.forEach(s => {
             const skillId = `managed/${s.name}`;
+            const isChecked = _exportSelectedSkills.has(skillId);
+            skillsHtml += `
+                <div class="flex items-center gap-2 py-0.5 hover:bg-gray-100 rounded">
+                    <input type="checkbox" id="skill-${escapeHtml(skillId.replace(/\//g, '-'))}" 
+                        class="export-skill-checkbox" 
+                        data-skill-id="${escapeHtml(skillId)}"
+                        ${isChecked ? 'checked' : ''}
+                        onchange="toggleSkill('${escapeHtml(skillId)}', this.checked)">
+                    <label for="skill-${escapeHtml(skillId.replace(/\//g, '-'))}" class="text-gray-700 cursor-pointer select-none text-sm flex-1">
+                        ${escapeHtml(s.name)}
+                    </label>
+                </div>`;
+        });
+    }
+
+    // ClawCross personal managed skills
+    if (skills.clawcross_personal && skills.clawcross_personal.length > 0) {
+        totalSkills += skills.clawcross_personal.length;
+        skillsHtml += `<div class="mt-3 mb-1 font-medium text-gray-700 text-xs uppercase tracking-wide border-b border-gray-200 pb-1">${t('export_managed_skills')} · Shared</div>`;
+        skills.clawcross_personal.forEach(s => {
+            const skillId = `managed_personal/${s.name}`;
+            const isChecked = _exportSelectedSkills.has(skillId);
+            skillsHtml += `
+                <div class="flex items-center gap-2 py-0.5 hover:bg-gray-100 rounded">
+                    <input type="checkbox" id="skill-${escapeHtml(skillId.replace(/\//g, '-'))}" 
+                        class="export-skill-checkbox" 
+                        data-skill-id="${escapeHtml(skillId)}"
+                        ${isChecked ? 'checked' : ''}
+                        onchange="toggleSkill('${escapeHtml(skillId)}', this.checked)">
+                    <label for="skill-${escapeHtml(skillId.replace(/\//g, '-'))}" class="text-gray-700 cursor-pointer select-none text-sm flex-1">
+                        ${escapeHtml(s.name)}
+                    </label>
+                </div>`;
+        });
+    }
+
+    // ClawCross team managed skills
+    if (skills.clawcross_team && skills.clawcross_team.length > 0) {
+        totalSkills += skills.clawcross_team.length;
+        skillsHtml += `<div class="mt-3 mb-1 font-medium text-gray-700 text-xs uppercase tracking-wide border-b border-gray-200 pb-1">${t('export_managed_skills')} · Team</div>`;
+        skills.clawcross_team.forEach(s => {
+            const skillId = `managed_team/${s.name}`;
             const isChecked = _exportSelectedSkills.has(skillId);
             skillsHtml += `
                 <div class="flex items-center gap-2 py-0.5 hover:bg-gray-100 rounded">
@@ -10635,10 +10873,12 @@ async function confirmExportTeam() {
     }
     
     // Handle granular skills selection - only if some skills are selected but not all
-    const skills = _exportPreviewData.sections?.skills || { details: [], managed: [] };
+    const skills = _exportPreviewData.sections?.skills || { details: [], managed: [], clawcross_personal: [], clawcross_team: [] };
     let allSkillsCount = 0;
     skills.details?.forEach(d => { if (d.skills) allSkillsCount += d.skills.length; });
     if (skills.managed) allSkillsCount += skills.managed.length;
+    if (skills.clawcross_personal) allSkillsCount += skills.clawcross_personal.length;
+    if (skills.clawcross_team) allSkillsCount += skills.clawcross_team.length;
     
     // If skills section is enabled but not all skills selected, use granular mode
     if (include.skills && _exportSelectedSkills.size > 0 && _exportSelectedSkills.size < allSkillsCount) {
@@ -10647,10 +10887,25 @@ async function confirmExportTeam() {
         _exportSelectedSkills.forEach(skillId => {
             const [agent, ...skillParts] = skillId.split('/');
             const skillName = skillParts.join('/'); // skill name might contain '/'
-            if (!granularSkills[agent]) {
-                granularSkills[agent] = [];
+            const targetKey = agent === 'managed_personal'
+                ? '_managed_personal'
+                : agent === 'managed_team'
+                    ? '_managed_team'
+                    : agent;
+            if (!granularSkills[targetKey]) {
+                granularSkills[targetKey] = [];
             }
-            granularSkills[agent].push(skillName);
+            if (agent === 'managed') {
+                if (!granularSkills[agent]) {
+                    granularSkills[agent] = [];
+                }
+                granularSkills[agent].push(skillName);
+                return;
+            }
+            if (!granularSkills[targetKey]) {
+                granularSkills[targetKey] = [];
+            }
+            granularSkills[targetKey].push(skillName);
         });
         include.skills = granularSkills;
     }
@@ -10682,18 +10937,11 @@ async function confirmExportTeam() {
             return;
         }
         const blob = await resp.blob();
-        const disposition = resp.headers.get('Content-Disposition') || '';
-        let filename = `team_${currentGroupId}_snapshot.zip`;
-        const match = disposition.match(/filename="?([^"]+)"?/);
-        if (match) filename = match[1];
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        if (!blob || !blob.size) {
+            throw new Error('empty snapshot zip');
+        }
+        const filename = getAttachmentFilename(resp, `team_${currentGroupId}_snapshot.zip`);
+        triggerBlobDownload(blob, filename);
         
         // Close modal after successful download
         closeExportPreviewModal();
@@ -10703,7 +10951,7 @@ async function confirmExportTeam() {
             window.orchToast(t('orch_toast_snapshot_downloaded'));
         }
     } catch (e) {
-        alert('导出失败: ' + e.message);
+        alert('导出失败: ' + (e && e.message ? e.message : String(e)));
     } finally {
         confirmBtn.disabled = false;
         confirmBtn.textContent = originalText;
@@ -11070,6 +11318,17 @@ function acpxToolFromPlatform(platform) {
     return raw;
 }
 
+function platformNeedsApiUrl(platform) {
+    const raw = String(platform || '').trim().toLowerCase();
+    if (!raw) return true;
+    if (raw === 'openclaw') return false;
+    return !ADD_EXT_PLATFORM_FALLBACK.includes(raw);
+}
+
+function shouldShowExternalApiFields(platform) {
+    return platformNeedsApiUrl(platform);
+}
+
 async function deleteTeamMember(type, globalName, name, tag, platform) {
     if (!currentGroupId) return;
     if (_deletingTeamMember) return; // Prevent double-click
@@ -11123,21 +11382,32 @@ async function deleteTeamMember(type, globalName, name, tag, platform) {
             }
             await removeTeamExternalMember(currentGroupId, globalName);
         } else {
-            if (platformTool) {
+            let closeError = '';
+            if (platformTool || globalName) {
                 const acpResp = await fetch('/proxy_acpx_session_delete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        tool: platformTool,
-                        session_name: globalName,
-                    }),
+                    body: JSON.stringify(Object.assign(
+                        { session_name: globalName },
+                        platformTool ? { tool: platformTool } : {}
+                    )),
                 });
                 const acpResult = await acpResp.json().catch(() => ({}));
                 if (!acpResp.ok || !acpResult.ok) {
-                    throw new Error(acpResult.detail || acpResult.error || '删除 ACP Agent 失败');
+                    closeError = String(acpResult.detail || acpResult.error || '删除 ACP Agent 失败');
+                    const low = closeError.toLowerCase();
+                    const ignorable = low.includes('session not found')
+                        || low.includes('unsupported tool')
+                        || low.includes('unsupported tool or session not found');
+                    if (!ignorable) {
+                        throw new Error(closeError);
+                    }
                 }
             }
             await removeTeamExternalMember(currentGroupId, globalName);
+            if (closeError && typeof orchToast === 'function') {
+                orchToast(`成员 "${name}" 已删除（会话已不存在）`);
+            }
         }
         
         // Use non-blocking toast instead of alert
@@ -11185,7 +11455,6 @@ function addExtOnPlatformChange() {
 }
 
 const ADD_EXT_PLATFORM_FALLBACK = [
-    'openclaw',
     'codex',
     'claude',
     'claude-code',
@@ -11237,11 +11506,16 @@ function addExtPlatformLabel(value) {
 function renderAddExtPlatformOptions(options, selected = '') {
     const seen = new Set();
     const rows = ['<option value="">请选择平台</option>'];
+    const selectedValue = String(selected || '').trim().toLowerCase();
+    if (selectedValue === 'http') {
+        seen.add('http');
+        rows.push('<option value="http" selected>HTTP</option>');
+    }
     for (const raw of (Array.isArray(options) ? options : [])) {
         const value = String(raw || '').trim().toLowerCase();
-        if (!value || value === 'http' || seen.has(value)) continue;
+        if (!value || value === 'openclaw' || value === 'http' || value === 'api' || seen.has(value)) continue;
         seen.add(value);
-        rows.push(`<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(addExtPlatformLabel(value))}</option>`);
+        rows.push(`<option value="${escapeHtml(value)}"${value === selectedValue ? ' selected' : ''}>${escapeHtml(addExtPlatformLabel(value))}</option>`);
     }
     return rows.join('');
 }
@@ -11260,7 +11534,7 @@ async function fetchAddExtPlatformOptions() {
     } catch (_) {
         tools = [];
     }
-    const merged = ['openclaw', ...tools.filter((t) => t && t !== 'openclaw')];
+    const merged = tools.filter((t) => t && t !== 'openclaw' && t !== 'http' && t !== 'api');
     const fallback = ADD_EXT_PLATFORM_FALLBACK.filter((t) => !merged.includes(t));
     _addExtPlatformOptionsCache = merged.concat(fallback);
     return _addExtPlatformOptionsCache;
@@ -11341,11 +11615,11 @@ function showAddTeamMemberModal() {
                         </div>
                     </label>
                     <label style="font-size:11px;font-weight:600;color:#374151;">工具 (Tools)
-                        <div class="add-oasis-tools-actions" style="display:flex;gap:4px;margin:4px 0;">
+                        <div class="add-oasis-tools-actions" style="margin:4px 0;">
                             <button type="button" onclick="document.querySelectorAll('.add-oasis-tool-cb').forEach(c=>c.checked=true)" style="font-size:10px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#f0fdf4;color:#16a34a;cursor:pointer;">全选</button>
                             <button type="button" onclick="document.querySelectorAll('.add-oasis-tool-cb').forEach(c=>c.checked=false)" style="font-size:10px;padding:2px 8px;border:1px solid #d1d5db;border-radius:4px;background:#fef2f2;color:#dc2626;cursor:pointer;">全不选</button>
                         </div>
-                        <div id="add-oasis-tools-container" class="add-oasis-tools-container" style="max-height:120px;overflow-y:auto;border:1px solid #d1d5db;border-radius:6px;padding:6px;display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;">
+                        <div id="add-oasis-tools-container" class="add-oasis-tools-container" style="max-height:120px;overflow-y:auto;border:1px solid #d1d5db;border-radius:6px;padding:6px;margin-top:2px;">
                             <span style="color:#9ca3af;font-size:11px;">加载中...</span>
                         </div>
                     </label>
@@ -11396,10 +11670,17 @@ function showAddTeamMemberModal() {
                     <label style="font-size:11px;font-weight:600;color:#374151;">
                         Team内名称
                         <input id="add-oc-name" type="text" placeholder="work, research, coding"
-                               style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;margin-top:2px;"
-                               pattern="[a-zA-Z0-9_-]+" title="仅支持字母、数字、下划线、短横线">
+                               style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;margin-top:2px;">
                         <div style="font-size:10px;color:#6b7280;margin-top:3px;">
-                            🔗 Global Name 将自动生成为 <b>${escapeHtml(currentGroupId)}_&lt;名称&gt;</b>
+                            🔗 Global Name 将自动生成为安全 ID：<b id="add-oc-global-preview">加载中...</b>
+                        </div>
+                    </label>
+                    <label style="font-size:11px;font-weight:600;color:#374151;">标签 (Tag)
+                        <div style="display:flex;gap:4px;margin-top:2px;">
+                            <select id="add-oc-tag-select" onchange="document.getElementById('add-oc-tag-custom').value=this.value" style="flex:1;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:white;">
+                                <option value="">（无标签）</option>
+                            </select>
+                            <input id="add-oc-tag-custom" type="text" placeholder="或输入自定义 tag" style="flex:1;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
                         </div>
                     </label>
                     <label style="font-size:11px;font-weight:600;color:#374151;">
@@ -11436,6 +11717,7 @@ function showAddTeamMemberModal() {
     addExtOnPlatformChange();
     void populateAddExtPlatformOptions();
     void populateAddExtTagSelectOptions();
+    void populateAddOpenClawTagSelectOptions();
 
     // Load expert tags for Oasis Agent select options
     (async () => {
@@ -11499,6 +11781,7 @@ function showAddTeamMemberModal() {
     // ── OpenClaw Agent Form Setup ──
     const ocNameInp = document.getElementById('add-oc-name');
     const ocWsInp = document.getElementById('add-oc-workspace');
+    const ocGlobalPreview = document.getElementById('add-oc-global-preview');
     let ocParentDir = '';
     let ocWsManualEdit = false;
 
@@ -11518,16 +11801,36 @@ function showAddTeamMemberModal() {
     }).catch(() => { ocWsInp.placeholder = '请输入工作空间路径'; });
 
     // Derive workspace-friendly agent name (includes team prefix)
+    function _ocSafeSlugPart(raw) {
+        const source = String(raw || '').trim();
+        if (!source) return '';
+        const parts = Array.from(source).map((ch) => {
+            if (/[a-zA-Z0-9_-]/.test(ch)) return ch;
+            return 'u' + ch.codePointAt(0).toString(16);
+        });
+        return parts.join('_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+    }
+
+    function _ocGlobalName() {
+        const n = ocNameInp.value.trim();
+        if (!n) return '';
+        const safeTeam = _ocSafeSlugPart(currentGroupId || 'team');
+        const safeName = _ocSafeSlugPart(n);
+        if (!safeName) return '';
+        return safeTeam ? `${safeTeam}_${safeName}` : safeName;
+    }
+
     function _ocWsAgentName() {
         const n = ocNameInp.value.trim();
         if (!n) return '';
         return currentGroupId ? (currentGroupId + '_' + n) : n;
     }
 
-    // Name changes → auto-update workspace (unless user has manually edited it)
-    ocNameInp.addEventListener('input', () => {
-        ocNameInp.style.borderColor = '#d1d5db';
-        ocNameInp.style.background = '';
+    function _ocSyncDerivedFields() {
+        const globalName = _ocGlobalName();
+        if (ocGlobalPreview) {
+            ocGlobalPreview.textContent = globalName || '(等待输入名称)';
+        }
         if (!ocWsManualEdit) {
             const wn = _ocWsAgentName();
             if (wn) {
@@ -11536,6 +11839,13 @@ function showAddTeamMemberModal() {
                 ocWsInp.value = '';
             }
         }
+    }
+
+    // Name changes → auto-update workspace (unless user has manually edited it)
+    ocNameInp.addEventListener('input', () => {
+        ocNameInp.style.borderColor = '#d1d5db';
+        ocNameInp.style.background = '';
+        _ocSyncDerivedFields();
     });
 
     // Track manual workspace edits
@@ -11544,8 +11854,7 @@ function showAddTeamMemberModal() {
     // Reset button: revert workspace to auto-derived value
     overlay.querySelector('#add-oc-ws-reset').addEventListener('click', () => {
         ocWsManualEdit = false;
-        const wn = _ocWsAgentName();
-        ocWsInp.value = wn ? ((ocParentDir || '') + '/workspace-' + wn) : '';
+        _ocSyncDerivedFields();
         ocWsInp.style.borderColor = '#d1d5db';
     });
 
@@ -11557,6 +11866,12 @@ function showAddTeamMemberModal() {
             // Store selected expert content on the button for later access
             overlay.querySelector('#add-oc-pick-expert')._selectedExpertContent = content;
             overlay.querySelector('#add-oc-pick-expert')._selectedExpertTag = expert.tag || '';
+            const ocTagCustom = document.getElementById('add-oc-tag-custom');
+            const ocTagSelect = document.getElementById('add-oc-tag-select');
+            if (expert.tag && ocTagCustom && !ocTagCustom.value.trim()) {
+                ocTagCustom.value = expert.tag;
+                if (ocTagSelect) ocTagSelect.value = expert.tag;
+            }
             
             ocExpertPreview.style.display = 'block';
             ocExpertPreview.innerHTML = '<div style="display:flex;align-items:center;gap:6px;"><span style="font-size:16px;">' + (expert.emoji || '⭐') + '</span><span style="font-weight:600;">' + escapeHtml(expert.name) + '</span><button id="add-oc-clear-expert" type="button" style="margin-left:auto;padding:1px 6px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;font-size:10px;color:#6b7280;">✕</button></div>'
@@ -11578,6 +11893,8 @@ function showAddTeamMemberModal() {
             overlay.remove();
         }
     });
+
+    _ocSyncDerivedFields();
 }
 
 let addOasisTagOptions = [];
@@ -11845,6 +12162,37 @@ async function addExternalMember(event) {
     }
 }
 
+async function populateAddOpenClawTagSelectOptions() {
+    const sel = document.getElementById('add-oc-tag-select');
+    if (!sel) return;
+    let experts = [];
+    try {
+        const teamExpertsUrl = currentGroupId
+            ? `/proxy_visual/experts?team=${encodeURIComponent(currentGroupId)}`
+            : '/proxy_visual/experts';
+        const r = await fetch(teamExpertsUrl);
+        experts = await r.json();
+    } catch (e) {
+        /* ignore */
+    }
+    const seen = new Set();
+    sel.innerHTML = '';
+    const addOpt = (v, text = v) => {
+        if (seen.has(v)) return;
+        seen.add(v);
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = text;
+        sel.appendChild(o);
+    };
+    addOpt('', '（无标签）');
+    for (const exp of (Array.isArray(experts) ? experts : [])) {
+        const tag = String((exp && exp.tag) || '').trim();
+        if (tag) addOpt(tag, tag);
+    }
+    addOpt('custom', '自定义');
+}
+
 async function deleteGroup(groupId) {    if (!confirm(t('group_delete_confirm'))) return;
     try {
         await fetch(`/proxy_groups/${encodeURIComponent(groupId)}`, {
@@ -11946,21 +12294,287 @@ function toggleOrchFocusMode() {
     if (btn) btn.classList.toggle('focus-active', !isFocused);
 }
 
+let currentOrchMode = 'yaml'; // 'yaml' or 'python'
+
+function orchDefaultPythonScaffold() {
+    const teamName = (typeof orch !== 'undefined' && orch && orch.teamName) ? orch.teamName : '';
+    const teamHint = teamName || '<team-or-empty>';
+    return `import asyncio
+import os
+import sys
+
+try:
+    from oasis.python_workflow_cli import StandaloneWorkflowContext, run_cli
+except ModuleNotFoundError:
+    extra_paths = [
+        p for p in os.environ.get("CLAWCROSS_PYTHONPATH", "").split(os.pathsep) if p
+    ]
+    project_root = os.environ.get("CLAWCROSS_PROJECT_ROOT", "").strip()
+    if project_root:
+        extra_paths.append(project_root)
+    for path_entry in extra_paths:
+        if path_entry and path_entry not in sys.path:
+            sys.path.insert(0, path_entry)
+    from oasis.python_workflow_cli import StandaloneWorkflowContext, run_cli
+
+
+async def main(ctx: StandaloneWorkflowContext):
+    # This script can be launched directly:
+    #   python my_workflow.py --question "Do the work" --user-id xinyuan --team "${teamHint}"
+    # If oasis imports already work, no path bootstrap is needed.
+    # If they do not, you can use PYTHONPATH, custom sys.path logic,
+    # CLAWCROSS_PYTHONPATH / CLAWCROSS_PROJECT_ROOT, or any wrapper you prefer.
+    #
+    # By default, the runtime auto-creates one OASIS topic before main(ctx) starts.
+    #   ctx.topic_id is usually already available
+    #   await ctx.publish(...) writes both local logs and topic posts
+    #
+    # Available through ctx:
+    #   ctx.question, ctx.user_id, ctx.team, ctx.topic_id, ctx.run_id
+    #   ctx.list_agents(), ctx.get_agent(), ctx.send_agent(...)
+    #   ctx.publish(...), ctx.set_result(...), ctx.set_conclusion(...)
+    #   ctx.create_empty_topic(...), ctx.publish_to_topic(...), ctx.conclude_topic(...)
+    # Notes:
+    #   ctx.list_agents() is synchronous: do not write await ctx.list_agents()
+    #   prefer unique agent ids over broad tags like "creative"
+    #   store reply.content in results, not the raw reply object
+    agents = [a for a in ctx.list_agents() if a.get("id")]
+    await ctx.publish(
+        f"python workflow started with {len(agents)} available agents in team '{ctx.team or 'default'}'",
+        author="workflowpy",
+    )
+
+    if not agents:
+        ctx.set_conclusion("No agents available.")
+        ctx.set_result({
+            "ok": False,
+            "question": ctx.question,
+            "team": ctx.team,
+            "error": "no agents available",
+        })
+        return
+
+    ordered_agents = sorted(
+        agents,
+        key=lambda a: (
+            str(a.get("kind", "")),
+            str(a.get("tag", "")),
+            str(a.get("name", "")),
+            str(a.get("id", "")),
+        ),
+    )
+    fanout_agents = ordered_agents[: min(4, len(ordered_agents))]
+
+    async def ask_agent(agent, prompt):
+        reply = await ctx.send_agent(agent["id"], prompt)
+        return {
+            "agent_id": agent["id"],
+            "agent_name": agent.get("name", agent["id"]),
+            "agent_tag": agent.get("tag", ""),
+            "ok": reply.ok,
+            "content": (reply.content or "").strip(),
+            "error": reply.error,
+        }
+
+    parallel_prompt = (
+        f"Task:\\n{ctx.question}\\n\\n"
+        "Please provide one concise, high-value response from your perspective."
+    )
+    parallel_results = await asyncio.gather(
+        *[ask_agent(agent, parallel_prompt) for agent in fanout_agents],
+        return_exceptions=True,
+    )
+
+    normalized_parallel = []
+    successful_parallel = []
+    for agent, item in zip(fanout_agents, parallel_results):
+        if isinstance(item, Exception):
+            entry = {
+                "agent_id": agent["id"],
+                "agent_name": agent.get("name", agent["id"]),
+                "agent_tag": agent.get("tag", ""),
+                "ok": False,
+                "content": "",
+                "error": str(item),
+            }
+        else:
+            entry = item
+        normalized_parallel.append(entry)
+        if entry["ok"]:
+            successful_parallel.append(entry)
+            await ctx.publish(entry["content"] or "(empty reply)", author=entry["agent_name"][:80])
+        else:
+            await ctx.publish(
+                f"FAILED: {entry['error'] or 'unknown error'}",
+                author=entry["agent_name"][:80],
+            )
+
+    transcript_lines = [
+        f"{item['agent_name']}: {item['content']}"
+        for item in successful_parallel
+        if item.get("content")
+    ]
+    synthesis = None
+    remaining_agents = ordered_agents[len(fanout_agents):]
+    if remaining_agents and transcript_lines:
+        synthesizer = remaining_agents[0]
+        sequential_prompt = (
+            f"Original task:\\n{ctx.question}\\n\\n"
+            "Earlier agent outputs:\\n"
+            + "\\n\\n".join(transcript_lines)
+            + "\\n\\nPlease synthesize the strongest points into one concise conclusion."
+        )
+        synthesis = await ask_agent(synthesizer, sequential_prompt)
+        if synthesis["ok"]:
+            await ctx.publish(
+                synthesis["content"] or "(empty synthesis)",
+                author=synthesis["agent_name"][:80],
+            )
+        else:
+            await ctx.publish(
+                f"SYNTHESIS FAILED: {synthesis['error'] or 'unknown error'}",
+                author=synthesis["agent_name"][:80],
+            )
+
+    success_count = sum(1 for item in normalized_parallel if item["ok"])
+    if synthesis and synthesis.get("ok") and synthesis.get("content"):
+        ctx.set_conclusion(synthesis["content"])
+    else:
+        ctx.set_conclusion(
+            f"Hybrid workflow completed: {success_count}/{len(fanout_agents)} parallel agents succeeded."
+        )
+
+    ctx.set_result({
+        "ok": True,
+        "question": ctx.question,
+        "team": ctx.team,
+        "parallel_agent_count": len(fanout_agents),
+        "parallel_results": normalized_parallel,
+        "synthesis": synthesis,
+    })
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_cli(main))
+`;
+}
+
+function orchSetWorkflowMode(mode) {
+    currentOrchMode = mode;
+    const yamlBtn = document.getElementById('orch-mode-yaml-btn');
+    const pythonBtn = document.getElementById('orch-mode-python-btn');
+    const yamlPanel = document.getElementById('orch-yaml-panel');
+    const canvasArea = document.getElementById('orch-canvas-area');
+    const pythonCanvasPanel = document.getElementById('orch-python-canvas-panel');
+    const codeTitle = document.getElementById('orch-code-panel-title');
+    const aiBtn = document.getElementById('orch-ai-btn');
+    const exportLabel = document.getElementById('orch-export-btn-label');
+    const downloadLabel = document.getElementById('orch-download-btn-label');
+    const uploadLabel = document.getElementById('orch-upload-btn-label');
+    const runLabel = document.getElementById('orch-run-btn-label');
+    const runBtn = document.getElementById('orch-run-btn');
+    const settingsSection = document.getElementById('orch-settings-section');
+    const aiTitle = document.getElementById('orch-ai-section-title');
+    const guidanceLabel = document.getElementById('orch-guidance-label');
+    const guidanceInput = document.getElementById('orch-guidance-input');
+    const statusEl = document.getElementById('orch-agent-status');
+    const promptLabel = document.getElementById('orch-prompt-label');
+    const outputLabel = document.getElementById('orch-agent-output-label');
+    const promptContent = document.getElementById('orch-prompt-content');
+    const outputContent = document.getElementById('orch-agent-yaml');
+    const pythonEditor = document.getElementById('orch-python-editor');
+    const zh = currentLang === 'zh-CN';
+    const isMobile = typeof window !== 'undefined'
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(max-width: 768px)').matches;
+
+    if (mode === 'python') {
+        yamlBtn.classList.remove('active');
+        pythonBtn.classList.add('active');
+        yamlPanel.style.display = 'none';
+        if (canvasArea) canvasArea.style.display = 'none';
+        if (pythonCanvasPanel) pythonCanvasPanel.style.display = 'flex';
+        if (aiBtn) aiBtn.style.display = '';
+        if (settingsSection) settingsSection.style.display = 'none';
+        if (aiTitle) aiTitle.textContent = zh ? '🤖 AI 写 Python 工作流' : '🤖 AI Write Python Workflow';
+        if (guidanceLabel) guidanceLabel.textContent = zh ? '🧭 写代码指引' : '🧭 Coding Guidance';
+        if (guidanceInput) guidanceInput.placeholder = zh
+            ? '例如：写成 async workflowpy；优先调用 send_agent；把 review / retry 流程写清楚。'
+            : 'Example: write async workflowpy; prefer send_agent; include explicit review/retry flow.';
+        if (statusEl) statusEl.textContent = zh ? '点击「🤖 AI优化工作流」自动生成 Python workflow' : 'Click "AI Optimize Workflow" to generate Python workflow';
+        if (promptLabel) promptLabel.textContent = zh ? '📨 发送的代码指令' : '📨 Coding Prompt Sent';
+        if (outputLabel) outputLabel.textContent = zh ? '🤖 Agent Explain' : '🤖 Agent Explain';
+        if (promptContent) promptContent.textContent = zh ? '点击 AI 后显示发送给 Agent 的 Python 指令' : 'Shows the Python prompt after AI generation';
+        if (outputContent) outputContent.textContent = zh ? '等待 Agent 输出工作流说明' : 'Waiting for workflow explanation';
+        if (exportLabel) exportLabel.textContent = zh ? '📋 复制 Python' : '📋 Copy Python';
+        if (downloadLabel) downloadLabel.textContent = zh ? '⬇️ 导出 Python' : '⬇️ Export Python';
+        if (uploadLabel) uploadLabel.textContent = zh ? '⬆️ 导入 Python' : '⬆️ Import Python';
+        if (runLabel) runLabel.textContent = zh ? '▶️ 运行工作流' : '▶️ Run Workflow';
+        if (runBtn) runBtn.title = zh ? '运行当前编辑器里的工作流' : 'Run the workflow in the current editor';
+        if (codeTitle) codeTitle.innerHTML = '🐍 Python 脚本';
+        if (pythonEditor && !String(pythonEditor.value || '').trim()) {
+            pythonEditor.value = orchDefaultPythonScaffold();
+        }
+        if (isMobile) {
+            orchCloseMobilePanels();
+        }
+    } else {
+        pythonBtn.classList.remove('active');
+        yamlBtn.classList.add('active');
+        yamlPanel.style.display = 'flex';
+        if (pythonCanvasPanel) pythonCanvasPanel.style.display = 'none';
+        if (canvasArea) canvasArea.style.display = 'block';
+        if (aiBtn) aiBtn.style.display = '';
+        if (settingsSection) settingsSection.style.display = '';
+        if (aiTitle) aiTitle.textContent = zh ? '🤖 AI 生成' : '🤖 AI Generate';
+        if (guidanceLabel) guidanceLabel.textContent = zh ? '🧭 优化指引' : '🧭 Optimization Guidance';
+        if (guidanceInput) guidanceInput.placeholder = zh
+            ? '例如：减少节点数；保留 reviewer 回环；让 planner 先出计划再并行执行。'
+            : 'Example: reduce node count; keep reviewer loop; let planner draft first, then parallel execution.';
+        if (statusEl) statusEl.textContent = zh ? '点击「🤖 AI编排」自动生成 YAML' : 'Click "AI Optimize Workflow" to generate YAML';
+        if (promptLabel) promptLabel.textContent = zh ? '📨 发送的 Prompt' : '📨 Prompt Sent';
+        if (outputLabel) outputLabel.textContent = zh ? '🤖 Agent Explain' : '🤖 Agent Explain';
+        if (promptContent) promptContent.textContent = zh ? '点击 AI编排 后显示' : 'Shown after AI Orch';
+        if (outputContent) outputContent.textContent = zh ? '等待 Agent 输出工作流说明' : 'Waiting for workflow explanation';
+        if (exportLabel) exportLabel.textContent = zh ? '📋 复制工作流到粘贴板' : '📋 Copy Workflow to Clipboard';
+        if (downloadLabel) downloadLabel.textContent = zh ? '⬇️ 导出工作流' : '⬇️ Export Workflow';
+        if (uploadLabel) uploadLabel.textContent = zh ? '⬆️ 导入工作流' : '⬆️ Import Workflow';
+        if (runLabel) runLabel.textContent = zh ? '▶️ 运行工作流' : '▶️ Run Workflow';
+        if (runBtn) runBtn.title = zh ? '运行当前画布里的工作流' : 'Run the workflow from the current canvas';
+        if (codeTitle) codeTitle.innerHTML = '📄 规则 YAML';
+        if (isMobile) {
+            orchCloseMobilePanels();
+        }
+    }
+}
+
 // Agent 配置模态框
 let currentConfigAgent = null;
 
-async function showAgentConfigModal(type, globalName, name, tag, api_url, api_key, model, headers) {
-    currentConfigAgent = { type, globalName, name, tag, api_url, api_key, model, headers };
+async function showAgentConfigModal(type, globalName, name, tag, api_url, api_key, model, headers, platform) {
+    const normalizedType = type === 'ext' ? 'external' : type;
+    currentConfigAgent = { type: normalizedType, globalName, name, tag, api_url, api_key, model, headers, platform };
+    const platformValue = String(platform || '').trim().toLowerCase();
+    let platformOptionsHtml = '';
+    if (normalizedType === 'external') {
+        const options = await fetchAddExtPlatformOptions();
+        const normalized = Array.isArray(options) ? options.slice() : [];
+        if (platformValue && !normalized.includes(platformValue) && platformValue !== 'http') {
+            normalized.push(platformValue);
+        }
+        platformOptionsHtml = renderAddExtPlatformOptions(normalized, platformValue);
+    }
     
     // Create modal dynamically like orchestration page
     const overlay = document.createElement('div');
     overlay.className = 'orch-modal-overlay';
     overlay.id = 'agent-config-overlay';
     
-    const typeLabel = type === 'oasis' ? 'Oasis Agent' : 'External Agent';
+    const typeLabel = normalizedType === 'oasis' ? 'Oasis Agent' : 'External Agent';
     
     // External Agent form fields (like orchestration page)
-    const externalForm = type === 'external' ? `
+    const externalForm = normalizedType === 'external' ? `
+        <div id="config-ext-api-fields" style="display:${shouldShowExternalApiFields(platformValue) ? 'block' : 'none'};">
         <label style="font-size:11px;color:#9ca3af;margin-bottom:2px;margin-top:8px;display:block;">API URL *</label>
         <input id="config-ext-url" type="text" value="${escapeHtml(api_url || '')}" placeholder="https://api.example.com/v1" style="font-family:monospace;font-size:12px;width:100%;max-width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;">
         <label style="font-size:11px;color:#9ca3af;margin-bottom:2px;margin-top:8px;display:block;">API Key</label>
@@ -11969,38 +12583,49 @@ async function showAgentConfigModal(type, globalName, name, tag, api_url, api_ke
         <input id="config-ext-model" type="text" value="${escapeHtml(model || '')}" placeholder="gpt-4 / deepseek-chat (optional)" style="font-family:monospace;font-size:12px;width:100%;max-width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box;">
         <label style="font-size:11px;color:#9ca3af;margin-bottom:2px;margin-top:8px;display:block;">Headers (JSON)</label>
         <textarea id="config-ext-headers" placeholder='{"X-Custom": "value"}' style="font-family:monospace;font-size:11px;min-height:60px;width:100%;max-width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;resize:vertical;box-sizing:border-box;">${escapeHtml(typeof headers === 'object' ? JSON.stringify(headers, null, 2) : headers || '')}</textarea>
+        </div>
     ` : '';
     
     // Agent persona tag section
-    const tagSection = (type === 'oasis' || type === 'external') ? `
+    const tagSection = (normalizedType === 'oasis' || normalizedType === 'external') ? `
         <label style="font-size:11px;font-weight:600;color:#374151;">标签 (Tag)</label>
         <select id="config-agent-tag" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;margin-top:2px;background:white;">
             <option value="">(无标签)</option>
         </select>
-        ${type === 'oasis' ? `<div id="config-tag-drop-zone" style="border:2px dashed #d1d5db;border-radius:8px;padding:12px;text-align:center;font-size:11px;color:#9ca3af;cursor:default;transition:all .15s;margin-top:8px;">
+        ${normalizedType === 'oasis' ? `<div id="config-tag-drop-zone" style="border:2px dashed #d1d5db;border-radius:8px;padding:12px;text-align:center;font-size:11px;color:#9ca3af;cursor:default;transition:all .15s;margin-top:8px;">
             📦 拖入专家设置标签
         </div>` : ''}
     ` : '';
     
+    // Platform selector for external agents
+    const platformSection = normalizedType === 'external' ? `
+        <label style="font-size:11px;font-weight:600;color:#374151;">平台 (Platform)</label>
+        <select id="config-agent-platform" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;margin-top:2px;background:white;">
+            ${platformOptionsHtml}
+        </select>
+    ` : '';
+
     overlay.innerHTML = `
         <div class="orch-modal" style="width:min(560px, 92vw);max-width:92vw;max-height:min(88vh, 820px);overflow:auto;">
-            <h3>⚙️ ${type === 'external' ? '🌐 ' : ''}配置成员 — ${typeLabel}</h3>
+            <h3>⚙️ ${normalizedType === 'external' ? '🌐 ' : ''}配置成员 — ${typeLabel}</h3>
             <div style="display:flex;flex-direction:column;gap:8px;margin:10px 0;">
                 <label style="font-size:11px;font-weight:600;color:#374151;">类型</label>
                 <div id="config-agent-type" style="padding:6px 8px;background:#f3f4f6;border-radius:6px;font-size:12px;color:#374151;">${typeLabel}</div>
-                
+
+                ${platformSection}
+
                 <label style="font-size:11px;font-weight:600;color:#374151;">名称</label>
                 <input id="config-agent-name" type="text" placeholder="输入成员名称" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;margin-top:2px;">
-                
+
                 ${tagSection}
                 ${externalForm}
-                
+
                 <label style="font-size:11px;font-weight:600;color:#374151;">Global Name</label>
                 <input id="config-agent-global-name" type="text" value="${escapeHtml(globalName)}" disabled style="width:100%;max-width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;margin-top:2px;background:#f3f4f6;cursor:not-allowed;color:#9ca3af;box-sizing:border-box;">
             </div>
             <div class="orch-modal-btns">
                 <button id="config-cancel" style="padding:6px 14px;border-radius:6px;border:1px solid #d1d5db;background:white;color:#374151;cursor:pointer;font-size:12px;">取消</button>
-                <button id="config-save" style="padding:6px 14px;border-radius:6px;border:none;background:${type === 'external' ? '#10b981' : '#2563eb'};color:white;cursor:pointer;font-size:12px;">保存</button>
+                <button id="config-save" style="padding:6px 14px;border-radius:6px;border:none;background:${normalizedType === 'external' ? '#10b981' : '#2563eb'};color:white;cursor:pointer;font-size:12px;">保存</button>
             </div>
         </div>
     `;
@@ -12009,6 +12634,16 @@ async function showAgentConfigModal(type, globalName, name, tag, api_url, api_ke
     
     // Set initial values
     document.getElementById('config-agent-name').value = name;
+    const configPlatformSelect = document.getElementById('config-agent-platform');
+    const configApiFields = document.getElementById('config-ext-api-fields');
+    function syncConfigExternalFields() {
+        if (!configApiFields || !configPlatformSelect) return;
+        configApiFields.style.display = shouldShowExternalApiFields(configPlatformSelect.value) ? 'block' : 'none';
+    }
+    if (configPlatformSelect) {
+        configPlatformSelect.addEventListener('change', syncConfigExternalFields);
+        syncConfigExternalFields();
+    }
     
     // Setup event handlers
     overlay.querySelector('#config-cancel').addEventListener('click', () => {
@@ -12037,12 +12672,13 @@ async function showAgentConfigModal(type, globalName, name, tag, api_url, api_ke
         const newTag = tagInput ? tagInput.value.trim() : '';
 
         // Oasis Agent: save tag
-        if (type === 'oasis') {
+        if (normalizedType === 'oasis') {
             meta.tag = newTag;
         } else {
             // External Agent: save api_url, api_key, model, headers
+            const platformValue = document.getElementById('config-agent-platform')?.value || '';
             const extUrl = document.getElementById('config-ext-url').value.trim();
-            if (!extUrl) {
+            if (platformNeedsApiUrl(platformValue) && !extUrl) {
                 alert('API URL 不能为空');
                 return;
             }
@@ -12064,14 +12700,15 @@ async function showAgentConfigModal(type, globalName, name, tag, api_url, api_ke
         }
         
         try {
-            const url = type === 'external'
+            const url = normalizedType === 'external'
                 ? `/teams/${encodeURIComponent(currentGroupId)}/members/external`
                 : `/internal_agents/${encodeURIComponent(globalName)}?team=${encodeURIComponent(currentGroupId)}`;
-            const body = type === 'external'
+            const body = normalizedType === 'external'
                 ? {
                     global_name: globalName,
                     new_name: newName,
                     new_tag: newTag,
+                    platform: document.getElementById('config-agent-platform')?.value || '',
                     api_url: meta.api_url,
                     api_key: meta.api_key,
                     model: meta.model,
@@ -12100,23 +12737,36 @@ async function showAgentConfigModal(type, globalName, name, tag, api_url, api_ke
     });
     
     // Load expert tags for agent persona binding
-    if (type === 'oasis' || type === 'external') {
+    if (normalizedType === 'oasis' || normalizedType === 'external') {
         try {
             const expertsUrl = currentGroupId
                 ? `/proxy_visual/experts?team=${encodeURIComponent(currentGroupId)}`
                 : '/proxy_visual/experts';
             const r = await fetch(expertsUrl);
             const experts = await r.json();
-            const tags = [...new Set(experts.map(e => e.tag).filter(Boolean))];
             const tagSelect = document.getElementById('config-agent-tag');
-            tagSelect.innerHTML = '<option value="">(无标签)</option>' +
-                tags.map(t => `<option value="${t}">${t}</option>`).join('');
-            tagSelect.value = tag || '';
+            const rows = ['<option value="">(无标签)</option>'];
+            const selectedTag = String(tag || '').trim();
+            const entries = Array.isArray(experts) ? experts : [];
+            for (const exp of entries) {
+                const tagValue = String((exp && exp.tag) || '').trim();
+                if (!tagValue) continue;
+                const displayName = String(exp.name_zh || exp.name_en || exp.name || '').trim();
+                const source = String(exp.source || '').trim();
+                const metaParts = [displayName, source].filter(Boolean);
+                const label = metaParts.length ? `${tagValue} · ${metaParts.join(' · ')}` : tagValue;
+                rows.push(`<option value="${escapeHtml(tagValue)}"${tagValue === selectedTag ? ' selected' : ''}>${escapeHtml(label)}</option>`);
+            }
+            if (selectedTag && !entries.some(exp => String((exp && exp.tag) || '').trim() === selectedTag)) {
+                rows.push(`<option value="${escapeHtml(selectedTag)}" selected>${escapeHtml(selectedTag)}</option>`);
+            }
+            tagSelect.innerHTML = rows.join('');
+            tagSelect.value = selectedTag;
         } catch (e) {
             console.warn('Failed to load expert tags', e);
         }
 
-        if (type === 'oasis') {
+        if (normalizedType === 'oasis') {
             // Setup drop zone for expert tags
             const dropZone = document.getElementById('config-tag-drop-zone');
             dropZone.addEventListener('dragover', (e) => {
@@ -12255,25 +12905,30 @@ function switchTeamTab(tab) {
     const btnMembers = document.getElementById('team-tab-members');
     const btnExperts = document.getElementById('team-tab-experts');
     const btnWorkflows = document.getElementById('team-tab-workflows');
+    const btnSkills = document.getElementById('team-tab-skills');
     const panelMembers = document.getElementById('team-panel-members');
     const panelExperts = document.getElementById('team-panel-experts');
     const panelWorkflows = document.getElementById('team-panel-workflows');
+    const panelSkills = document.getElementById('team-panel-skills');
     const actionsMembers = document.getElementById('team-tab-actions-members');
     const actionsExperts = document.getElementById('team-tab-actions-experts');
     const actionsWorkflows = document.getElementById('team-tab-actions-workflows');
+    const actionsSkills = document.getElementById('team-tab-actions-skills');
     if (!btnMembers || !btnExperts) return;
 
     // Reset all tabs to inactive
     const inactiveStyle = {background: '#f9fafb', color: '#374151', borderColor: '#d1d5db'};
-    [btnMembers, btnExperts, btnWorkflows].forEach(btn => {
+    [btnMembers, btnExperts, btnWorkflows, btnSkills].forEach(btn => {
         if (btn) { btn.style.background = inactiveStyle.background; btn.style.color = inactiveStyle.color; btn.style.borderColor = inactiveStyle.borderColor; }
     });
     if (panelMembers) panelMembers.style.display = 'none';
     if (panelExperts) panelExperts.style.display = 'none';
     if (panelWorkflows) panelWorkflows.style.display = 'none';
+    if (panelSkills) panelSkills.style.display = 'none';
     if (actionsMembers) actionsMembers.style.display = 'none';
     if (actionsExperts) actionsExperts.style.display = 'none';
     if (actionsWorkflows) actionsWorkflows.style.display = 'none';
+    if (actionsSkills) actionsSkills.style.display = 'none';
 
     if (tab === 'experts') {
         btnExperts.style.background = '#7c3aed'; btnExperts.style.color = 'white'; btnExperts.style.borderColor = '#7c3aed';
@@ -12285,6 +12940,11 @@ function switchTeamTab(tab) {
         if (panelWorkflows) panelWorkflows.style.display = '';
         if (actionsWorkflows) actionsWorkflows.style.display = '';
         loadTeamWorkflows();
+    } else if (tab === 'skills') {
+        if (btnSkills) { btnSkills.style.background = '#f59e0b'; btnSkills.style.color = 'white'; btnSkills.style.borderColor = '#f59e0b'; }
+        if (panelSkills) panelSkills.style.display = '';
+        if (actionsSkills) actionsSkills.style.display = '';
+        loadTeamSkills();
     } else {
         btnMembers.style.background = '#2563eb'; btnMembers.style.color = 'white'; btnMembers.style.borderColor = '#2563eb';
         if (panelMembers) panelMembers.style.display = '';
@@ -12332,6 +12992,83 @@ async function loadTeamExperts() {
     }
 }
 
+// ── Team Skills ──
+async function loadTeamSkills() {
+    if (!currentGroupId) return;
+    const listEl = document.getElementById('team-skills-list');
+    const emptyEl = document.getElementById('team-skill-view-empty');
+    const viewEl = document.getElementById('team-skill-view');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="text-gray-400 text-xs">加载中...</div>';
+    if (emptyEl) emptyEl.style.display = '';
+    if (viewEl) viewEl.style.display = 'none';
+
+    try {
+        const resp = await fetch(`/teams/${encodeURIComponent(currentGroupId)}/skills`, { cache: 'no-store' });
+        if (!resp.ok) {
+            listEl.innerHTML = '<div class="text-red-400 text-xs">加载失败</div>';
+            return;
+        }
+        const data = await resp.json();
+        const sections = data.skills || {};
+        const teamSkills = sections.team || [];
+        const personalSkills = sections.personal || [];
+        let html = '';
+        const renderSection = (title, items, scope, badgeColor) => {
+            if (!items.length) return;
+            html += `<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin:6px 0 4px;">${escapeHtml(title)}</div>`;
+            items.forEach(skill => {
+                const name = skill.name || '';
+                const category = skill.category ? ` · ${skill.category}` : '';
+                html += `
+                    <button onclick="loadTeamSkillDetail('${escapeHtml(name)}','${scope}')" style="width:100%;text-align:left;padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;background:white;cursor:pointer;margin-bottom:6px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                            <span style="font-size:13px;font-weight:600;color:#111827;">${escapeHtml(name)}</span>
+                            <span style="font-size:10px;padding:2px 6px;border-radius:999px;background:${badgeColor};color:white;">${scope}</span>
+                        </div>
+                        <div style="font-size:11px;color:#6b7280;margin-top:4px;">${escapeHtml((skill.description || '') + category)}</div>
+                    </button>`;
+            });
+        };
+        renderSection('团队 Skill', teamSkills, 'team', '#f59e0b');
+        renderSection('共享 Skill', personalSkills, 'personal', '#6b7280');
+        listEl.innerHTML = html || '<div class="text-gray-400 text-xs">暂无 Skill</div>';
+    } catch (e) {
+        listEl.innerHTML = '<div class="text-red-400 text-xs">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+async function loadTeamSkillDetail(skillName, scope) {
+    if (!currentGroupId) return;
+    const emptyEl = document.getElementById('team-skill-view-empty');
+    const viewEl = document.getElementById('team-skill-view');
+    const nameEl = document.getElementById('team-skill-view-name');
+    const metaEl = document.getElementById('team-skill-view-meta');
+    const contentEl = document.getElementById('team-skill-view-content');
+    if (!contentEl) return;
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (viewEl) viewEl.style.display = '';
+    if (nameEl) nameEl.textContent = skillName;
+    if (metaEl) metaEl.textContent = '加载中...';
+    contentEl.textContent = '';
+
+    try {
+        const resp = await fetch(`/teams/${encodeURIComponent(currentGroupId)}/skills/${encodeURIComponent(skillName)}?scope=${encodeURIComponent(scope)}`, { cache: 'no-store' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.error || '加载失败');
+        }
+        const data = await resp.json();
+        const skill = data.skill || {};
+        if (nameEl) nameEl.textContent = skill.name || skillName;
+        if (metaEl) metaEl.textContent = `${scope === 'team' ? '团队' : '共享'} · ${skill.category || 'uncategorized'} · ${skill.path || ''}`;
+        contentEl.textContent = skill.content || '';
+    } catch (e) {
+        if (metaEl) metaEl.textContent = '加载失败';
+        contentEl.textContent = String(e.message || e);
+    }
+}
+
 // ── Load Team Workflows ──
 async function loadTeamWorkflows() {
     if (!currentGroupId) return;
@@ -12340,25 +13077,37 @@ async function loadTeamWorkflows() {
     tbody.innerHTML = '<tr><td colspan="3" class="text-center text-gray-400 py-8">加载中...</td></tr>';
 
     try {
-        const resp = await fetch(`/proxy_visual/load-layouts?team=${encodeURIComponent(currentGroupId)}`, { cache: 'no-store' });
-        if (!resp.ok) {
+        const [yamlResp, pyResp] = await Promise.all([
+            fetch(`/proxy_visual/load-layouts?team=${encodeURIComponent(currentGroupId)}&mode=yaml`, { cache: 'no-store' }),
+            fetch(`/proxy_visual/load-layouts?team=${encodeURIComponent(currentGroupId)}&mode=python`, { cache: 'no-store' }),
+        ]);
+        if (!yamlResp.ok || !pyResp.ok) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-center text-red-400 py-8">加载失败</td></tr>';
             return;
         }
-        const workflows = await resp.json();
+        const [yamlWorkflows, pythonWorkflows] = await Promise.all([yamlResp.json(), pyResp.json()]);
+        const workflows = [
+            ...(Array.isArray(yamlWorkflows) ? yamlWorkflows : []).map(name => ({ name, mode: 'yaml' })),
+            ...(Array.isArray(pythonWorkflows) ? pythonWorkflows : []).map(name => ({ name, mode: 'python' })),
+        ];
         if (!workflows || workflows.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" class="text-center text-gray-400 py-8">暂无工作流（在编排页面保存后会出现在这里）</td></tr>';
             return;
         }
-        tbody.innerHTML = workflows.map(name => {
-            const safeName = escapeHtml(name);
+        tbody.innerHTML = workflows.map(item => {
+            const safeName = escapeHtml(item.name);
+            const mode = item.mode === 'python' ? 'python' : 'yaml';
+            const badge = mode === 'python'
+                ? '<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:#ecfeff;color:#0f766e;font-size:10px;font-weight:700;margin-left:8px;">PY</span>'
+                : '<span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:700;margin-left:8px;">YAML</span>';
+            const fileName = mode === 'python' ? `${safeName}.py` : `${safeName}.yaml`;
             return `
                 <tr>
-                    <td class="font-medium text-gray-800">📂 ${safeName}</td>
-                    <td class="font-mono text-xs text-gray-500">${safeName}.yaml</td>
+                    <td class="font-medium text-gray-800">📂 ${safeName} ${badge}</td>
+                    <td class="font-mono text-xs text-gray-500">${fileName}</td>
                     <td style="text-align:right;white-space:nowrap;">
-<button onclick="viewTeamWorkflowYaml('${safeName}')" class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50" title="在画布中查看">👁️ 查看</button>
-                        <button onclick="deleteTeamWorkflow('${safeName}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50" title="删除">🗑️</button>
+                        <button onclick="viewTeamWorkflow('${safeName}', '${mode}')" class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50" title="打开工作流">👁️ 查看</button>
+                        <button onclick="deleteTeamWorkflow('${safeName}', '${mode}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50" title="删除">🗑️</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -12369,7 +13118,7 @@ async function loadTeamWorkflows() {
 }
 
 // ── View Team Workflow on Canvas ──
-async function viewTeamWorkflowYaml(name) {
+async function viewTeamWorkflow(name, mode = 'yaml') {
     if (!currentGroupId) return;
     try {
         // Switch to orchestrate page
@@ -12387,19 +13136,19 @@ async function viewTeamWorkflowYaml(name) {
         orchLoadExperts();
         orchLoadSessionAgents();
         orchLoadOpenClawSessions();
-        // Load the workflow onto the canvas
-        await orchDoLoadLayout(name);
+        if (typeof orchSetWorkflowMode === 'function') orchSetWorkflowMode(mode);
+        await orchDoLoadLayout(name, mode);
     } catch (err) {
         alert('加载失败: ' + err.message);
     }
 }
 
 // ── Delete Team Workflow ──
-async function deleteTeamWorkflow(name) {
+async function deleteTeamWorkflow(name, mode = 'yaml') {
     if (!currentGroupId) return;
     if (!confirm(`确定删除工作流 "${name}" 吗？此操作不可撤销。`)) return;
     try {
-        const resp = await fetch(`/proxy_visual/delete-layout/${encodeURIComponent(name)}?team=${encodeURIComponent(currentGroupId)}`, { method: 'DELETE' });
+        const resp = await fetch(`/proxy_visual/delete-layout/${encodeURIComponent(name)}?team=${encodeURIComponent(currentGroupId)}&mode=${encodeURIComponent(mode)}`, { method: 'DELETE' });
         if (resp.ok) {
             loadTeamWorkflows();
         } else {
@@ -12407,6 +13156,70 @@ async function deleteTeamWorkflow(name) {
         }
     } catch (err) {
         alert('删除失败: ' + err.message);
+    }
+}
+
+function showImportTeamWorkflowTemplateModal() {
+    if (!currentGroupId) {
+        alert('请先选择一个团队');
+        return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'orch-modal-overlay';
+    overlay.id = 'team-workflow-template-overlay';
+    overlay.innerHTML = `
+        <div class="orch-modal" style="width:min(720px, 92vw);max-width:92vw;">
+            <h3>📥 导入 Python 工作流模板</h3>
+            <div style="font-size:12px;color:#6b7280;margin-bottom:12px;">将通用 Python workflow 直接保存到当前 team，可稍后在编排页查看、运行或继续修改。</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;">
+                <div style="border:1px solid #dbeafe;border-radius:10px;padding:14px;background:#f8fbff;">
+                    <div style="font-size:14px;font-weight:700;color:#1d4ed8;">全串行</div>
+                    <div style="font-size:11px;color:#6b7280;margin-top:6px;line-height:1.6;">按当前 team/scope 下所有可用 agent 稳定排序，逐个串行执行。后一个 agent 会显式看到前面 agent 的输出。</div>
+                    <div style="margin-top:10px;font-size:11px;color:#374151;">文件名：<code>team_all_agents_sequential</code></div>
+                    <button onclick="importTeamWorkflowTemplate('sequential')" style="margin-top:12px;padding:7px 12px;border:none;border-radius:7px;background:#2563eb;color:white;cursor:pointer;font-size:12px;">导入全串行模板</button>
+                </div>
+                <div style="border:1px solid #d1fae5;border-radius:10px;padding:14px;background:#f7fffb;">
+                    <div style="font-size:14px;font-weight:700;color:#059669;">全并行</div>
+                    <div style="font-size:11px;color:#6b7280;margin-top:6px;line-height:1.6;">按当前 team/scope 下所有可用 agent 稳定排序，并行 fan-out，同步收集全部结果，再统一发到 topic。</div>
+                    <div style="margin-top:10px;font-size:11px;color:#374151;">文件名：<code>team_all_agents_parallel</code></div>
+                    <button onclick="importTeamWorkflowTemplate('parallel')" style="margin-top:12px;padding:7px 12px;border:none;border-radius:7px;background:#10b981;color:white;cursor:pointer;font-size:12px;">导入全并行模板</button>
+                </div>
+            </div>
+            <div class="orch-modal-btns" style="margin-top:14px;">
+                <button onclick="document.getElementById('team-workflow-template-overlay').remove()" style="padding:6px 14px;border-radius:6px;border:1px solid #d1d5db;background:white;color:#374151;cursor:pointer;font-size:12px;">关闭</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+    });
+}
+
+async function importTeamWorkflowTemplate(kind) {
+    if (!currentGroupId) return;
+    const normalized = kind === 'parallel' ? 'parallel' : 'sequential';
+    try {
+        const resp = await fetch('/proxy_visual/import-python-template', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                template: normalized,
+                team: currentGroupId,
+            }),
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok || !result.saved) {
+            throw new Error(result.error || '导入模板失败');
+        }
+        if (typeof orchToast === 'function') {
+            orchToast(`已导入 Python 模板：${result.file || normalized + '.py'}`);
+        }
+        const overlay = document.getElementById('team-workflow-template-overlay');
+        if (overlay) overlay.remove();
+        await loadTeamWorkflows();
+    } catch (err) {
+        alert('导入失败: ' + err.message);
     }
 }
 
@@ -12566,23 +13379,19 @@ async function addOpenClawMember() {
 
     const ocNameInp = document.getElementById('add-oc-name');
     const ocWsInp = document.getElementById('add-oc-workspace');
+    const ocTagCustom = document.getElementById('add-oc-tag-custom');
+    const ocTagSelect = document.getElementById('add-oc-tag-select');
     
     const shortName = ocNameInp.value.trim();
     const workspace = ocWsInp.value.trim();
+    const selectedTag = (ocTagCustom && ocTagCustom.value.trim())
+        || ((ocTagSelect && ocTagSelect.value !== 'custom') ? ocTagSelect.value : '');
     
     if (!shortName) {
         if (typeof orchToast === 'function') {
             orchToast('请输入Agent名称');
         } else {
             alert('请输入Agent名称');
-        }
-        return;
-    }
-    if (!/^[a-zA-Z0-9_-]+$/.test(shortName)) {
-        if (typeof orchToast === 'function') {
-            orchToast('名称只能包含字母、数字、下划线、短横线');
-        } else {
-            alert('名称只能包含字母、数字、下划线、短横线');
         }
         return;
     }
@@ -12596,7 +13405,29 @@ async function addOpenClawMember() {
     }
 
     // Auto-generate global name: team + "_" + shortName
-    const globalName = currentGroupId + '_' + shortName;
+    const safeTeam = String(currentGroupId || 'team')
+        .trim()
+        .split('')
+        .map((ch) => /[a-zA-Z0-9_-]/.test(ch) ? ch : 'u' + ch.codePointAt(0).toString(16))
+        .join('_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    const safeShortName = String(shortName)
+        .trim()
+        .split('')
+        .map((ch) => /[a-zA-Z0-9_-]/.test(ch) ? ch : 'u' + ch.codePointAt(0).toString(16))
+        .join('_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    const globalName = (safeTeam ? `${safeTeam}_` : '') + safeShortName;
+    if (!safeShortName) {
+        if (typeof orchToast === 'function') {
+            orchToast('名称不能为空');
+        } else {
+            alert('名称不能为空');
+        }
+        return;
+    }
 
     const btn = overlay.querySelector('#form-openclaw button[onclick="addOpenClawMember()"]');
     btn.disabled = true;
@@ -12639,7 +13470,7 @@ async function addOpenClawMember() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: shortName,
-                        tag: selectedExpertTag,
+                        tag: selectedTag || selectedExpertTag,
                         platform: 'openclaw',
                         global_name: globalName
                     })

@@ -15,7 +15,12 @@ MCP 指令执行工具服务 — 安全沙箱化的系统命令执行
 import os
 import sys
 import asyncio
-import shlex
+from collections import deque
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+import time
+import uuid
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
@@ -62,14 +67,19 @@ else:
     _DEFAULT_COMMANDS = {
         # 文件与目录
         "ls", "cat", "head", "tail", "wc", "du", "find", "file", "stat",
+        "rg", "nl", "mkdir", "touch", "cp", "mv",
+        "dirname", "basename", "realpath", "readlink", "split",
         # 文本处理
         "grep", "awk", "sed", "sort", "uniq", "cut", "tr", "diff", "comm",
+        "paste", "printf", "xargs", "jq", "cmp", "tee",
         # 系统信息（只读）
         "echo", "date", "cal", "whoami", "uname", "hostname",
-        "uptime", "free", "df", "env", "printenv",
+        "uptime", "free", "df", "env", "printenv", "ps",
         # 实用工具
         "pwd", "which", "expr", "seq", "yes", "true", "false",
+        "sleep", "timeout", "time",
         "base64", "md5sum", "sha256sum", "xxd",
+        "tar", "zip", "unzip",
         # Python
         "python", "python3",
         # 网络（只读）
@@ -105,10 +115,181 @@ else:
     ]
 
 # 执行超时（秒）— 支持 .env 自定义
-EXEC_TIMEOUT = int(os.getenv("EXEC_TIMEOUT", "60"))
+EXEC_TIMEOUT = int(os.getenv("EXEC_TIMEOUT", "180"))
+BACKGROUND_EXEC_TIMEOUT = int(os.getenv("BACKGROUND_EXEC_TIMEOUT", str(max(EXEC_TIMEOUT, 300))))
+MAX_EXEC_TIMEOUT = int(os.getenv("MAX_EXEC_TIMEOUT", "1800"))
 
 # 输出最大长度（字符数）— 支持 .env 自定义
 MAX_OUTPUT_LENGTH = int(os.getenv("MAX_OUTPUT_LENGTH", "8000"))
+MAX_CAPTURE_LENGTH = int(os.getenv("MAX_CAPTURE_LENGTH", str(max(MAX_OUTPUT_LENGTH, 20000))))
+DEFAULT_BACKGROUND_READ_CHARS = 12000
+MAX_BACKGROUND_READ_CHARS = 50000
+_BACKGROUND_JOBS: dict[str, "BackgroundJob"] = {}
+
+
+@dataclass
+class BackgroundJob:
+    job_id: str
+    username: str
+    command: str
+    workspace: str
+    mode: str
+    remote: str
+    stdout_path: str
+    stderr_path: str
+    timeout_seconds: int
+    started_at: float = field(default_factory=time.time)
+    finished_at: float | None = None
+    status: str = "running"
+    exit_code: int | None = None
+    error: str = ""
+    session_id: str = ""
+    task: asyncio.Task | None = None
+    proc: asyncio.subprocess.Process | None = None
+
+
+def _jobs_dir(workspace: str) -> Path:
+    path = Path(workspace) / ".mcp_jobs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _job_meta_path(workspace: str, job_id: str) -> Path:
+    return _jobs_dir(workspace) / f"{job_id}.json"
+
+
+def _persist_job(job: BackgroundJob) -> None:
+    payload = {
+        "job_id": job.job_id,
+        "username": job.username,
+        "command": job.command,
+        "workspace": job.workspace,
+        "mode": job.mode,
+        "remote": job.remote,
+        "stdout_path": job.stdout_path,
+        "stderr_path": job.stderr_path,
+        "timeout_seconds": job.timeout_seconds,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "status": job.status,
+        "exit_code": job.exit_code,
+        "error": job.error,
+        "session_id": job.session_id,
+    }
+    _job_meta_path(job.workspace, job.job_id).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _load_job_from_workspace(workspace: str, job_id: str) -> BackgroundJob | None:
+    path = _job_meta_path(workspace, job_id)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return BackgroundJob(
+        job_id=str(payload.get("job_id") or job_id),
+        username=str(payload.get("username") or ""),
+        command=str(payload.get("command") or ""),
+        workspace=str(payload.get("workspace") or workspace),
+        mode=str(payload.get("mode") or "shared"),
+        remote=str(payload.get("remote") or ""),
+        stdout_path=str(payload.get("stdout_path") or (_jobs_dir(workspace) / f"{job_id}.stdout.log")),
+        stderr_path=str(payload.get("stderr_path") or (_jobs_dir(workspace) / f"{job_id}.stderr.log")),
+        timeout_seconds=int(payload.get("timeout_seconds") or BACKGROUND_EXEC_TIMEOUT),
+        started_at=float(payload.get("started_at") or time.time()),
+        finished_at=float(payload["finished_at"]) if payload.get("finished_at") is not None else None,
+        status=str(payload.get("status") or "unknown"),
+        exit_code=payload.get("exit_code"),
+        error=str(payload.get("error") or ""),
+        session_id=str(payload.get("session_id") or ""),
+    )
+
+
+def _resolve_background_job(job_id: str, username: str = "", session_id: str = "", cwd: str = "") -> BackgroundJob | None:
+    key = (job_id or "").strip()
+    if not key:
+        return None
+    live = _BACKGROUND_JOBS.get(key)
+    if live is not None:
+        return live
+    workspace_state = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
+    return _load_job_from_workspace(str(workspace_state.cwd), key)
+
+
+def _bounded_int(value: int, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if parsed <= 0:
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+class _StreamingCapture:
+    def __init__(self, limit: int) -> None:
+        self.limit = max(256, limit)
+        self._current: list[str] = []
+        self._current_len = 0
+        self._truncated = False
+        self._head = ""
+        self._tail: deque[str] = deque()
+        self._tail_len = 0
+        self._head_limit = self.limit // 2
+        self._tail_limit = self.limit - self._head_limit
+        self.total_chars = 0
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        self.total_chars += len(text)
+        if not self._truncated:
+            self._current.append(text)
+            self._current_len += len(text)
+            if self._current_len > self.limit:
+                joined = "".join(self._current)
+                self._head = joined[:self._head_limit]
+                self._set_tail(joined[-self._tail_limit :])
+                self._current = []
+                self._current_len = 0
+                self._truncated = True
+            return
+        self._append_tail(text)
+
+    def _set_tail(self, text: str) -> None:
+        self._tail.clear()
+        self._tail_len = 0
+        self._append_tail(text)
+
+    def _append_tail(self, text: str) -> None:
+        if not text:
+            return
+        self._tail.append(text)
+        self._tail_len += len(text)
+        while self._tail_len > self._tail_limit and self._tail:
+            overflow = self._tail_len - self._tail_limit
+            first = self._tail[0]
+            if len(first) <= overflow:
+                self._tail.popleft()
+                self._tail_len -= len(first)
+            else:
+                self._tail[0] = first[overflow:]
+                self._tail_len -= overflow
+
+    def render(self) -> str:
+        if not self._truncated:
+            return "".join(self._current)
+        omitted = max(0, self.total_chars - len(self._head) - self._tail_len)
+        tail = "".join(self._tail)
+        return (
+            self._head
+            + f"\n\n... [输出过长，已截断，省略约 {omitted} 字符] ...\n\n"
+            + tail
+        )
 
 def _sandbox_env(workspace: str, username: str) -> dict:
     """构造沙箱环境变量（跨平台）"""
@@ -189,8 +370,136 @@ def _truncate_output(text: str, max_len: int = MAX_OUTPUT_LENGTH) -> str:
         + text[-half:]
     )
 
+
+async def _consume_stream(stream: asyncio.StreamReader | None, capture: _StreamingCapture) -> None:
+    if stream is None:
+        return
+    while True:
+        chunk = await stream.read(4096)
+        if not chunk:
+            break
+        capture.append(chunk.decode("utf-8", errors="replace"))
+
+
+async def _collect_process_output(
+    proc: asyncio.subprocess.Process,
+    *,
+    timeout_seconds: int,
+    max_output_chars: int,
+) -> tuple[bool, str, str]:
+    stdout_capture = _StreamingCapture(max_output_chars)
+    stderr_capture = _StreamingCapture(max_output_chars)
+    stdout_task = asyncio.create_task(_consume_stream(proc.stdout, stdout_capture))
+    stderr_task = asyncio.create_task(_consume_stream(proc.stderr, stderr_capture))
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(proc.wait(), stdout_task, stderr_task),
+            timeout=timeout_seconds,
+        )
+        return False, stdout_capture.render().strip(), stderr_capture.render().strip()
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        return True, stdout_capture.render().strip(), stderr_capture.render().strip()
+
+
+async def _stream_to_file(
+    stream: asyncio.StreamReader | None,
+    target_path: str,
+    capture: _StreamingCapture,
+) -> None:
+    if stream is None:
+        return
+    with open(target_path, "a", encoding="utf-8") as handle:
+        while True:
+            chunk = await stream.read(4096)
+            if not chunk:
+                break
+            text = chunk.decode("utf-8", errors="replace")
+            handle.write(text)
+            handle.flush()
+            capture.append(text)
+
+
+async def _run_background_job(job: BackgroundJob, env: dict[str, str]) -> None:
+    stdout_capture = _StreamingCapture(MAX_OUTPUT_LENGTH)
+    stderr_capture = _StreamingCapture(MAX_OUTPUT_LENGTH)
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            job.command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=job.workspace,
+            env=env,
+        )
+        job.proc = proc
+        _persist_job(job)
+        stdout_task = asyncio.create_task(_stream_to_file(proc.stdout, job.stdout_path, stdout_capture))
+        stderr_task = asyncio.create_task(_stream_to_file(proc.stderr, job.stderr_path, stderr_capture))
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(proc.wait(), stdout_task, stderr_task),
+                timeout=job.timeout_seconds,
+            )
+            job.exit_code = proc.returncode
+            job.status = "completed" if proc.returncode == 0 else "failed"
+            _persist_job(job)
+        except asyncio.TimeoutError:
+            job.status = "timeout"
+            job.error = f"命令执行超时（{job.timeout_seconds}秒限制），已终止。"
+            proc.kill()
+            await proc.wait()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            _persist_job(job)
+        except asyncio.CancelledError:
+            job.status = "cancelled"
+            job.error = "后台任务已取消。"
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+            _persist_job(job)
+            raise
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        job.status = "failed"
+        job.error = str(exc)
+        _persist_job(job)
+    finally:
+        job.finished_at = time.time()
+        job.proc = None
+        _persist_job(job)
+
+
+def _job_summary(job: BackgroundJob) -> str:
+    lines = [
+        f"🆔 job_id: {job.job_id}",
+        f"📁 工作目录: {job.workspace}",
+        f"🧭 workspace mode: {job.mode}",
+        f"📌 状态: {job.status}",
+        f"⏱️ timeout: {job.timeout_seconds}s",
+    ]
+    if job.remote:
+        lines.append(f"🌐 remote: {job.remote}")
+    if job.exit_code is not None:
+        lines.append(f"🚪 exit_code: {job.exit_code}")
+    if job.error:
+        lines.append(f"⚠️ error: {job.error}")
+    lines.append(f"📤 stdout: {job.stdout_path}")
+    lines.append(f"📤 stderr: {job.stderr_path}")
+    return "\n".join(lines)
+
 @mcp.tool()
-async def run_command(username: str, command: str, session_id: str = "", cwd: str = "") -> str:
+async def run_command(
+    username: str,
+    command: str,
+    session_id: str = "",
+    cwd: str = "",
+    timeout_seconds: int = 0,
+    max_output_chars: int = 0,
+) -> str:
     """
     在用户的隔离工作目录中执行系统命令。
     仅允许安全的只读/文本处理类命令，有超时保护。
@@ -206,6 +515,8 @@ async def run_command(username: str, command: str, session_id: str = "", cwd: st
     # 2. 获取用户工作目录
     workspace_state = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
     workspace = str(workspace_state.cwd)
+    timeout_value = _bounded_int(timeout_seconds, BACKGROUND_EXEC_TIMEOUT, 1, MAX_EXEC_TIMEOUT)
+    capture_limit = _bounded_int(max_output_chars, MAX_OUTPUT_LENGTH, 256, MAX_CAPTURE_LENGTH)
 
     try:
         # 3. 在用户目录下执行命令（使用 shell=True 以支持管道和重定向）
@@ -219,18 +530,26 @@ async def run_command(username: str, command: str, session_id: str = "", cwd: st
         )
 
         # 4. 带超时等待
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=EXEC_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return f"⏱️ 命令执行超时（{EXEC_TIMEOUT}秒限制），已终止。"
+        timed_out, out, err = await _collect_process_output(
+            proc,
+            timeout_seconds=timeout_value,
+            max_output_chars=capture_limit,
+        )
+        if timed_out:
+            result_parts = [
+                f"⏱️ 命令执行超时（{timeout_value}秒限制），已终止。",
+                f"📁 工作目录: {workspace}",
+                f"🧭 workspace mode: {workspace_state.mode}",
+            ]
+            if workspace_state.remote:
+                result_parts.append(f"🌐 remote: {workspace_state.remote}")
+            if out:
+                result_parts.append(f"📤 截止超时前的标准输出:\n{out}")
+            if err:
+                result_parts.append(f"📤 截止超时前的标准错误:\n{err}")
+            return "\n\n".join(result_parts)
 
         # 5. 组装输出
-        out = stdout.decode("utf-8", errors="replace").strip()
-        err = stderr.decode("utf-8", errors="replace").strip()
         exit_code = proc.returncode
 
         result_parts = []
@@ -245,9 +564,9 @@ async def run_command(username: str, command: str, session_id: str = "", cwd: st
             result_parts.append(f"🌐 remote: {workspace_state.remote}")
 
         if out:
-            result_parts.append(f"📤 标准输出:\n{_truncate_output(out)}")
+            result_parts.append(f"📤 标准输出:\n{out}")
         if err:
-            result_parts.append(f"📤 标准错误:\n{_truncate_output(err)}")
+            result_parts.append(f"📤 标准错误:\n{err}")
         if not out and not err:
             result_parts.append("(无输出)")
 
@@ -257,7 +576,14 @@ async def run_command(username: str, command: str, session_id: str = "", cwd: st
         return f"❌ 执行异常: {str(e)}"
 
 @mcp.tool()
-async def run_python_code(username: str, code: str, session_id: str = "", cwd: str = "") -> str:
+async def run_python_code(
+    username: str,
+    code: str,
+    session_id: str = "",
+    cwd: str = "",
+    timeout_seconds: int = 0,
+    max_output_chars: int = 0,
+) -> str:
     """
     在用户的隔离工作目录中执行 Python 代码片段。
     适用于数据计算、文本处理、简单脚本等场景。
@@ -267,6 +593,8 @@ async def run_python_code(username: str, code: str, session_id: str = "", cwd: s
     """
     workspace_state = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
     workspace = str(workspace_state.cwd)
+    timeout_value = _bounded_int(timeout_seconds, BACKGROUND_EXEC_TIMEOUT, 1, MAX_EXEC_TIMEOUT)
+    capture_limit = _bounded_int(max_output_chars, MAX_OUTPUT_LENGTH, 256, MAX_CAPTURE_LENGTH)
 
     # 将代码写入临时文件执行（比 -c 参数更可靠，支持多行和特殊字符）
     tmp_script = os.path.join(workspace, ".tmp_exec.py")
@@ -282,17 +610,25 @@ async def run_python_code(username: str, code: str, session_id: str = "", cwd: s
             env=_sandbox_env(workspace, username),
         )
 
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=EXEC_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return f"⏱️ Python 代码执行超时（{EXEC_TIMEOUT}秒限制），已终止。"
+        timed_out, out, err = await _collect_process_output(
+            proc,
+            timeout_seconds=timeout_value,
+            max_output_chars=capture_limit,
+        )
+        if timed_out:
+            result_parts = [
+                f"⏱️ Python 代码执行超时（{timeout_value}秒限制），已终止。",
+                f"📁 工作目录: {workspace}",
+                f"🧭 workspace mode: {workspace_state.mode}",
+            ]
+            if workspace_state.remote:
+                result_parts.append(f"🌐 remote: {workspace_state.remote}")
+            if out:
+                result_parts.append(f"📤 截止超时前的输出:\n{out}")
+            if err:
+                result_parts.append(f"📤 截止超时前的错误:\n{err}")
+            return "\n\n".join(result_parts)
 
-        out = stdout.decode("utf-8", errors="replace").strip()
-        err = stderr.decode("utf-8", errors="replace").strip()
         exit_code = proc.returncode
 
         result_parts = []
@@ -306,9 +642,9 @@ async def run_python_code(username: str, code: str, session_id: str = "", cwd: s
             result_parts.append(f"🌐 remote: {workspace_state.remote}")
 
         if out:
-            result_parts.append(f"📤 输出:\n{_truncate_output(out)}")
+            result_parts.append(f"📤 输出:\n{out}")
         if err:
-            result_parts.append(f"📤 错误信息:\n{_truncate_output(err)}")
+            result_parts.append(f"📤 错误信息:\n{err}")
         if not out and not err:
             result_parts.append("(无输出)")
 
@@ -323,6 +659,117 @@ async def run_python_code(username: str, code: str, session_id: str = "", cwd: s
                 os.remove(tmp_script)
             except Exception:
                 pass
+
+
+@mcp.tool()
+async def start_background_command(
+    username: str = "",
+    command: str = "",
+    session_id: str = "",
+    cwd: str = "",
+    timeout_seconds: int = 0,
+) -> str:
+    """
+    启动一个后台命令任务，立即返回 job_id，适合长时间运行的命令。
+    """
+    reject_reason = _validate_command(command)
+    if reject_reason:
+        return f"❌ {reject_reason}"
+
+    workspace_state = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
+    workspace = str(workspace_state.cwd)
+    timeout_value = _bounded_int(timeout_seconds, EXEC_TIMEOUT, 1, MAX_EXEC_TIMEOUT)
+    job_id = uuid.uuid4().hex[:12]
+    jobs_dir = _jobs_dir(workspace)
+    job = BackgroundJob(
+        job_id=job_id,
+        username=username,
+        command=command,
+        workspace=workspace,
+        mode=workspace_state.mode,
+        remote=workspace_state.remote,
+        stdout_path=str(jobs_dir / f"{job_id}.stdout.log"),
+        stderr_path=str(jobs_dir / f"{job_id}.stderr.log"),
+        timeout_seconds=timeout_value,
+        session_id=session_id,
+    )
+    Path(job.stdout_path).write_text("", encoding="utf-8")
+    Path(job.stderr_path).write_text("", encoding="utf-8")
+    _persist_job(job)
+    job.task = asyncio.create_task(_run_background_job(job, _sandbox_env(workspace, username)))
+    _BACKGROUND_JOBS[job_id] = job
+    return "✅ 后台任务已启动\n" + _job_summary(job)
+
+
+@mcp.tool()
+async def get_background_command_status(job_id: str, username: str = "", session_id: str = "", cwd: str = "") -> str:
+    """
+    查询后台命令任务状态。
+    """
+    job = _resolve_background_job(job_id, username=username, session_id=session_id, cwd=cwd)
+    if not job:
+        return f"❌ 未找到后台任务 '{job_id}'。"
+    return _job_summary(job)
+
+
+@mcp.tool()
+async def read_background_command_output(
+    job_id: str,
+    username: str = "",
+    session_id: str = "",
+    stream: str = "stdout",
+    cwd: str = "",
+    offset: int = 0,
+    limit: int = 0,
+) -> str:
+    """
+    分块读取后台任务输出日志。
+    """
+    job = _resolve_background_job(job_id, username=username, session_id=session_id, cwd=cwd)
+    if not job:
+        return f"❌ 未找到后台任务 '{job_id}'。"
+
+    stream_name = (stream or "stdout").strip().lower()
+    if stream_name not in {"stdout", "stderr"}:
+        return "❌ stream 只支持 stdout 或 stderr。"
+    path = job.stdout_path if stream_name == "stdout" else job.stderr_path
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = _bounded_int(limit, DEFAULT_BACKGROUND_READ_CHARS, 256, MAX_BACKGROUND_READ_CHARS)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            handle.seek(safe_offset)
+            content = handle.read(safe_limit)
+            next_offset = handle.tell()
+        if not content:
+            return f"📄 {stream_name} 已读到末尾。\n🆔 job_id: {job.job_id}\n📍 offset: {safe_offset}"
+        suffix = f"\n➡️ 下一段可用 `offset={next_offset}` 继续读取。"
+        return (
+            f"📄 后台任务 {job.job_id} 的 {stream_name} 输出片段：\n"
+            f"📍 offset: {safe_offset}\n"
+            f"📏 returned_chars: {len(content)}\n\n"
+            f"{content}{suffix}"
+        )
+    except OSError as exc:
+        return f"❌ 读取后台输出失败: {exc}"
+
+
+@mcp.tool()
+async def cancel_background_command(job_id: str, username: str = "", session_id: str = "", cwd: str = "") -> str:
+    """
+    取消一个后台命令任务。
+    """
+    job = _resolve_background_job(job_id, username=username, session_id=session_id, cwd=cwd)
+    if not job:
+        return f"❌ 未找到后台任务 '{job_id}'。"
+    if job.status != "running":
+        return "ℹ️ 后台任务已结束\n" + _job_summary(job)
+    if job.task:
+        job.task.cancel()
+        try:
+            await job.task
+        except asyncio.CancelledError:
+            pass
+    return "🛑 后台任务已取消\n" + _job_summary(job)
 
 @mcp.tool()
 async def list_allowed_commands() -> str:
@@ -345,11 +792,11 @@ async def list_allowed_commands() -> str:
         ]
     else:
         categories = [
-            ("📁 文件与目录", ["ls", "cat", "head", "tail", "wc", "du", "find", "file", "stat"]),
-            ("📝 文本处理", ["grep", "awk", "sed", "sort", "uniq", "cut", "tr", "diff", "comm"]),
+            ("📁 文件与目录", ["ls", "cat", "head", "tail", "wc", "du", "find", "file", "stat", "rg", "nl", "mkdir", "touch", "cp", "mv", "dirname", "basename", "realpath", "readlink", "split"]),
+            ("📝 文本处理", ["grep", "awk", "sed", "sort", "uniq", "cut", "tr", "diff", "comm", "paste", "printf", "xargs", "jq", "cmp", "tee"]),
             ("🖥️ 系统信息", ["echo", "date", "cal", "whoami", "uname", "hostname",
-                           "uptime", "free", "df", "env", "printenv"]),
-            ("🔧 实用工具", ["pwd", "which", "expr", "seq", "base64", "md5sum", "sha256sum", "xxd"]),
+                           "uptime", "free", "df", "env", "printenv", "ps"]),
+            ("🔧 实用工具", ["pwd", "which", "expr", "seq", "sleep", "timeout", "time", "base64", "md5sum", "sha256sum", "xxd", "tar", "zip", "unzip"]),
             ("🐍 Python", ["python", "python3"]),
             ("🌐 网络", ["ping", "curl", "wget"]),
         ]
@@ -377,8 +824,10 @@ async def list_allowed_commands() -> str:
         "\n⚠️ **安全说明**:\n"
         "- 所有命令在用户隔离目录中执行\n"
         "- 支持管道（|）和重定向（>）\n"
-        f"- 执行超时限制：{EXEC_TIMEOUT}秒\n"
-        f"- 输出长度限制：{MAX_OUTPUT_LENGTH}字符\n"
+        f"- 前台命令默认超时：{EXEC_TIMEOUT}秒\n"
+        f"- 后台命令默认超时：{BACKGROUND_EXEC_TIMEOUT}秒（最大 {MAX_EXEC_TIMEOUT}秒）\n"
+        f"- 默认输出长度限制：{MAX_OUTPUT_LENGTH}字符（最大 {MAX_CAPTURE_LENGTH}字符）\n"
+        "- 长任务可改用后台接口：start_background_command / get_background_command_status / read_background_command_output / cancel_background_command\n"
     )
     return result
 

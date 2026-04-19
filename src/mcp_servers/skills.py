@@ -31,6 +31,7 @@ mcp = FastMCP("SelfEvolution")
 async def skill_manage(
     username: str,
     action: str,
+    team: str = "",
     name: str = "",
     content: str = "",
     category: str = "",
@@ -68,6 +69,7 @@ async def skill_manage(
 
     :param username: User ID (auto-injected)
     :param action: create, edit, patch, delete, write_file, remove_file
+    :param team: Optional team scope. When provided, create/update the team-managed skill pool.
     :param name: Skill name (lowercase, hyphens, dots, underscores)
     :param content: SKILL.md content (for create/edit)
     :param category: Optional category folder
@@ -87,21 +89,21 @@ async def skill_manage(
         return json.dumps({"success": False, "error": "Skill name is required"})
 
     if action == "create":
-        result = create_skill(username, name=name, content=content, category=category)
+        result = create_skill(username, name=name, content=content, category=category, team=team)
     elif action == "edit":
-        result = edit_skill(username, name=name, content=content)
+        result = edit_skill(username, name=name, content=content, team=team)
     elif action == "patch":
         result = patch_skill(
             username, name=name,
             old_string=old_string, new_string=new_string,
-            file_path=file_path, replace_all=replace_all,
+            file_path=file_path, replace_all=replace_all, team=team,
         )
     elif action == "delete":
-        result = delete_skill(username, name=name)
+        result = delete_skill(username, name=name, team=team)
     elif action == "write_file":
-        result = write_skill_file(username, name=name, file_path=file_path, file_content=file_content)
+        result = write_skill_file(username, name=name, file_path=file_path, file_content=file_content, team=team)
     elif action == "remove_file":
-        result = remove_skill_file(username, name=name, file_path=file_path)
+        result = remove_skill_file(username, name=name, file_path=file_path, team=team)
     else:
         result = {"success": False, "error": f"Unknown action: {action}. Use: create, edit, patch, delete, write_file, remove_file"}
 
@@ -109,14 +111,32 @@ async def skill_manage(
 
 
 @mcp.tool()
-async def skill_view(username: str, name: str) -> str:
+async def skill_view(username: str, name: str, team: str = "") -> str:
     """
     View full content of a skill (procedural memory).
 
     :param username: User ID (auto-injected)
     :param name: Skill name to view
+    :param team: Optional team scope. When provided, return both team and shared skill variants by category.
     """
     from webot.skills import get_skill
+    if team:
+        team_skill = get_skill(username, name=name, team=team)
+        personal_skill = get_skill(username, name=name)
+        if not team_skill and not personal_skill:
+            return json.dumps({"error": f"Skill '{name}' not found"})
+        return json.dumps(
+            {
+                "name": name,
+                "team": team,
+                "sections": {
+                    "team": team_skill,
+                    "personal": personal_skill,
+                },
+            },
+            ensure_ascii=False,
+        )
+
     skill = get_skill(username, name=name)
     if not skill:
         return json.dumps({"error": f"Skill '{name}' not found"})
@@ -124,13 +144,28 @@ async def skill_view(username: str, name: str) -> str:
 
 
 @mcp.tool()
-async def skill_list(username: str) -> str:
+async def skill_list(username: str, team: str = "") -> str:
     """
     List all available skills (procedural memory) for the current user.
 
     :param username: User ID (auto-injected)
+    :param team: Optional team scope. When provided, show team and shared skills in separate sections.
     """
     from webot.skills import list_skills
+    if team:
+        team_skills = list_skills(username, team=team)
+        personal_skills = list_skills(username)
+        return json.dumps(
+            {
+                "count": len(team_skills) + len(personal_skills),
+                "team": team,
+                "sections": {
+                    "team": team_skills,
+                    "personal": personal_skills,
+                },
+            },
+            ensure_ascii=False,
+        )
     skills = list_skills(username)
     return json.dumps({"count": len(skills), "skills": skills}, ensure_ascii=False)
 
@@ -141,6 +176,7 @@ async def skill_list(username: str) -> str:
 async def skill_evolution_report(
     username: str,
     name: str,
+    team: str = "",
     session_id: str = "",
     days: int = 30,
     limit: int = 8,
@@ -157,6 +193,7 @@ async def skill_evolution_report(
 
     :param username: User ID (auto-injected)
     :param name: Skill name to analyze
+    :param team: Optional team scope. Team skill is preferred when both scopes contain the same name.
     :param session_id: Optional current session filter
     :param days: How many recent days to inspect
     :param limit: Max failure samples to analyze
@@ -169,6 +206,7 @@ async def skill_evolution_report(
     result = analyze_skill_evolution(
         username,
         name=name,
+        team=team,
         session_id=session_id,
         days=days,
         limit=limit,
@@ -183,6 +221,7 @@ async def skill_evolution_report(
 async def skill_evolution_apply(
     username: str,
     name: str,
+    team: str = "",
     session_id: str = "",
     days: int = 30,
     limit: int = 8,
@@ -199,6 +238,7 @@ async def skill_evolution_apply(
 
     :param username: User ID (auto-injected)
     :param name: Skill name to update
+    :param team: Optional team scope. Team skill is preferred when both scopes contain the same name.
     :param session_id: Optional current session filter
     :param days: How many recent days to inspect
     :param limit: Max failure samples to analyze
@@ -212,6 +252,7 @@ async def skill_evolution_apply(
     result = apply_skill_evolution(
         username,
         name=name,
+        team=team,
         session_id=session_id,
         days=days,
         limit=limit,

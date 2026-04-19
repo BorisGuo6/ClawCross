@@ -352,8 +352,11 @@ class DiscussionEngine:
 
             first, sid = working_name.split("#", 1)
             expert: ExpertAgent | SessionExpert | ExternalExpert
-            # New format: tag#platform#name (e.g., pm#openclaw#main, analyst#claude#architect)
-            # Internal: tag#oasis#name or #oasis#name  |  temp: tag#temp#N  |  external: tag#platform#name
+            # Current format:
+            # Internal: tag#oasis#name or #oasis#name
+            # Temp:     tag#temp#N
+            # External: tag#ext#id   (preferred)
+            # Legacy external: tag#platform#id (still accepted for compatibility)
             if "#oasis#" in sid or sid.startswith("oasis#") or sid == "oasis":
                 # --- Internal session agent: tag#oasis#name ---
                 # Extract the part after 'oasis#'
@@ -435,10 +438,11 @@ class DiscussionEngine:
                     provider=expert_provider,
                 )
             else:
-                # --- External agent: tag#platform#name (e.g., pm#openclaw#main, analyst#claude#architect) ---
-                # platform = second segment, name = third segment
+                # --- External agent ---
+                # Preferred: tag#ext#id
+                # Legacy:    tag#platform#id
                 parts = sid.split("#", 1)
-                platform_name = _canonical_external_platform(parts[0]) if parts else ""
+                external_mode = parts[0] if parts else ""
                 ext_name = parts[1] if len(parts) > 1 else ""
                 if not ext_name:
                     print(f"  [OASIS] ⚠️ External expert '{full_name}' missing name, skipping.")
@@ -446,11 +450,16 @@ class DiscussionEngine:
                 if force_new:
                     ext_name = uuid.uuid4().hex[:8]
                     print(f"  [OASIS] 🆕 #new: '{full_name}' → new external session '{ext_name}'")
-                # If JSON record found, prefer its platform; else fallback to first (tag as platform)
+                # Prefer the external_agents.json record as the source of truth for platform/global_name.
+                # Only fall back to legacy YAML-embedded platform hints when no record is available.
                 external_agent = _find_external_agent_record(external_agents, ext_name)
+                platform_name = ""
                 if external_agent and external_agent.get("platform"):
                     platform_name = _canonical_external_platform(str(external_agent.get("platform", "") or platform_name))
-                elif not platform_name:
+                elif external_mode and external_mode != "ext":
+                    platform_name = _canonical_external_platform(external_mode)
+                elif first:
+                    # Compatibility fallback: older teams sometimes encoded the effective platform in the tag.
                     platform_name = _canonical_external_platform(first)
                 is_acp_agent = platform_name in ExternalExpert._ACP_TOOL_TAGS
                 is_openclaw_http = platform_name == "openclaw"

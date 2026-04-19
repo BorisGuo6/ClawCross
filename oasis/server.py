@@ -85,7 +85,9 @@ from oasis.models import (
     CreateTopicRequest,
     HumanReplyRequest,
     HumanWaitInfo,
+    ManualConclusionRequest,
     ManualPostRequest,
+    ManualVoteRequest,
     TopicDetail,
     TopicSummary,
     PostInfo,
@@ -319,8 +321,22 @@ async def create_topic(req: CreateTopicRequest):
     discussions[topic_id] = forum
     forum.save()
 
+    if req.allow_empty and not req.python_file and not req.schedule_yaml and not req.schedule_file:
+        forum.status = "discussing"
+        forum.start_clock()
+        forum.save()
+        return {
+            "topic_id": topic_id,
+            "status": "discussing",
+            "message": "Empty topic created; external scripts may publish posts and conclude it later",
+        }
+
     try:
         if req.python_file:
+            # Legacy compatibility path:
+            # /topics + python_file still routes into the old injected-style
+            # PythonWorkflowEngine. Newer frontends should start Python workflows
+            # via the standalone runner instead of sending python_file here.
             engine = PythonWorkflowEngine(
                 forum=forum,
                 python_file=req.python_file,
@@ -462,7 +478,10 @@ async def add_manual_post(topic_id: str, req: ManualPostRequest):
 
     task = tasks.get(topic_id)
     engine = engines.get(topic_id)
-    if forum.status != "discussing" or not engine or not task or task.done():
+    manual_topic = engine is None and task is None
+    if forum.status != "discussing":
+        raise HTTPException(409, "Only active topics accept live posts")
+    if not manual_topic and (not engine or not task or task.done()):
         raise HTTPException(409, "Only actively running discussions accept live posts")
 
     content = (req.content or "").strip()
@@ -484,6 +503,60 @@ async def add_manual_post(topic_id: str, req: ManualPostRequest):
         timestamp=post.timestamp,
         elapsed=post.elapsed,
     )
+
+
+@app.post("/topics/{topic_id}/vote", response_model=dict)
+async def add_manual_vote(topic_id: str, req: ManualVoteRequest):
+    """Vote on an existing topic post."""
+    forum = _get_forum_or_404(topic_id)
+    _check_owner(forum, req.user_id)
+
+    if forum.status != "discussing":
+        raise HTTPException(409, "Only active topics accept votes")
+
+    voter = (req.voter or req.user_id or "workflowpy").strip() or "workflowpy"
+    await forum.vote(voter[:80], req.post_id, req.direction)
+    forum.save()
+
+    posts = await forum.browse()
+    post = next((p for p in posts if p.id == req.post_id), None)
+    if not post:
+        raise HTTPException(404, "Post not found")
+
+    return {
+        "topic_id": topic_id,
+        "post_id": post.id,
+        "voter": voter[:80],
+        "direction": req.direction,
+        "upvotes": post.upvotes,
+        "downvotes": post.downvotes,
+    }
+
+
+@app.post("/topics/{topic_id}/conclude", response_model=dict)
+async def conclude_manual_topic(topic_id: str, req: ManualConclusionRequest):
+    """Manually conclude an externally-driven topic."""
+    forum = _get_forum_or_404(topic_id)
+    _check_owner(forum, req.user_id)
+
+    task = tasks.get(topic_id)
+    engine = engines.get(topic_id)
+    if engine or task:
+        raise HTTPException(409, "Use the workflow engine to finish non-manual topics")
+    if forum.status != "discussing":
+        raise HTTPException(409, f"Topic is already {forum.status}")
+
+    author = (req.author or req.user_id or "主持人").strip() or "主持人"
+    conclusion = req.conclusion.strip()
+    forum.log_event("conclude", agent=author[:80], detail="manual conclusion")
+    forum.conclusion = conclusion
+    forum.status = "concluded"
+    forum.save()
+    return {
+        "topic_id": topic_id,
+        "status": forum.status,
+        "conclusion": forum.conclusion,
+    }
 
 
 @app.post("/topics/{topic_id}/callback", response_model=dict)

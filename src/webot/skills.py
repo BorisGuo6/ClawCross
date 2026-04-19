@@ -25,7 +25,6 @@ USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
 _MAX_SKILL_SIZE = 100 * 1024        # 100KB per SKILL.md
 _MAX_SUPPORT_FILE_SIZE = 1 * 1024 * 1024  # 1MB per supporting file
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_ALLOWED_SUPPORT_DIRS = {"references", "templates", "scripts", "assets"}
 
 # ── Security scanning patterns ──────────────────────────────────────
 
@@ -53,6 +52,17 @@ def _skills_dir(user_id: str) -> Path:
     return root
 
 
+def _team_skills_dir(user_id: str, team: str) -> Path:
+    """Per-team skills directory."""
+    root = USER_FILES_DIR / (user_id or "anonymous") / "teams" / _validate_team(team) / "skills"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _scope_skills_dir(user_id: str, team: str = "") -> Path:
+    return _team_skills_dir(user_id, team) if team else _skills_dir(user_id)
+
+
 def _validate_name(name: str) -> str:
     """Validate and normalize a skill name."""
     name = (name or "").strip().lower()
@@ -62,6 +72,16 @@ def _validate_name(name: str) -> str:
             "Use lowercase letters, numbers, hyphens, dots, underscores (1-64 chars)."
         )
     return name
+
+
+def _validate_team(team: str) -> str:
+    """Validate a team name for storage under data/user_files/<user>/teams/."""
+    team = (team or "").strip()
+    if not team:
+        raise ValueError("Team name is required")
+    if "/" in team or "\\" in team or team.startswith(".") or ".." in team:
+        raise ValueError(f"Invalid team name '{team}'")
+    return team
 
 
 def _security_scan(content: str) -> list[str]:
@@ -120,6 +140,7 @@ def create_skill(
     name: str,
     content: str,
     category: str = "",
+    team: str = "",
 ) -> dict[str, Any]:
     """Create a new skill with SKILL.md content."""
     name = _validate_name(name)
@@ -136,7 +157,7 @@ def create_skill(
     if violations:
         return {"success": False, "error": f"Security scan failed: {'; '.join(violations)}"}
 
-    base = _skills_dir(user_id)
+    base = _scope_skills_dir(user_id, team)
     if category:
         category = slugify(category, "general")
         skill_dir = base / category / name
@@ -154,7 +175,7 @@ def create_skill(
     tmp_path.write_text(content, encoding="utf-8")
     os.replace(str(tmp_path), str(skill_path))
 
-    _rebuild_index(user_id)
+    _rebuild_index(user_id, team=team)
     return {"success": True, "message": f"Skill '{name}' created", "path": str(skill_path)}
 
 
@@ -163,6 +184,7 @@ def edit_skill(
     *,
     name: str,
     content: str,
+    team: str = "",
 ) -> dict[str, Any]:
     """Full rewrite of a skill's SKILL.md."""
     name = _validate_name(name)
@@ -177,7 +199,7 @@ def edit_skill(
     if violations:
         return {"success": False, "error": f"Security scan failed: {'; '.join(violations)}"}
 
-    skill_path = _find_skill_path(user_id, name)
+    skill_path = _find_skill_path(user_id, name, team=team)
     if not skill_path:
         return {"success": False, "error": f"Skill '{name}' not found"}
 
@@ -187,7 +209,7 @@ def edit_skill(
     tmp_path.write_text(content, encoding="utf-8")
     os.replace(str(tmp_path), str(skill_path))
 
-    _rebuild_index(user_id)
+    _rebuild_index(user_id, team=team)
     return {"success": True, "message": f"Skill '{name}' updated", "path": str(skill_path)}
 
 
@@ -199,10 +221,11 @@ def patch_skill(
     new_string: str,
     file_path: str = "",
     replace_all: bool = False,
+    team: str = "",
 ) -> dict[str, Any]:
     """Targeted find-and-replace within a skill file."""
     name = _validate_name(name)
-    skill_dir = _find_skill_dir(user_id, name)
+    skill_dir = _find_skill_dir(user_id, name, team=team)
     if not skill_dir:
         return {"success": False, "error": f"Skill '{name}' not found"}
 
@@ -230,14 +253,14 @@ def patch_skill(
     tmp_path.write_text(new_content, encoding="utf-8")
     os.replace(str(tmp_path), str(target))
 
-    _rebuild_index(user_id)
+    _rebuild_index(user_id, team=team)
     return {"success": True, "message": f"Patched {target.name} in skill '{name}'"}
 
 
-def delete_skill(user_id: str, *, name: str) -> dict[str, Any]:
+def delete_skill(user_id: str, *, name: str, team: str = "") -> dict[str, Any]:
     """Delete a skill and its directory."""
     name = _validate_name(name)
-    skill_dir = _find_skill_dir(user_id, name)
+    skill_dir = _find_skill_dir(user_id, name, team=team)
     if not skill_dir:
         return {"success": False, "error": f"Skill '{name}' not found"}
 
@@ -245,11 +268,11 @@ def delete_skill(user_id: str, *, name: str) -> dict[str, Any]:
 
     # Clean up empty category dirs
     parent = skill_dir.parent
-    base = _skills_dir(user_id)
+    base = _scope_skills_dir(user_id, team)
     if parent != base and parent.is_dir() and not any(parent.iterdir()):
         parent.rmdir()
 
-    _rebuild_index(user_id)
+    _rebuild_index(user_id, team=team)
     return {"success": True, "message": f"Skill '{name}' deleted"}
 
 
@@ -259,25 +282,26 @@ def write_skill_file(
     name: str,
     file_path: str,
     file_content: str,
+    team: str = "",
 ) -> dict[str, Any]:
     """Add or overwrite a supporting file in a skill directory."""
     name = _validate_name(name)
-    skill_dir = _find_skill_dir(user_id, name)
+    skill_dir = _find_skill_dir(user_id, name, team=team)
     if not skill_dir:
         return {"success": False, "error": f"Skill '{name}' not found"}
 
     if len(file_content.encode("utf-8")) > _MAX_SUPPORT_FILE_SIZE:
         return {"success": False, "error": f"File exceeds {_MAX_SUPPORT_FILE_SIZE // (1024*1024)}MB limit"}
 
-    # Validate path is within allowed subdirs
-    parts = Path(file_path).parts
-    if not parts or parts[0] not in _ALLOWED_SUPPORT_DIRS:
+    target = _resolve_skill_relative_path(skill_dir, file_path)
+    if target is None:
         return {
             "success": False,
-            "error": f"Files must be in one of: {', '.join(sorted(_ALLOWED_SUPPORT_DIRS))}",
+            "error": (
+                "Invalid file_path. Use a relative path inside the skill directory. "
+                "Recommended folders: assets, references, scripts, templates."
+            ),
         }
-
-    target = skill_dir / file_path
     target.parent.mkdir(parents=True, exist_ok=True)
 
     violations = _security_scan(file_content)
@@ -288,14 +312,16 @@ def write_skill_file(
     return {"success": True, "message": f"File '{file_path}' written to skill '{name}'", "path": str(target)}
 
 
-def remove_skill_file(user_id: str, *, name: str, file_path: str) -> dict[str, Any]:
+def remove_skill_file(user_id: str, *, name: str, file_path: str, team: str = "") -> dict[str, Any]:
     """Remove a supporting file from a skill."""
     name = _validate_name(name)
-    skill_dir = _find_skill_dir(user_id, name)
+    skill_dir = _find_skill_dir(user_id, name, team=team)
     if not skill_dir:
         return {"success": False, "error": f"Skill '{name}' not found"}
 
-    target = skill_dir / file_path
+    target = _resolve_skill_relative_path(skill_dir, file_path)
+    if target is None:
+        return {"success": False, "error": "Invalid file_path"}
     if not target.is_file():
         return {"success": False, "error": f"File '{file_path}' not found"}
 
@@ -303,29 +329,56 @@ def remove_skill_file(user_id: str, *, name: str, file_path: str) -> dict[str, A
     return {"success": True, "message": f"File '{file_path}' removed from skill '{name}'"}
 
 
-def list_skills(user_id: str) -> list[dict[str, Any]]:
+def list_skills(user_id: str, *, team: str = "", include_personal: bool = False) -> list[dict[str, Any]]:
     """List all skills for a user."""
-    base = _skills_dir(user_id)
     skills: list[dict[str, Any]] = []
-    for skill_md in sorted(base.rglob("SKILL.md"), key=lambda p: p.stat().st_mtime, reverse=True):
-        meta, body = _parse_frontmatter(skill_md.read_text(encoding="utf-8", errors="replace"))
-        skill_dir = skill_md.parent
-        rel = skill_dir.relative_to(base)
-        skills.append({
-            "name": meta.get("name", skill_dir.name),
-            "description": meta.get("description", ""),
-            "category": meta.get("category", str(rel.parent) if str(rel.parent) != "." else ""),
-            "path": str(skill_md),
-            "dir": str(skill_dir),
-            "modified": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(skill_md.stat().st_mtime)),
-        })
+    scopes: list[tuple[str, str, Path]] = []
+    if team:
+        scopes.append(("team", team, _team_skills_dir(user_id, team)))
+        if include_personal:
+            scopes.append(("personal", "", _skills_dir(user_id)))
+    else:
+        scopes.append(("personal", "", _skills_dir(user_id)))
+
+    for scope, scope_team, base in scopes:
+        for skill_md in sorted(base.rglob("SKILL.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+            meta, body = _parse_frontmatter(skill_md.read_text(encoding="utf-8", errors="replace"))
+            skill_dir = skill_md.parent
+            rel = skill_dir.relative_to(base)
+            skills.append({
+                "name": meta.get("name", skill_dir.name),
+                "description": meta.get("description", ""),
+                "category": meta.get("category", str(rel.parent) if str(rel.parent) != "." else ""),
+                "path": str(skill_md),
+                "dir": str(skill_dir),
+                "modified": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(skill_md.stat().st_mtime)),
+                "scope": scope,
+                "team": scope_team if scope == "team" else "",
+            })
+    skills.sort(key=lambda item: item.get("modified", ""), reverse=True)
     return skills
 
 
-def get_skill(user_id: str, *, name: str) -> dict[str, Any] | None:
+def get_skill(user_id: str, *, name: str, team: str = "", fallback_to_personal: bool = False) -> dict[str, Any] | None:
     """Get full skill content."""
     name = _validate_name(name)
-    skill_path = _find_skill_path(user_id, name)
+    candidates: list[tuple[str, str, Path | None]] = []
+    if team:
+        candidates.append(("team", team, _find_skill_path(user_id, name, team=team)))
+        if fallback_to_personal:
+            candidates.append(("personal", "", _find_skill_path(user_id, name)))
+    else:
+        candidates.append(("personal", "", _find_skill_path(user_id, name)))
+
+    scope = "personal"
+    scope_team = ""
+    skill_path: Path | None = None
+    for candidate_scope, candidate_team, candidate_path in candidates:
+        if candidate_path:
+            scope = candidate_scope
+            scope_team = candidate_team
+            skill_path = candidate_path
+            break
     if not skill_path:
         return None
     content = skill_path.read_text(encoding="utf-8", errors="replace")
@@ -333,13 +386,11 @@ def get_skill(user_id: str, *, name: str) -> dict[str, Any] | None:
     skill_dir = skill_path.parent
 
     # List supporting files
-    support_files = []
-    for sub in _ALLOWED_SUPPORT_DIRS:
-        sub_dir = skill_dir / sub
-        if sub_dir.is_dir():
-            for f in sub_dir.rglob("*"):
-                if f.is_file():
-                    support_files.append(str(f.relative_to(skill_dir)))
+    support_files = [
+        str(f.relative_to(skill_dir))
+        for f in sorted(skill_dir.rglob("*"))
+        if f.is_file() and f.name != "SKILL.md"
+    ]
 
     return {
         "name": meta.get("name", skill_dir.name),
@@ -349,12 +400,16 @@ def get_skill(user_id: str, *, name: str) -> dict[str, Any] | None:
         "body": body,
         "support_files": support_files,
         "path": str(skill_path),
+        "scope": scope,
+        "team": scope_team if scope == "team" else "",
     }
 
 
-def build_skills_prompt(user_id: str) -> str:
+def build_skills_prompt(user_id: str, *, team: str = "") -> str:
     """Build compact skill index for system prompt injection."""
-    skills = list_skills(user_id)
+    team_skills = list_skills(user_id, team=team) if team else []
+    personal_skills = list_skills(user_id)
+    skills = team_skills + personal_skills if team else personal_skills
     if not skills:
         return ""
 
@@ -368,19 +423,34 @@ def build_skills_prompt(user_id: str) -> str:
         "to refresh the managed self-evolution block and persist the new failure learnings.",
         "",
     ]
-    for skill in skills[:30]:  # Cap at 30 skills in prompt
-        desc = skill["description"][:100] if skill["description"] else ""
-        cat = f" [{skill['category']}]" if skill["category"] else ""
-        lines.append(f"  - {skill['name']}{cat}: {desc}")
+    if team:
+        if team_skills:
+            lines.append(f"Team skills for {team}:")
+            for skill in team_skills[:20]:
+                desc = skill["description"][:100] if skill["description"] else ""
+                cat = f" [{skill['category']}]" if skill["category"] else ""
+                lines.append(f"  - {skill['name']}{cat}: {desc}")
+            lines.append("")
+        if personal_skills:
+            lines.append("Shared personal skills:")
+            for skill in personal_skills[:20]:
+                desc = skill["description"][:100] if skill["description"] else ""
+                cat = f" [{skill['category']}]" if skill["category"] else ""
+                lines.append(f"  - {skill['name']}{cat}: {desc}")
+    else:
+        for skill in skills[:30]:  # Cap at 30 skills in prompt
+            desc = skill["description"][:100] if skill["description"] else ""
+            cat = f" [{skill['category']}]" if skill["category"] else ""
+            lines.append(f"  - {skill['name']}{cat}: {desc}")
 
     return "\n".join(lines)
 
 
 # ── Internal helpers ────────────────────────────────────────────────
 
-def _find_skill_dir(user_id: str, name: str) -> Path | None:
+def _find_skill_dir(user_id: str, name: str, team: str = "") -> Path | None:
     """Find a skill directory by name (searches category subdirs too)."""
-    base = _skills_dir(user_id)
+    base = _scope_skills_dir(user_id, team)
     # Direct match
     if (base / name / "SKILL.md").is_file():
         return base / name
@@ -391,18 +461,36 @@ def _find_skill_dir(user_id: str, name: str) -> Path | None:
     return None
 
 
-def _find_skill_path(user_id: str, name: str) -> Path | None:
+def _resolve_skill_relative_path(skill_dir: Path, file_path: str) -> Path | None:
+    """Resolve a user-provided relative path inside a skill directory."""
+    raw = (file_path or "").strip()
+    if not raw:
+        return None
+
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        return None
+
+    resolved = (skill_dir / candidate).resolve()
+    try:
+        resolved.relative_to(skill_dir.resolve())
+    except ValueError:
+        return None
+    return resolved
+
+
+def _find_skill_path(user_id: str, name: str, team: str = "") -> Path | None:
     """Find a SKILL.md path by skill name."""
-    skill_dir = _find_skill_dir(user_id, name)
+    skill_dir = _find_skill_dir(user_id, name, team=team)
     if skill_dir:
         return skill_dir / "SKILL.md"
     return None
 
 
-def _rebuild_index(user_id: str) -> Path:
+def _rebuild_index(user_id: str, team: str = "") -> Path:
     """Rebuild the SKILLS_INDEX.md for a user."""
-    base = _skills_dir(user_id)
-    skills = list_skills(user_id)
+    base = _scope_skills_dir(user_id, team)
+    skills = list_skills(user_id, team=team)
     lines = ["# Skills Index", "", f"Total: {len(skills)} skills", ""]
     for skill in skills:
         cat = f" [{skill['category']}]" if skill["category"] else ""

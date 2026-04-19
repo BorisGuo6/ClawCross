@@ -1662,7 +1662,22 @@ class ExternalExpert:
         Each participate() call is independent; no state carries across rounds.
         """
         if not self._is_acp_agent:
-            return await self._call_api(messages, **kwargs)
+            raw_reply = await self._call_api(messages, **kwargs)
+
+            status, parsed = self._extract_oasis_json(raw_reply)
+            if status == "found":
+                print(f"  [OASIS] ✅ {self.name} valid OASIS JSON extracted (non-ACP external)")
+                return parsed
+
+            try:
+                tolerant_result = _parse_expert_response(raw_reply)
+                if isinstance(tolerant_result, dict):
+                    print(f"  [OASIS] ✅ {self.name} tolerant JSON extracted (non-ACP external)")
+                    return tolerant_result
+            except json.JSONDecodeError:
+                pass
+
+            return self._END_PADDING_RE.sub("", raw_reply).strip()
 
         self._inject_oasis_reply_instruction(messages)
 
@@ -1804,6 +1819,7 @@ class ExternalExpert:
             except json.JSONDecodeError as e:
                 print(f"  [OASIS] ⚠️ {self.name} (external execute) JSON parse error: {e}")
                 raw_content = reply if isinstance(reply, str) else str(reply)
+                raw_content = self._END_PADDING_RE.sub("", raw_content).strip()
                 try:
                     await forum.publish(author=self.name, content=raw_content.strip()[:2048])
                 except Exception:
@@ -1895,6 +1911,7 @@ class ExternalExpert:
         except json.JSONDecodeError as e:
             print(f"  [OASIS] ⚠️ {self.name} (external) JSON parse error: {e}")
             raw_content = reply if isinstance(reply, str) else str(reply)
+            raw_content = self._END_PADDING_RE.sub("", raw_content).strip()
             try:
                 await forum.publish(author=self.name, content=raw_content.strip()[:2048])
             except Exception:

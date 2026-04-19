@@ -169,6 +169,43 @@ Keep verifier commands explicit.
                 webot_skills.USER_FILES_DIR = original_skills_user_files
                 skill_evolution.USER_FILES_DIR = original_evolution_user_files
 
+    def test_apply_skill_evolution_for_team_skill(self):
+        with TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            original_skills_user_files = webot_skills.USER_FILES_DIR
+            original_evolution_user_files = skill_evolution.USER_FILES_DIR
+            webot_skills.USER_FILES_DIR = tmp_root / "user_files"
+            skill_evolution.USER_FILES_DIR = tmp_root / "user_files"
+
+            try:
+                content = """---
+name: team-runbook
+description: Team incident workflow
+---
+
+Start with the team dashboard.
+"""
+                created = webot_skills.create_skill("alice", name="team-runbook", content=content, team="ops")
+                self.assertTrue(created["success"])
+
+                applied = skill_evolution.apply_skill_evolution(
+                    "alice",
+                    name="team-runbook",
+                    team="ops",
+                    command="pytest test/test_skill_evolution.py",
+                    error_text="same timeout in team workflow",
+                    source="unit-test",
+                    strategy="repair-only",
+                )
+                self.assertTrue(applied["success"])
+                updated_skill = webot_skills.get_skill("alice", name="team-runbook", team="ops")
+                self.assertEqual(updated_skill["scope"], "team")
+                self.assertIn(skill_evolution.EVOLUTION_BEGIN, updated_skill["content"])
+                self.assertIn("/teams/ops/skill_evolution/", applied["feedback_history_path"])
+            finally:
+                webot_skills.USER_FILES_DIR = original_skills_user_files
+                skill_evolution.USER_FILES_DIR = original_evolution_user_files
+
     def test_update_markdown_skill_document_writes_managed_block_and_report(self):
         with TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)

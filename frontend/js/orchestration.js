@@ -1,6 +1,7 @@
 // ── Orchestration State ──
 const orch = {
     experts: [],
+    internalAgents: [],
     nodes: [],
     edges: [],
     groups: [],
@@ -222,14 +223,19 @@ async function orchDownloadSnapshot() {
             return;
         }
         const blob = await resp.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `team_${teamName}_snapshot.zip`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
+        if (!blob || !blob.size) {
+            throw new Error('empty snapshot zip');
+        }
+        const filename = (typeof getAttachmentFilename === 'function')
+            ? getAttachmentFilename(resp, `team_${teamName}_snapshot.zip`)
+            : `team_${teamName}_snapshot.zip`;
+        if (typeof triggerBlobDownload === 'function') {
+            triggerBlobDownload(blob, filename);
+        } else {
+            const url = window.URL.createObjectURL(blob);
+            window.open(url, '_blank', 'noopener');
+            setTimeout(() => window.URL.revokeObjectURL(url), 5000);
+        }
         orchToast(t('orch_toast_snapshot_downloaded') || 'Snapshot downloaded');
     } catch (e) {
         orchToast(t('orch_toast_network_error') || 'Network error');
@@ -712,8 +718,18 @@ async function orchLoadSessionAgents() {
             const meta = agentMap[s.session_id];
             return meta && meta.name;
         });
+        orch.internalAgents = sessions.map(s => {
+            const meta = agentMap[s.session_id] || {};
+            return {
+                session_id: s.session_id,
+                name: meta.name || s.title || 'Untitled',
+                tag: meta.tag || '',
+                message_count: s.message_count || 0,
+            };
+        });
 
         if (sessions.length === 0) {
+            orch.internalAgents = [];
             list.innerHTML = '<div style="padding:6px 10px;font-size:10px;color:#d1d5db;text-align:center;">No named agents yet</div>';
             return;
         }
@@ -745,6 +761,7 @@ async function orchLoadSessionAgents() {
         }
     } catch(e) {
         console.error('Load internal agents failed:', e);
+        orch.internalAgents = [];
         list.innerHTML = '<div style="padding:6px 10px;font-size:10px;color:#dc2626;text-align:center;">❌ ' + t('error') + '</div>';
     }
 }
@@ -3452,10 +3469,130 @@ async function orchUpdateYaml() {
 
 // ── AI Generate YAML (with session selection) ──
 let orchTargetSessionId = null;
+let orchPythonPreviousDraft = null;
 
 async function orchGenerateAgentYaml() {
-    if (orch.nodes.length === 0) { orchToast(t('orch_toast_add_first')); return; }
-    orchShowSessionSelectModal();
+    if (orchWorkflowMode() === 'yaml' && orch.nodes.length === 0) { orchToast(t('orch_toast_add_first')); return; }
+    orchDoGenerateAgentYaml();
+}
+
+function orchWorkflowMode() {
+    if (typeof currentOrchMode === 'string' && currentOrchMode) return currentOrchMode;
+    if (typeof window !== 'undefined' && typeof window.currentOrchMode === 'string' && window.currentOrchMode) {
+        return window.currentOrchMode;
+    }
+    return 'yaml';
+}
+
+function orchModeQuery(mode = orchWorkflowMode()) {
+    const params = new URLSearchParams();
+    if (orch.teamName) params.set('team', orch.teamName);
+    if (mode === 'python') params.set('mode', 'python');
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
+}
+
+function orchPythonEditor() {
+    return document.getElementById('orch-python-editor');
+}
+
+function orchPythonCode() {
+    const el = orchPythonEditor();
+    return el ? String(el.value || '') : '';
+}
+
+function orchDefaultWorkflowName(mode = orchWorkflowMode()) {
+    return mode === 'python' ? 'workflowpy-script' : 'my-layout';
+}
+
+async function orchFetchSessionStatusesSilently() {
+    try {
+        const r = await fetch('/proxy_visual/sessions-status');
+        const sessions = await r.json();
+        const map = {};
+        if (Array.isArray(sessions)) {
+            sessions.forEach(s => {
+                const sid = s.session_id || s.id || '';
+                if (!sid) return;
+                const isRunning = s.is_running || s.status === 'running' || false;
+                map[sid] = isRunning ? 'running' : 'idle';
+            });
+        }
+        orch.sessionStatuses = map;
+        return map;
+    } catch (e) {
+        return orch.sessionStatuses || {};
+    }
+}
+
+function orchBuildPromptContext(mode = orchWorkflowMode()) {
+    const expertBySource = {};
+    const expertByCategory = {};
+    const experts = (orch.experts || []).map(exp => {
+        const source = exp.source || 'public';
+        expertBySource[source] = (expertBySource[source] || 0) + 1;
+        const category = exp.category || '';
+        if (category) expertByCategory[category] = (expertByCategory[category] || 0) + 1;
+        return {
+            name: exp.name || '',
+            tag: exp.tag || '',
+            source,
+            category,
+            stateful: !!exp.stateful,
+            type: exp.type || 'expert',
+        };
+    });
+
+    const internalAgents = (orch.internalAgents || []).map(agent => ({
+        session_id: agent.session_id || '',
+        name: agent.name || '',
+        tag: agent.tag || '',
+        message_count: Number(agent.message_count || 0),
+        status: orch.sessionStatuses[agent.session_id] || 'unknown',
+    }));
+
+    const canvasAgents = (orch.nodes || []).filter(n =>
+        ['session_agent', 'external'].includes(n.type)
+    ).map(n => ({
+        node_id: n.id,
+        type: n.type,
+        name: n.name || '',
+        tag: n.tag || '',
+        session_id: n.session_id || '',
+        status: n.session_id ? (orch.sessionStatuses[n.session_id] || 'unknown') : 'n/a',
+    }));
+
+    return {
+        mode,
+        scope: orch.teamName ? { kind: 'team', team: orch.teamName } : { kind: 'public', team: '' },
+        expert_pool_summary: {
+            total: experts.length,
+            by_source: expertBySource,
+            by_category: expertByCategory,
+            experts: experts.slice(0, 80),
+        },
+        internal_agent_sessions: internalAgents.slice(0, 80),
+        canvas_agent_nodes: canvasAgents.slice(0, 80),
+    };
+}
+
+function orchSnapshotPythonDraft(nextText = '') {
+    const editor = orchPythonEditor();
+    if (!editor) return;
+    const current = String(editor.value || '');
+    if (current === String(nextText || '')) return;
+    orchPythonPreviousDraft = current;
+    const btn = document.getElementById('orch-python-restore-btn');
+    if (btn) btn.style.display = current.trim() ? '' : 'none';
+}
+
+function orchRestorePythonDraft() {
+    const editor = orchPythonEditor();
+    if (!editor || orchPythonPreviousDraft === null) return;
+    const current = String(editor.value || '');
+    editor.value = orchPythonPreviousDraft;
+    orchPythonPreviousDraft = current;
+    orchToast((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? '已回退到上一版 Python 草稿' : 'Reverted to previous Python draft');
 }
 
 async function orchShowSessionSelectModal() {
@@ -3534,21 +3671,30 @@ async function orchShowSessionSelectModal() {
 
 async function orchDoGenerateAgentYaml() {
     const data = orchGetLayoutData();
-    // Attach the user-selected target session_id
-    data.target_session_id = orchTargetSessionId || null;
+    const mode = orchWorkflowMode();
+    const guidance = (document.getElementById('orch-guidance-input')?.value || '').trim();
+    await orchFetchSessionStatusesSilently();
     // Attach team for team-scoped workflow saving
     data.team = orch.teamName || '';
+    data.mode = mode;
+    data.guidance = guidance;
+    data.prompt_context = orchBuildPromptContext(mode);
+    if (mode === 'python') {
+        data.current_code = orchPythonCode();
+        data.question = guidance || (data.current_code.trim()
+            ? 'Revise the existing workflowpy script to better fit the task.'
+            : 'Write a practical workflowpy script for the current task.');
+    }
 
     const statusEl = document.getElementById('orch-agent-status');
     const promptEl = document.getElementById('orch-prompt-content');
     const yamlEl = document.getElementById('orch-agent-yaml');
-    statusEl.textContent = t('orch_status_communicating', {id: (orchTargetSessionId||'').slice(-6)});
+    statusEl.textContent = (typeof currentLang !== 'undefined' && currentLang === 'zh-CN')
+        ? '🔄 正在一次性调用 LLM...'
+        : '🔄 Calling LLM once...';
     statusEl.style.cssText = 'color:#2563eb;background:#eff6ff;border-color:#bfdbfe;';
     promptEl.textContent = t('orch_status_generating');
     yamlEl.textContent = t('orch_status_waiting');
-
-    const oldBtn = document.getElementById('orch-goto-chat-container');
-    if (oldBtn) oldBtn.remove();
 
     try {
         const r = await fetch('/proxy_visual/agent-generate-yaml', {
@@ -3564,7 +3710,32 @@ async function orchDoGenerateAgentYaml() {
             return;
         }
         if (res.agent_yaml) {
-            yamlEl.textContent = res.agent_yaml;
+            if (mode === 'python') {
+                yamlEl.textContent = res.agent_explain || ((typeof currentLang !== 'undefined' && currentLang === 'zh-CN')
+                    ? '已生成 Python 工作流，说明缺失。'
+                    : 'Python workflow generated, explanation missing.');
+                const editor = orchPythonEditor();
+                if (editor) {
+                    orchSnapshotPythonDraft(res.agent_yaml);
+                    editor.value = res.agent_yaml;
+                }
+                if (res.agent_explain) {
+                    yamlEl.textContent = res.agent_explain;
+                }
+                let statusMsg = (typeof currentLang !== 'undefined' && currentLang === 'zh-CN')
+                    ? '✅ 已生成 Python workflow'
+                    : '✅ Python workflow generated';
+                if (res.saved_file && !res.saved_file.startsWith('save_error')) {
+                    statusMsg += ` · 💾 ${res.saved_file}`;
+                }
+                statusEl.textContent = statusMsg;
+                statusEl.style.cssText = 'color:#16a34a;background:#f0fdf4;border-color:#86efac;';
+                orchToast((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? 'Python 工作流已生成' : 'Python workflow generated');
+                return;
+            }
+            yamlEl.textContent = res.agent_explain || ((typeof currentLang !== 'undefined' && currentLang === 'zh-CN')
+                ? '已生成 YAML 工作流，说明缺失。'
+                : 'YAML workflow generated, explanation missing.');
             if (res.validation?.valid) {
                 let statusMsg = t('orch_yaml_valid', {steps: res.validation.steps, types: res.validation.step_types.join(', ')});
                 if (res.saved_file && !res.saved_file.startsWith('save_error')) {
@@ -3583,7 +3754,6 @@ async function orchDoGenerateAgentYaml() {
                 statusEl.textContent = t('orch_yaml_warn', {error: res.validation?.error||''});
                 statusEl.style.cssText = 'color:#d97706;background:#fffbeb;border-color:#fbbf24;';
             }
-            orchShowGotoChatButton();
         }
     } catch(e) {
         promptEl.textContent = t('orch_comm_fail', {msg: e.message});
@@ -3693,20 +3863,39 @@ function orchAutoArrange() {
 }
 
 async function orchSaveLayout() {
-    const name = prompt(t('orch_prompt_layout_name'), 'my-layout');
+    const mode = orchWorkflowMode();
+    const name = prompt(
+        mode === 'python'
+            ? ((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? '请输入 Python 工作流名称' : 'Enter Python workflow name')
+            : t('orch_prompt_layout_name'),
+        orchDefaultWorkflowName(mode),
+    );
     if (!name) return;
-    const data = orchGetLayoutData();
-    data.name = name;
-    data.team = orch.teamName || '';
+    const data = mode === 'python'
+        ? { name, mode, team: orch.teamName || '', content: orchPythonCode() }
+        : (() => {
+            const layout = orchGetLayoutData();
+            layout.name = name;
+            layout.team = orch.teamName || '';
+            layout.mode = 'yaml';
+            return layout;
+        })();
     try {
-        await fetch('/proxy_visual/save-layout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+        const resp = await fetch('/proxy_visual/save-layout', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(data),
+        });
+        const res = await resp.json().catch(() => ({}));
+        if (!resp.ok || res.error) throw new Error(res.error || 'save failed');
         orchToast(t('orch_toast_saved', {name}));
     } catch(e) { orchToast(t('orch_toast_save_fail')); }
 }
 
 async function orchLoadLayout() {
+    const mode = orchWorkflowMode();
     try {
-        const r = await fetch('/proxy_visual/load-layouts' + _orchTeamQuery());
+        const r = await fetch('/proxy_visual/load-layouts' + orchModeQuery(mode));
         const layouts = await r.json();
         if (!layouts.length) { orchToast(t('orch_toast_no_layouts')); return; }
 
@@ -3716,7 +3905,7 @@ async function orchLoadLayout() {
         overlay.id = 'orch-load-layout-overlay';
         overlay.innerHTML = `
             <div class="orch-modal" style="min-width:360px;max-width:460px;">
-                <h3>${t('orch_modal_select_layout')}</h3>
+                <h3>${mode === 'python' ? ((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? '🐍 选择 Python 工作流' : '🐍 Select Python Workflow') : t('orch_modal_select_layout')}</h3>
                 <div class="orch-session-list" id="orch-layout-select-list" style="max-height:300px;overflow-y:auto;"></div>
                 <div class="orch-modal-btns">
                     <button id="orch-layout-cancel-btn" style="padding:6px 14px;border-radius:6px;border:1px solid #d1d5db;background:white;color:#374151;cursor:pointer;font-size:12px;">${t('orch_modal_cancel')}</button>
@@ -3735,7 +3924,7 @@ async function orchLoadLayout() {
         for (const name of layouts) {
             const item = document.createElement('div');
             item.className = 'orch-session-item';
-            item.innerHTML = `<span class="orch-session-icon">📋</span><div style="flex:1;min-width:0;"><div class="orch-session-title">${escapeHtml(name)}</div></div>`;
+            item.innerHTML = `<span class="orch-session-icon">${mode === 'python' ? '🐍' : '📋'}</span><div style="flex:1;min-width:0;"><div class="orch-session-title">${escapeHtml(name)}</div></div>`;
             item.addEventListener('click', () => {
                 listEl.querySelectorAll('.orch-session-item').forEach(el => el.classList.remove('selected'));
                 item.classList.add('selected');
@@ -3750,7 +3939,7 @@ async function orchLoadLayout() {
         overlay.querySelector('#orch-layout-del-btn').addEventListener('click', async () => {
             if (!selectedName || !confirm(t('orch_confirm_del_layout', {name: selectedName}))) return;
             try {
-                await fetch('/proxy_visual/delete-layout/' + encodeURIComponent(selectedName) + _orchTeamQuery(), { method: 'DELETE' });
+                await fetch('/proxy_visual/delete-layout/' + encodeURIComponent(selectedName) + orchModeQuery(mode), { method: 'DELETE' });
                 orchToast(t('orch_toast_deleted', {name: selectedName}));
                 overlay.remove();
                 orchLoadLayout();
@@ -3760,16 +3949,27 @@ async function orchLoadLayout() {
         overlay.querySelector('#orch-layout-confirm-btn').addEventListener('click', async () => {
             if (!selectedName) return;
             overlay.remove();
-            await orchDoLoadLayout(selectedName);
+            await orchDoLoadLayout(selectedName, mode);
         });
     } catch(e) { orchToast(t('orch_toast_load_fail')); }
 }
 
-async function orchDoLoadLayout(name) {
+async function orchDoLoadLayout(name, mode = orchWorkflowMode()) {
     try {
-        const r2 = await fetch('/proxy_visual/load-layout/' + encodeURIComponent(name) + _orchTeamQuery());
+        const r2 = await fetch('/proxy_visual/load-layout/' + encodeURIComponent(name) + orchModeQuery(mode));
         const data = await r2.json();
         if (data.error) { orchToast(data.error); return; }
+        if (mode === 'python') {
+            if (typeof orchSetWorkflowMode === 'function') orchSetWorkflowMode('python');
+            const editor = orchPythonEditor();
+            if (editor) {
+                orchSnapshotPythonDraft(data.content || '');
+                editor.value = data.content || '';
+            }
+            orchToast(t('orch_toast_loaded', {name}));
+            return;
+        }
+        if (typeof orchSetWorkflowMode === 'function') orchSetWorkflowMode('yaml');
         orchClearCanvas();
 
         // Restore settings
@@ -3925,20 +4125,26 @@ async function orchAutoReplaceCanvasFromYaml(yamlText, suggestedName) {
 }
 
 function orchExportYaml() {
-    const yaml = document.getElementById('orch-yaml-content').textContent;
-    if (!yaml || yaml.startsWith(t('orch_rule_yaml_hint').substring(0,2))) { orchToast(t('orch_toast_gen_yaml')); return; }
-    navigator.clipboard.writeText(yaml).then(() => orchToast(t('orch_toast_yaml_copied'))).catch(() => {
-        const ta = document.createElement('textarea'); ta.value = yaml; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); orchToast(t('orch_toast_yaml_copied'));
+    const mode = orchWorkflowMode();
+    const text = mode === 'python'
+        ? orchPythonCode()
+        : document.getElementById('orch-yaml-content').textContent;
+    if (!text || (mode === 'yaml' && text.startsWith(t('orch_rule_yaml_hint').substring(0,2)))) { orchToast(t('orch_toast_gen_yaml')); return; }
+    navigator.clipboard.writeText(text).then(() => orchToast(t('orch_toast_yaml_copied'))).catch(() => {
+        const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); orchToast(t('orch_toast_yaml_copied'));
     });
 }
 
 // ── Download YAML as file ──
 function orchDownloadYaml() {
-    const yaml = document.getElementById('orch-yaml-content').textContent;
-    if (!yaml || yaml.startsWith(t('orch_rule_yaml_hint').substring(0,2))) { orchToast(t('orch_toast_gen_yaml')); return; }
+    const mode = orchWorkflowMode();
+    const text = mode === 'python'
+        ? orchPythonCode()
+        : document.getElementById('orch-yaml-content').textContent;
+    if (!text || (mode === 'yaml' && text.startsWith(t('orch_rule_yaml_hint').substring(0,2)))) { orchToast(t('orch_toast_gen_yaml')); return; }
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const fname = `oasis_${ts}.yaml`;
-    const blob = new Blob([yaml], { type: 'application/x-yaml;charset=utf-8' });
+    const fname = mode === 'python' ? `workflowpy_${ts}.py` : `oasis_${ts}.yaml`;
+    const blob = new Blob([text], { type: mode === 'python' ? 'text/x-python;charset=utf-8' : 'application/x-yaml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = fname; a.style.display = 'none';
@@ -3949,7 +4155,10 @@ function orchDownloadYaml() {
 
 // ── Upload YAML (button click) ──
 function orchUploadYamlClick() {
-    document.getElementById('orch-yaml-upload-input').click();
+    const input = document.getElementById('orch-yaml-upload-input');
+    if (!input) return;
+    input.accept = orchWorkflowMode() === 'python' ? '.py' : '.yaml,.yml';
+    input.click();
 }
 
 function orchHandleYamlUpload(event) {
@@ -3961,6 +4170,21 @@ function orchHandleYamlUpload(event) {
 
 // ── Import a YAML file → upload to server → load as layout ──
 async function orchImportYamlFile(file) {
+    if (orchWorkflowMode() === 'python') {
+        const fname = file.name || 'workflow.py';
+        if (!fname.endsWith('.py')) {
+            orchToast((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? '只支持 .py 文件' : 'Only .py files supported');
+            return;
+        }
+        const text = await file.text();
+        const editor = orchPythonEditor();
+        if (editor) {
+            orchSnapshotPythonDraft(text);
+            editor.value = text;
+        }
+        orchToast((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? `Python 已导入: ${fname}` : `Python imported: ${fname}`);
+        return;
+    }
     const fname = file.name || 'upload.yaml';
     if (!fname.endsWith('.yaml') && !fname.endsWith('.yml')) {
         orchToast(t('orch_toast_not_yaml'));
@@ -4037,6 +4261,99 @@ async function orchImportYamlFile(file) {
         }
     } catch (e) {
         orchToast(t('orch_toast_yaml_upload_fail') + ': ' + e.message);
+    }
+}
+
+async function orchRunWorkflow() {
+    const mode = orchWorkflowMode();
+    const question = prompt(
+        (typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? '输入这次工作流要处理的任务' : 'Enter the task for this workflow',
+        '',
+    );
+    if (!question || !question.trim()) return;
+
+    try {
+        let body = {
+            question: question.trim(),
+            max_rounds: Number(document.getElementById('orch-rounds')?.value || 5) || 5,
+            discussion: false,
+            team: orch.teamName || '',
+            autogen_swarm: true,
+            swarm_mode: 'prediction',
+        };
+
+        if (mode === 'python') {
+            const content = orchPythonCode();
+            if (!content.trim()) {
+                orchToast((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? 'Python 工作流还是空的' : 'Python workflow is empty');
+                return;
+            }
+            const saveName = `runtime_${Date.now()}`;
+            const saveResp = await fetch('/proxy_visual/save-layout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mode: 'python',
+                    name: saveName,
+                    team: orch.teamName || '',
+                    content,
+                }),
+            });
+            const saveData = await saveResp.json().catch(() => ({}));
+            if (!saveResp.ok || saveData.error || !saveData.path) {
+                throw new Error(saveData.error || 'python save failed');
+            }
+            const runResp = await fetch('/proxy_visual/run-python-workflow', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    python_file: saveData.path,
+                    question: question.trim(),
+                    team: orch.teamName || '',
+                }),
+            });
+            const runData = await runResp.json().catch(() => ({}));
+            if (!runResp.ok || runData.error) {
+                throw new Error(runData.error || 'python workflow start failed');
+            }
+            const runMsg = (typeof currentLang !== 'undefined' && currentLang === 'zh-CN')
+                ? `Python 工作流已启动 · run=${runData.run_id || 'unknown'}`
+                : `Python workflow started · run=${runData.run_id || 'unknown'}`;
+            orchToast(runMsg);
+            const statusEl = document.getElementById('orch-agent-status');
+            if (statusEl) {
+                statusEl.textContent = runMsg;
+                statusEl.style.cssText = 'color:#0f766e;background:#f0fdfa;border-color:#5eead4;';
+            }
+            return;
+        } else {
+            await orchUpdateYaml();
+            const yaml = document.getElementById('orch-yaml-content').textContent || '';
+            if (!yaml.trim() || yaml.startsWith(t('orch_rule_yaml_hint').substring(0, 2))) {
+                orchToast(t('orch_toast_gen_yaml'));
+                return;
+            }
+            body.schedule_yaml = yaml;
+        }
+
+        const resp = await fetch('/proxy_oasis/topics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.error || data.detail || data.message || `HTTP ${resp.status}`);
+        }
+        if (typeof ensureOasisPanelOpen === 'function') ensureOasisPanelOpen();
+        if (data.topic_id && typeof openOasisTopic === 'function') {
+            await openOasisTopic(data.topic_id);
+        } else if (typeof refreshOasisTopics === 'function') {
+            await refreshOasisTopics();
+        }
+        orchToast((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? '工作流已启动' : 'Workflow started');
+    } catch (e) {
+        orchToast(((typeof currentLang !== 'undefined' && currentLang === 'zh-CN') ? '启动失败: ' : 'Run failed: ') + e.message);
     }
 }
 

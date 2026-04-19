@@ -1505,7 +1505,8 @@
     flex-shrink: 0;
   }
   .workflow-info { margin-left: 12px; flex: 1; }
-  .workflow-name { font-size: 15px; font-weight: 500; }
+  .workflow-name { font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .workflow-mode-badge { font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
   .workflow-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
   .workflow-empty {
     text-align: center; padding: 30px;
@@ -7323,7 +7324,7 @@ async function sendMessage() {
     const finalText = contextPrefix ? `${contextPrefix}${text ? `\n\n${text}` : ''}` : text;
     // If workflow is selected, start the workflow with text as question
     if (selectedWorkflow) {
-      await startWorkflow(finalText, selectedWorkflow.name, selectedWorkflow.team);
+      await startWorkflow(finalText, selectedWorkflow.name, selectedWorkflow.team, selectedWorkflow.mode);
       clearWorkflow();
     } else {
       const body = { content: finalText || '(attachment)' };
@@ -7402,26 +7403,41 @@ function handleInputKey(e) {
 async function loadWorkflows() {
   // 并行加载公共 workflows 和 team 列表
   try {
-    const [globalData, teamsResp] = await Promise.all([
+    const [globalYamlResp, globalPyResp, teamsResp] = await Promise.all([
       api('GET', '/proxy_visual/load-layouts'),
+      api('GET', '/proxy_visual/load-layouts?mode=python'),
       api('GET', '/teams'),
     ]);
-    const globalLayouts = Array.isArray(globalData) ? globalData : [];
+    const globalYamlLayouts = Array.isArray(globalYamlResp) ? globalYamlResp : [];
+    const globalPyLayouts = Array.isArray(globalPyResp) ? globalPyResp : [];
     const teams = (teamsResp && teamsResp.teams) || [];
 
-    // 并行加载各 team 的 workflows
+    // 并行加载各 team 的 workflows (YAML + Python)
     const teamResults = await Promise.all(teams.map(async (teamName) => {
       try {
-        const layouts = await api('GET', `/proxy_visual/load-layouts?team=${encodeURIComponent(teamName)}`);
-        return { team: teamName, layouts: Array.isArray(layouts) ? layouts : [] };
-      } catch { return { team: teamName, layouts: [] }; }
+        const [yamlResp, pyResp] = await Promise.all([
+          api('GET', `/proxy_visual/load-layouts?team=${encodeURIComponent(teamName)}`),
+          api('GET', `/proxy_visual/load-layouts?team=${encodeURIComponent(teamName)}&mode=python`),
+        ]);
+        const yamlLayouts = Array.isArray(yamlResp) ? yamlResp : [];
+        const pyLayouts = Array.isArray(pyResp) ? pyResp : [];
+        return { team: teamName, yamlLayouts, pyLayouts };
+      } catch { return { team: teamName, yamlLayouts: [], pyLayouts: [] }; }
     }));
 
-    // 构建分组
+    // 构建分组 - 每个 layout 存储为 { name, mode }
     workflowGroups = [];
-    if (globalLayouts.length) workflowGroups.push({ group: t('wf_public'), team: '', layouts: globalLayouts });
+    const globalItems = [
+      ...globalYamlLayouts.map(name => ({ name, mode: 'yaml' })),
+      ...globalPyLayouts.map(name => ({ name, mode: 'python' })),
+    ];
+    if (globalItems.length) workflowGroups.push({ group: t('wf_public'), team: '', items: globalItems });
     teamResults.forEach(tr => {
-      workflowGroups.push({ group: tr.team, team: tr.team, layouts: tr.layouts });
+      const items = [
+        ...tr.yamlLayouts.map(name => ({ name, mode: 'yaml' })),
+        ...tr.pyLayouts.map(name => ({ name, mode: 'python' })),
+      ];
+      workflowGroups.push({ group: tr.team, team: tr.team, items });
     });
     // 与桌面端一致：默认展开全部分组，否则列表项全部被 CSS 隐藏，看起来像「只有 team 标题没有工作流」
     workflowExpandedGroups = new Set(
@@ -7454,7 +7470,7 @@ function closeWorkflowPopup() {
 
 function renderWorkflowList() {
   const container = document.getElementById('workflow-list');
-  
+
   if (!workflowGroups.length) {
     container.innerHTML = `<div class="workflow-empty">${t('no_workflows')}<br><span style="font-size:12px;">${t('no_workflows_hint')}</span></div>`;
     return;
@@ -7466,15 +7482,16 @@ function renderWorkflowList() {
     const safeGroupKey = groupKey.replace(/'/g, "\\'");
     const expanded = workflowExpandedGroups.has(groupKey);
     const icon = grp.team ? '👥' : '🌐';
+    const items = grp.items || [];
     html += `<div class="workflow-group">
       <div class="workflow-group-header${expanded ? ' expanded' : ''}" onclick="toggleWorkflowGroup(event, '${safeGroupKey}')">
         <span class="workflow-group-icon">${icon}</span>
         <span class="workflow-group-name">${esc(grp.group)}</span>
-        <span class="workflow-group-count">${grp.layouts.length}</span>
+        <span class="workflow-group-count">${items.length}</span>
         <span class="workflow-group-arrow">▶</span>
       </div>
       <div class="workflow-group-list${expanded ? ' expanded' : ''}">`;
-    if (!grp.layouts.length) {
+    if (!items.length) {
       html += `<div class="workflow-item" style="opacity:0.65;cursor:default;" onclick="event.stopPropagation();">
           <div class="workflow-icon">📭</div>
           <div class="workflow-info">
@@ -7482,15 +7499,16 @@ function renderWorkflowList() {
           </div>
         </div>`;
     } else {
-      for (const name of grp.layouts) {
-        const isSelected = selectedWorkflow && selectedWorkflow.name === name && selectedWorkflow.team === grp.team;
+      for (const wf of items) {
+        const isSelected = selectedWorkflow && selectedWorkflow.name === wf.name && selectedWorkflow.team === grp.team && selectedWorkflow.mode === wf.mode;
         const teamVal = grp.team;
         const dataTeam = teamVal ? esc(teamVal) : '';
+        const modeBadge = wf.mode === 'python' ? '<span class="workflow-mode-badge">py</span>' : '';
         html += `
-        <div class="workflow-item ${isSelected ? 'selected' : ''}" onclick="selectWorkflow('${esc(name)}', '${dataTeam}')">
+        <div class="workflow-item ${isSelected ? 'selected' : ''}" onclick="selectWorkflow('${esc(wf.name)}', '${dataTeam}', '${wf.mode || 'yaml'}')">
           <div class="workflow-icon">📋</div>
           <div class="workflow-info">
-            <div class="workflow-name">${esc(name)}</div>
+            <div class="workflow-name">${esc(wf.name)}${modeBadge}</div>
             <div class="workflow-desc">${isSelected ? t('wf_selected') : t('wf_click_select')}</div>
           </div>
         </div>`;
@@ -7511,14 +7529,15 @@ function toggleWorkflowGroup(event, groupKey) {
   renderWorkflowList();
 }
 
-function selectWorkflow(name, team) {
+function selectWorkflow(name, team, mode) {
   team = team || '';
-  if (selectedWorkflow && selectedWorkflow.name === name && selectedWorkflow.team === team) {
+  mode = mode || 'yaml';
+  if (selectedWorkflow && selectedWorkflow.name === name && selectedWorkflow.team === team && selectedWorkflow.mode === mode) {
     selectedWorkflow = null;
     document.getElementById('msg-input').placeholder = t('input_placeholder');
   } else {
     const displayName = team ? `${team}/${name}` : name;
-    selectedWorkflow = { name, team, displayName };
+    selectedWorkflow = { name, team, mode, displayName };
     document.getElementById('msg-input').placeholder = t('wf_input_hint', {name: displayName});
   }
   closeWorkflowPopup();
@@ -7550,23 +7569,58 @@ function clearWorkflow() {
   updateWorkflowBtn();
 }
 
-async function startWorkflow(question, workflowName, workflowTeam) {
+async function startWorkflow(question, workflowName, workflowTeam, workflowMode) {
   workflowTeam = workflowTeam || '';
-  
+  workflowMode = workflowMode || 'yaml';
+
   try {
-    // Load the workflow YAML
-    const teamParam = workflowTeam ? `?team=${encodeURIComponent(workflowTeam)}` : '';
-    const yamlData = await api('GET', `/proxy_visual/load-yaml-raw/${encodeURIComponent(workflowName)}${teamParam}`);
-    const yamlContent = yamlData.yaml || '';
-    
+    let workflowContent = '';
+    let workflowPath = '';
+    if (workflowMode === 'python') {
+      // Load Python workflow
+      const teamParam = workflowTeam ? `?team=${encodeURIComponent(workflowTeam)}` : '';
+      const modeParam = teamParam ? `${teamParam}&mode=python` : '?mode=python';
+      const pyData = await api('GET', `/proxy_visual/load-layout/${encodeURIComponent(workflowName)}${modeParam}`);
+      if (pyData.error) throw new Error('Load workflow failed: ' + pyData.error);
+      workflowContent = pyData.content || '';
+      workflowPath = pyData.path || '';
+    } else {
+      // Load YAML workflow
+      const teamParam = workflowTeam ? `?team=${encodeURIComponent(workflowTeam)}` : '';
+      const yamlData = await api('GET', `/proxy_visual/load-yaml-raw/${encodeURIComponent(workflowName)}${teamParam}`);
+      if (yamlData.error) throw new Error('Load workflow failed: ' + yamlData.error);
+      workflowContent = yamlData.yaml || '';
+    }
+
     // Create OASIS topic
     const body = {
       question: question,
-      schedule_yaml: yamlContent,
       max_rounds: 5,
-      discussion: false  // Execute mode
+      discussion: false
     };
     if (workflowTeam) body.team = workflowTeam;
+    if (workflowMode === 'python') {
+      // Python workflows use the standalone runner now.
+      // Do not send python_file to /proxy_oasis/topics here: that path still uses
+      // the legacy injected-style PythonWorkflowEngine and is not compatible with
+      // the newer self-bootstrapped workflow scripts.
+      const runResult = await api('POST', '/proxy_visual/run-python-workflow', {
+        python_file: workflowPath,
+        question: question,
+        team: workflowTeam,
+      });
+      if (runResult && !runResult.error) {
+        toast(`${t('wf_started')}: ${runResult.run_id || workflowName}`);
+        if (!document.getElementById('oasis-sidebar').classList.contains('show')) {
+          toggleOasisSidebar();
+        }
+        refreshOasisTopics();
+        return;
+      }
+      throw new Error((runResult && runResult.error) || t('unknown'));
+    } else {
+      body.schedule_yaml = workflowContent;
+    }
 
     const result = await api('POST', '/proxy_oasis/topics', body);
     

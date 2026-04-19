@@ -134,7 +134,7 @@ Persona names follow a `tag#mode#identifier` convention.
 | `tag#oasis#new` | Stateful | Auto-create new session for this persona | `critical#oasis#new` |
 | `tag#oasis#name` | Stateful | Internal session agent by name (tag enables persona lookup) | `creative#oasis#🎨 创意顾问` |
 | `#oasis#name` | Stateful | Internal session agent by name (no tag) | `#oasis#test1` |
-| `tag#ext#id` | External | External ACP agent | `openclaw#ext#Alice` |
+| `tag#ext#id` | External | External agent (platform/global_name resolved from `external_agents.json`) | `openclaw#ext#Alice` |
 
 ### 4.1 Stateless vs Stateful
 
@@ -143,11 +143,11 @@ Persona names follow a `tag#mode#identifier` convention.
 
 ### 4.2 External ACP Agents
 
-For external ACP agents (tag = `openclaw`, `codex`, `claude`, `gemini`, `aider`, etc.), additional fields are required:
+For external agents, YAML should use the generic external format:
 
 ```yaml
 - id: ext1
-  expert: "openclaw#ext#my_agent"     # Must use short name format: tag#ext#id
+  expert: "openclaw#ext#my_agent"     # Generic external format: tag#ext#id
   api_url: "http://127.0.0.1:23001"
   api_key: "****"
   model: "agent:my_agent"              # Supports session extension: agent:name or agent:name:session
@@ -156,13 +156,15 @@ For external ACP agents (tag = `openclaw`, `codex`, `claude`, `gemini`, `aider`,
 **ACP communication**: External agents with supported tags use the `acpx` CLI adapter (`src/integrations/acpx_adapter.py`) for Agent Client Protocol communication. `acpx` is auto-installed during `setup`. If `acpx` is not available, the system falls back to HTTP-only communication.
 
 **Key configuration requirements:**
-- **expert field**: Must use `tag#ext#id` format (tag can be openclaw, codex, etc.)
+- **expert field**: Use `tag#ext#id`
 - **model field**: Supports two formats:
   - `agent:<name>` - uses team name as session by default
   - `agent:<name>:<session>` - explicitly specifies session name
 
 **Session control notes:**
 - Same session shares context; different sessions remain independent
+- The YAML `expert` field only identifies the external record and optional persona tag
+- The real platform / connect_type / global_name come from `external_agents.json`
 - The `<name>` in the model field is only used for routing; the actual agent name comes from the `global_name` field in `external_agents.json`
 - Session determines conversation isolation: same session = shared context, different sessions = independent context
 
