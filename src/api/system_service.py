@@ -8,15 +8,24 @@
 
 import asyncio
 import base64
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Callable
 
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage
 
 from utils.logging_utils import get_logger
 from services.message_builder import build_human_message
 from api.system_models import SystemTriggerRequest
 
 logger = get_logger("system_service")
+
+
+@dataclass(frozen=True)
+class _QueuedSystemTrigger:
+    req: SystemTriggerRequest
+    message: HumanMessage
+    received_at: str
 
 # 可以直接 base64 解码为文本的 MIME 类型（前缀匹配）
 _TEXT_MIME_PREFIXES = ("text/",)
@@ -63,9 +72,96 @@ class SystemService:
         *,
         agent: Any,
         verify_internal_token: Callable[[str | None], None],
+        coalesce_debounce_seconds: float = 0.75,
     ):
         self.agent = agent
         self.verify_internal_token = verify_internal_token
+        self.coalesce_debounce_seconds = max(0.0, coalesce_debounce_seconds)
+        self._coalesce_lock = asyncio.Lock()
+        self._coalesce_queues: dict[str, list[_QueuedSystemTrigger]] = {}
+        self._coalesce_tasks: dict[str, asyncio.Task] = {}
+
+    @staticmethod
+    def _thread_id(req: SystemTriggerRequest) -> str:
+        return f"{req.user_id}#{req.session_id}"
+
+    @staticmethod
+    def _queue_key(thread_id: str, coalesce_key: str) -> str:
+        return f"{thread_id}\0{coalesce_key}"
+
+    @staticmethod
+    def _received_at() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _message_text_and_parts(message: HumanMessage) -> tuple[str, list[Any]]:
+        content = message.content
+        if isinstance(content, str):
+            return content, []
+        if not isinstance(content, list):
+            return str(content), []
+
+        text_parts: list[str] = []
+        non_text_parts: list[Any] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(str(part.get("text") or ""))
+            else:
+                non_text_parts.append(part)
+        return "\n".join(item for item in text_parts if item).strip(), non_text_parts
+
+    @staticmethod
+    def _format_batch_header(index: int, total: int, item: _QueuedSystemTrigger) -> str:
+        return (
+            f"==================== 群聊消息 {index}/{total} 开始 ====================\n"
+            f"received_at: {item.received_at}\n"
+            f"session_id: {item.req.session_id}\n"
+            f"coalesce_key: {item.req.coalesce_key}\n"
+            "-------------------- 内容 --------------------"
+        )
+
+    @staticmethod
+    def _format_batch_footer(index: int, total: int) -> str:
+        return f"==================== 群聊消息 {index}/{total} 结束 ===================="
+
+    def _build_coalesced_message(self, batch: list[_QueuedSystemTrigger]) -> HumanMessage:
+        if len(batch) == 1:
+            return batch[0].message
+
+        total = len(batch)
+        has_multimodal_parts = False
+        content_parts: list[Any] = [
+            {
+                "type": "text",
+                "text": (
+                    "[群聊未读消息批量投递]\n"
+                    "你处理期间，同一个群聊目标累积了多条消息。请像查看微信群未读消息一样，"
+                    "按下面的时间顺序阅读完整上下文后再决定是否回复。"
+                ),
+            }
+        ]
+        text_sections: list[str] = [content_parts[0]["text"]]
+
+        for index, item in enumerate(batch, start=1):
+            message_text, non_text_parts = self._message_text_and_parts(item.message)
+            header = self._format_batch_header(index, total, item)
+            footer = self._format_batch_footer(index, total)
+            section = f"{header}\n{message_text or '(空消息)'}\n{footer}"
+            text_sections.append(section)
+            if non_text_parts:
+                has_multimodal_parts = True
+                content_parts.append({
+                    "type": "text",
+                    "text": f"{header}\n{message_text or '(空消息)'}\n\n[本条消息的多模态附件紧随其后]",
+                })
+                content_parts.extend(non_text_parts)
+                content_parts.append({"type": "text", "text": footer})
+            else:
+                content_parts.append({"type": "text", "text": section})
+
+        if has_multimodal_parts:
+            return HumanMessage(content=content_parts)
+        return HumanMessage(content="\n\n".join(text_sections))
 
     def _build_message_from_trigger(self, req: SystemTriggerRequest) -> HumanMessage:
         """将 SystemTriggerRequest 转为 HumanMessage，支持多模态附件。"""
@@ -128,17 +224,8 @@ class SystemService:
             audios=audios or None,
         )
 
-    async def system_trigger(self, req: SystemTriggerRequest, x_internal_token: str | None):
-        self.verify_internal_token(x_internal_token)
-        thread_id = f"{req.user_id}#{req.session_id}"
-        config = {"configurable": {"thread_id": thread_id}}
-
-        human_msg = self._build_message_from_trigger(req)
-        logger.info("system_trigger for %s, has_attachments=%s, content_type=%s",
-                     thread_id, bool(req.attachments),
-                     type(human_msg.content).__name__)
-
-        system_input = {
+    def _build_system_input(self, req: SystemTriggerRequest, human_msg: HumanMessage) -> dict[str, Any]:
+        return {
             "messages": [human_msg],
             "trigger_source": "system",
             "enabled_tools": None,
@@ -148,49 +235,133 @@ class SystemService:
             "turn_count": 0,
         }
 
-        async def wait_and_invoke():
-            """在 thread 锁上排队执行：不 preempt 用户对话；仅在拿到锁后注册 cancel 目标。"""
-            task_key = f"{req.user_id}#{req.session_id}"
+    async def _invoke_system_message_locked(
+        self,
+        *,
+        req: SystemTriggerRequest,
+        human_msg: HumanMessage,
+        thread_id: str,
+        config: dict[str, Any],
+        batch_count: int,
+    ) -> None:
+        task_key = thread_id
+        system_input = self._build_system_input(req, human_msg)
+        # 与用户 openai 流式任务共用 task_key：必须在持有锁后才 register，
+        # 否则会在等锁阶段覆盖 registry 中仍活跃的用户任务。
+        self.agent.register_task(task_key, asyncio.current_task())
+        self.agent.set_thread_busy_source(thread_id, "system")
+        logger.info("Acquired lock on %s, invoking graph with %s system trigger(s) ...", thread_id, batch_count)
+        try:
+            async for _ in self.agent.agent_app.astream_events(system_input, config, version="v2", durability="exit"):
+                pass
+            self.agent.add_pending_system_message(thread_id)
+            logger.info("Done for %s (%s system trigger(s))", thread_id, batch_count)
+        except asyncio.CancelledError:
+            logger.info("Cancelled for %s", thread_id)
+            try:
+                snapshot = await self.agent.agent_app.aget_state(config)
+                last_msgs = snapshot.values.get("messages", [])
+                if last_msgs:
+                    last_msg = last_msgs[-1]
+                    tool_messages = self.agent.cancelled_tool_messages_for_last_ai(last_msg)
+                    if tool_messages:
+                        await self.agent.agent_app.aupdate_state(config, {"messages": tool_messages})
+            except Exception:
+                pass
+        except Exception as e:
+            logger.exception("Error for %s: %s", thread_id, e)
+        finally:
+            self.agent.clear_thread_busy_source(thread_id)
+            await self.agent.purge_checkpoints(thread_id)
+            self.agent.unregister_task(task_key)
+
+    async def _run_single_trigger(self, req: SystemTriggerRequest, human_msg: HumanMessage) -> None:
+        thread_id = self._thread_id(req)
+        config = {"configurable": {"thread_id": thread_id}}
+        lock = await self.agent.get_thread_lock(thread_id)
+        logger.info(
+            "system_trigger waiting for lock on %s (will not cancel in-flight user run)",
+            thread_id,
+        )
+        async with lock:
+            await self._invoke_system_message_locked(
+                req=req,
+                human_msg=human_msg,
+                thread_id=thread_id,
+                config=config,
+                batch_count=1,
+            )
+
+    async def _drain_coalesced_batch(self, queue_key: str) -> list[_QueuedSystemTrigger]:
+        async with self._coalesce_lock:
+            return self._coalesce_queues.pop(queue_key, [])
+
+    async def _coalesced_worker(self, *, queue_key: str, thread_id: str) -> None:
+        while True:
+            if self.coalesce_debounce_seconds:
+                await asyncio.sleep(self.coalesce_debounce_seconds)
+
             lock = await self.agent.get_thread_lock(thread_id)
             logger.info(
-                "system_trigger waiting for lock on %s (will not cancel in-flight user run)",
+                "coalesced system_trigger waiting for lock on %s",
                 thread_id,
             )
             async with lock:
-                # 与用户 openai 流式任务共用 task_key：必须在持有锁后才 register，
-                # 否则会在等锁阶段覆盖 registry 中仍活跃的用户任务。
-                self.agent.register_task(task_key, asyncio.current_task())
-                self.agent.set_thread_busy_source(thread_id, "system")
-                logger.info("Acquired lock on %s, invoking graph ...", thread_id)
-                try:
-                    async for _ in self.agent.agent_app.astream_events(system_input, config, version="v2", durability="exit"):
-                        pass
-                    self.agent.add_pending_system_message(thread_id)
-                    logger.info("Done for %s", thread_id)
-                except asyncio.CancelledError:
-                    logger.info("Cancelled for %s", thread_id)
-                    try:
-                        snapshot = await self.agent.agent_app.aget_state(config)
-                        last_msgs = snapshot.values.get("messages", [])
-                        if last_msgs:
-                            last_msg = last_msgs[-1]
-                            if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-                                tool_messages = [
-                                    ToolMessage(
-                                        content="⚠️ 工具调用被用户终止",
-                                        tool_call_id=tc["id"],
-                                    )
-                                    for tc in last_msg.tool_calls
-                                ]
-                                await self.agent.agent_app.aupdate_state(config, {"messages": tool_messages})
-                    except Exception:
-                        pass
-                except Exception as e:
-                    logger.exception("Error for %s: %s", thread_id, e)
-                finally:
-                    self.agent.clear_thread_busy_source(thread_id)
-                    await self.agent.purge_checkpoints(thread_id)
-                    self.agent.unregister_task(task_key)
+                batch = await self._drain_coalesced_batch(queue_key)
+                if batch:
+                    req = batch[0].req
+                    config = {"configurable": {"thread_id": thread_id}}
+                    human_msg = self._build_coalesced_message(batch)
+                    await self._invoke_system_message_locked(
+                        req=req,
+                        human_msg=human_msg,
+                        thread_id=thread_id,
+                        config=config,
+                        batch_count=len(batch),
+                    )
 
-        asyncio.create_task(wait_and_invoke())
-        return {"status": "received", "message": f"系统触发已收到，用户 {req.user_id}"}
+            async with self._coalesce_lock:
+                if not self._coalesce_queues.get(queue_key):
+                    if self._coalesce_tasks.get(queue_key) is asyncio.current_task():
+                        self._coalesce_tasks.pop(queue_key, None)
+                    return
+
+    async def _enqueue_coalesced_trigger(self, req: SystemTriggerRequest, human_msg: HumanMessage) -> int:
+        thread_id = self._thread_id(req)
+        queue_key = self._queue_key(thread_id, req.coalesce_key)
+        queued = _QueuedSystemTrigger(
+            req=req,
+            message=human_msg,
+            received_at=self._received_at(),
+        )
+        async with self._coalesce_lock:
+            queue = self._coalesce_queues.setdefault(queue_key, [])
+            queue.append(queued)
+            queued_count = len(queue)
+            task = self._coalesce_tasks.get(queue_key)
+            if task is None or task.done():
+                self._coalesce_tasks[queue_key] = asyncio.create_task(
+                    self._coalesced_worker(queue_key=queue_key, thread_id=thread_id)
+                )
+        return queued_count
+
+    async def system_trigger(self, req: SystemTriggerRequest, x_internal_token: str | None):
+        self.verify_internal_token(x_internal_token)
+        thread_id = self._thread_id(req)
+
+        human_msg = self._build_message_from_trigger(req)
+        logger.info("system_trigger for %s, has_attachments=%s, content_type=%s",
+                     thread_id, bool(req.attachments),
+                     type(human_msg.content).__name__)
+
+        if req.coalesce_key:
+            queued_count = await self._enqueue_coalesced_trigger(req, human_msg)
+            return {
+                "status": "received",
+                "message": f"系统触发已收到，用户 {req.user_id}",
+                "coalesced": True,
+                "queued_count": queued_count,
+            }
+
+        asyncio.create_task(self._run_single_trigger(req, human_msg))
+        return {"status": "received", "message": f"系统触发已收到，用户 {req.user_id}", "coalesced": False}

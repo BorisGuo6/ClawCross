@@ -3536,6 +3536,28 @@
   </div>
 </div>
 
+<div class="settings-modal-overlay" id="mobile-update-modal-overlay">
+  <div class="settings-modal">
+    <div class="settings-header">
+      <button class="settings-close-btn" onclick="closeMobileUpdateModal()" aria-label="Close">✕</button>
+      <h2 id="mobile-update-modal-title">⬆️ 检查更新</h2>
+    </div>
+    <div class="settings-body">
+      <div class="settings-hint" id="mobile-update-hint">检查远端 Git 更新，并在确认后拉取代码并重启服务。</div>
+      <div class="settings-group">
+        <div class="settings-group-body" style="padding-top:12px;">
+          <div id="mobile-update-summary" style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--text-secondary);">点击“检查更新”后显示版本信息。</div>
+          <pre id="mobile-update-log" style="display:none;margin-top:10px;padding:10px 12px;border-radius:8px;background:#111827;color:#f9fafb;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;"></pre>
+        </div>
+      </div>
+    </div>
+    <div class="settings-footer">
+      <button class="settings-btn settings-btn-cancel" id="mobile-update-check-btn" onclick="checkMobileUpdate(true)">检查更新</button>
+      <button class="settings-btn settings-btn-save" id="mobile-update-start-btn" onclick="startMobileUpdate()" disabled>开始更新</button>
+    </div>
+  </div>
+</div>
+
 <!-- Mention popup -->
 <div class="mention-popup" id="mention-popup">
   <div class="mention-popup-header" data-i18n="mention_header">选择要@的成员</div>
@@ -4947,6 +4969,7 @@ let currentGroupId = null;
 let currentGroupName = '';
 let currentTeamName = '';
 let currentTab = 'chats';
+let mobileUpdatePollTimer = null;
 let lastMsgId = 0;
 const renderedMsgIds = new Set();
 let pollTimer = null;
@@ -5223,6 +5246,150 @@ function toast(msg, duration = 2000) {
   el.classList.add('show');
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+function openMobileUpdateModal() {
+  const overlay = document.getElementById('mobile-update-modal-overlay');
+  const title = document.getElementById('mobile-update-modal-title');
+  const hint = document.getElementById('mobile-update-hint');
+  const checkBtn = document.getElementById('mobile-update-check-btn');
+  const startBtn = document.getElementById('mobile-update-start-btn');
+  if (!overlay) return;
+  if (title) title.textContent = _currentLang === 'zh' ? '⬆️ 检查更新' : '⬆️ Check Update';
+  if (hint) hint.textContent = _currentLang === 'zh'
+    ? '检查远端 Git 更新，并在确认后拉取代码并重启服务。'
+    : 'Check remote Git updates, then pull and restart the service after confirmation.';
+  if (checkBtn) checkBtn.textContent = _currentLang === 'zh' ? '检查更新' : 'Check Update';
+  if (startBtn) startBtn.textContent = _currentLang === 'zh' ? '开始更新' : 'Start Update';
+  overlay.classList.add('open');
+  renderMobileUpdateSummary(null);
+}
+
+function closeMobileUpdateModal() {
+  const overlay = document.getElementById('mobile-update-modal-overlay');
+  if (overlay) overlay.classList.remove('open');
+}
+
+function stopMobileUpdatePolling() {
+  if (mobileUpdatePollTimer) {
+    clearTimeout(mobileUpdatePollTimer);
+    mobileUpdatePollTimer = null;
+  }
+}
+
+function renderMobileUpdateSummary(update) {
+  const summaryEl = document.getElementById('mobile-update-summary');
+  const logEl = document.getElementById('mobile-update-log');
+  const startBtn = document.getElementById('mobile-update-start-btn');
+  if (!summaryEl || !startBtn) return;
+  if (!update) {
+    summaryEl.textContent = _currentLang === 'zh'
+      ? '点击“检查更新”后显示版本信息。'
+      : 'Tap "Check Update" to load version info.';
+    startBtn.disabled = true;
+    if (logEl) {
+      logEl.style.display = 'none';
+      logEl.textContent = '';
+    }
+    return;
+  }
+  const lines = [
+    `${_currentLang === 'zh' ? '状态' : 'Status'}: ${update.status || 'idle'}`,
+    `${_currentLang === 'zh' ? '分支' : 'Branch'}: ${update.branch || 'unknown'}`,
+    `${_currentLang === 'zh' ? '当前版本' : 'Current'}: ${(update.current_short_commit || '-')}${update.current_subject ? ' (' + update.current_subject + ')' : ''}`,
+    `${_currentLang === 'zh' ? '远端版本' : 'Remote'}: ${(update.latest_short_commit || '-')}${update.latest_subject ? ' (' + update.latest_subject + ')' : ''}`,
+  ];
+  if (update.dirty) {
+    lines.push(_currentLang === 'zh' ? '本地仓库有未提交改动，禁止自动更新。' : 'Local repo is dirty. Auto update is blocked.');
+  } else if (update.has_update) {
+    lines.push(_currentLang === 'zh' ? '检测到可用更新。' : 'Update available.');
+  } else {
+    lines.push(_currentLang === 'zh' ? '当前已经是最新版本。' : 'Already up to date.');
+  }
+  if (update.message) {
+    lines.push('');
+    lines.push(update.message);
+  }
+  summaryEl.textContent = lines.join('\n');
+  startBtn.disabled = !Boolean(update.has_update) || Boolean(update.dirty) || ['queued', 'checking', 'updating', 'restarting'].includes(update.status);
+  if (logEl && Array.isArray(update.log_tail) && update.log_tail.length) {
+    logEl.style.display = 'block';
+    logEl.textContent = update.log_tail.join('\n');
+  } else if (logEl) {
+    logEl.style.display = 'none';
+    logEl.textContent = '';
+  }
+}
+
+async function mobileUpdateRequest(path, payload) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {}),
+  });
+  let data = {};
+  try { data = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(data.detail || data.error || ('HTTP ' + r.status));
+  return data.update || data;
+}
+
+async function checkMobileUpdate(refreshRemote) {
+  const checkBtn = document.getElementById('mobile-update-check-btn');
+  if (checkBtn) checkBtn.disabled = true;
+  try {
+    const update = await mobileUpdateRequest('/proxy_update_check', {
+      refresh_remote: !!refreshRemote,
+    });
+    renderMobileUpdateSummary(update);
+  } catch (e) {
+    toast((_currentLang === 'zh' ? '检查更新失败: ' : 'Check update failed: ') + e.message, 3500);
+  } finally {
+    if (checkBtn) checkBtn.disabled = false;
+  }
+}
+
+async function pollMobileUpdateStatus() {
+  try {
+    const update = await mobileUpdateRequest('/proxy_update_status', {});
+    renderMobileUpdateSummary(update);
+    if (['queued', 'checking', 'updating', 'restarting'].includes(update.status)) {
+      stopMobileUpdatePolling();
+      mobileUpdatePollTimer = setTimeout(pollMobileUpdateStatus, 3000);
+      return;
+    }
+    stopMobileUpdatePolling();
+    if (update.status === 'done') {
+      toast(_currentLang === 'zh' ? '更新完成，页面即将刷新。' : 'Update complete. Reloading…', 3000);
+      setTimeout(() => location.reload(), 1500);
+    } else if (update.status === 'failed') {
+      toast(update.message || (_currentLang === 'zh' ? '更新失败。' : 'Update failed.'), 4000);
+    }
+  } catch (e) {
+    renderMobileUpdateSummary({
+      status: 'restarting',
+      message: _currentLang === 'zh'
+        ? `服务暂时不可用，通常表示正在重启：${e.message}`
+        : `Service temporarily unavailable, likely restarting: ${e.message}`,
+      log_tail: [],
+    });
+    stopMobileUpdatePolling();
+    mobileUpdatePollTimer = setTimeout(pollMobileUpdateStatus, 3000);
+  }
+}
+
+async function startMobileUpdate() {
+  const startBtn = document.getElementById('mobile-update-start-btn');
+  if (startBtn) startBtn.disabled = true;
+  try {
+    const update = await mobileUpdateRequest('/proxy_update_start', {});
+    renderMobileUpdateSummary(update);
+    toast(_currentLang === 'zh' ? '更新任务已启动。' : 'Update started.');
+    stopMobileUpdatePolling();
+    mobileUpdatePollTimer = setTimeout(pollMobileUpdateStatus, 1500);
+  } catch (e) {
+    toast((_currentLang === 'zh' ? '启动更新失败: ' : 'Failed to start update: ') + e.message, 3500);
+    if (startBtn) startBtn.disabled = false;
+  }
 }
 
 // ── Group list ──
@@ -11893,6 +12060,11 @@ async function loadProfile() {
       <div class="profile-row" onclick="restartClawcross()">
         <span class="profile-row-icon">🔄</span>
         <span class="profile-row-label">${t('restart_clawcross')}</span>
+        <span class="profile-row-arrow">›</span>
+      </div>
+      <div class="profile-row" onclick="openMobileUpdateModal()">
+        <span class="profile-row-icon">⬆️</span>
+        <span class="profile-row-label">${_currentLang === 'zh' ? '检查更新' : 'Check Update'}</span>
         <span class="profile-row-arrow">›</span>
       </div>
       <div class="profile-row" onclick="showAbout()">

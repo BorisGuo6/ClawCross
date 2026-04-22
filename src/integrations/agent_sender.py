@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -31,12 +32,36 @@ class SendToAgentResult:
         return getattr(self, key, default)
 
 
+@dataclass(slots=True)
+class ResetAgentRequest:
+    connect_type: str
+    platform: str
+    session: str | None = None
+    options: dict[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class ResetAgentResult:
+    ok: bool
+    error: str | None = None
+    meta: dict[str, Any] | None = None
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default)
+
+
 SenderFunc = Callable[[SendToAgentRequest], Awaitable[SendToAgentResult]]
 _SENDERS: dict[str, SenderFunc] = {}
+ResetterFunc = Callable[[ResetAgentRequest], Awaitable[ResetAgentResult]]
+_RESETTERS: dict[str, ResetterFunc] = {}
 
 
 def register_sender(connect_type: str, sender: SenderFunc) -> None:
     _SENDERS[(connect_type or "").strip().lower()] = sender
+
+
+def register_resetter(connect_type: str, resetter: ResetterFunc) -> None:
+    _RESETTERS[(connect_type or "").strip().lower()] = resetter
 
 
 async def send_to_agent(request: SendToAgentRequest) -> SendToAgentResult:
@@ -48,6 +73,17 @@ async def send_to_agent(request: SendToAgentRequest) -> SendToAgentResult:
             error=f"unsupported connect_type: {request.connect_type}",
         )
     return await sender(request)
+
+
+async def reset_agent(request: ResetAgentRequest) -> ResetAgentResult:
+    connect_type = (request.connect_type or "").strip().lower()
+    resetter = _RESETTERS.get(connect_type)
+    if resetter is None:
+        return ResetAgentResult(
+            ok=False,
+            error=f"unsupported connect_type: {request.connect_type}",
+        )
+    return await resetter(request)
 
 
 async def _send_via_acp(request: SendToAgentRequest) -> SendToAgentResult:
@@ -85,6 +121,48 @@ async def _send_via_acp(request: SendToAgentRequest) -> SendToAgentResult:
                 "connect_type": "acp",
                 "platform": _canonical_platform(request.platform),
                 "session": request.session,
+            },
+        )
+
+
+async def _reset_via_acp(request: ResetAgentRequest) -> ResetAgentResult:
+    options = request.options or {}
+    session_key = str(request.session or "").strip()
+    if not session_key:
+        return ResetAgentResult(ok=False, error="missing session")
+
+    platform = _canonical_platform(request.platform)
+    try:
+        adapter = get_acpx_adapter(cwd=options.get("cwd"))
+        if platform == "openclaw":
+            await adapter.ops_openclaw_exec_slash(
+                session_key=session_key,
+                slash="/new",
+                timeout_sec=int(options.get("timeout_sec") or 180),
+            )
+        else:
+            await adapter.ops_non_openclaw_reset_session(
+                tool=platform,
+                session_key=session_key,
+            )
+        cleared_http_sessions = await _clear_http_agent_session_records(options, session_key)
+        return ResetAgentResult(
+            ok=True,
+            meta={
+                "connect_type": "acp",
+                "platform": platform,
+                "session": session_key,
+                "cleared_http_sessions": cleared_http_sessions,
+            },
+        )
+    except (AcpxError, RuntimeError, ValueError) as e:
+        return ResetAgentResult(
+            ok=False,
+            error=str(e),
+            meta={
+                "connect_type": "acp",
+                "platform": platform,
+                "session": session_key,
             },
         )
 
@@ -159,6 +237,98 @@ async def _send_via_http(request: SendToAgentRequest) -> SendToAgentResult:
         )
 
 
+async def _reset_via_http(request: ResetAgentRequest) -> ResetAgentResult:
+    options = request.options or {}
+    platform = _canonical_platform(request.platform)
+    session_key = str(request.session or "").strip()
+
+    try:
+        if platform == "internal":
+            if not session_key:
+                return ResetAgentResult(ok=False, error="missing session")
+            user_id = str(options.get("user_id") or "").strip()
+            if not user_id:
+                return ResetAgentResult(ok=False, error="missing user_id")
+            delete_session_url = str(options.get("delete_session_url") or "").strip()
+            if not delete_session_url:
+                port = os.getenv("PORT_AGENT", "51200")
+                delete_session_url = f"http://127.0.0.1:{port}/delete_session"
+
+            headers = {"Content-Type": "application/json"}
+            internal_token = str(options.get("internal_token") or "").strip()
+            if internal_token:
+                headers["X-Internal-Token"] = internal_token
+
+            payload = {
+                "user_id": user_id,
+                "password": str(options.get("password") or ""),
+                "session_id": session_key,
+            }
+            timeout_value = options.get("timeout")
+            timeout = httpx.Timeout(timeout=timeout_value) if timeout_value is not None else httpx.Timeout(timeout=30)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(delete_session_url, json=payload, headers=headers)
+            if resp.status_code != 200:
+                return ResetAgentResult(
+                    ok=False,
+                    error=f"HTTP {resp.status_code}: {resp.text[:300]}",
+                    meta={
+                        "connect_type": "http",
+                        "platform": platform,
+                        "session": session_key,
+                    },
+                )
+            return ResetAgentResult(
+                ok=True,
+                meta={
+                    "connect_type": "http",
+                    "platform": platform,
+                    "session": session_key,
+                },
+            )
+
+        if platform == "openclaw":
+            return await _reset_via_acp(
+                ResetAgentRequest(
+                    connect_type="acp",
+                    platform=platform,
+                    session=session_key,
+                    options=options,
+                )
+            )
+
+        cleared_http_sessions = await _clear_http_agent_session_records(options, session_key)
+        if cleared_http_sessions:
+            return ResetAgentResult(
+                ok=True,
+                meta={
+                    "connect_type": "http",
+                    "platform": platform,
+                    "session": session_key,
+                    "cleared_http_sessions": cleared_http_sessions,
+                },
+            )
+        return ResetAgentResult(
+            ok=False,
+            error=f"reset not supported for http platform: {platform}",
+            meta={
+                "connect_type": "http",
+                "platform": platform,
+                "session": session_key,
+            },
+        )
+    except Exception as e:
+        return ResetAgentResult(
+            ok=False,
+            error=str(e),
+            meta={
+                "connect_type": "http",
+                "platform": platform,
+                "session": session_key,
+            },
+        )
+
+
 async def _send_via_temp_http(request: SendToAgentRequest) -> SendToAgentResult:
     options = request.options or {}
     prompt = request.prompt if isinstance(request.prompt, str) else str(request.prompt or "")
@@ -193,6 +363,15 @@ async def _send_via_temp_http(request: SendToAgentRequest) -> SendToAgentResult:
                 "session": request.session,
             },
         )
+
+
+async def _clear_http_agent_session_records(options: dict[str, Any], session_key: str) -> int:
+    group_db_path = str(options.get("group_db_path") or "").strip()
+    if not group_db_path or not session_key:
+        return 0
+    from api.group_repository import delete_http_agent_session_by_key
+
+    return int(await delete_http_agent_session_by_key(group_db_path, session_key) or 0)
 
 
 def _canonical_platform(platform: str) -> str:
@@ -260,3 +439,5 @@ def _build_http_messages(prompt: Any, options: dict[str, Any]) -> list[dict[str,
 
 register_sender("acp", _send_via_acp)
 register_sender("http", _send_via_http)
+register_resetter("acp", _reset_via_acp)
+register_resetter("http", _reset_via_http)

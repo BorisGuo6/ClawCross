@@ -37,6 +37,13 @@ class SessionService:
         self.verify_auth_or_token = verify_auth_or_token
         self.extract_text = extract_text
 
+    async def _close_thread_checkpoints(self, thread_ids: list[str]) -> None:
+        close_checkpoint = getattr(self.agent, "close_thread_checkpoint", None)
+        if not callable(close_checkpoint):
+            return
+        for thread_id in thread_ids:
+            await close_checkpoint(thread_id)
+
     async def list_sessions(self, req: SessionListRequest, x_internal_token: str | None):
         """获取用户的所有会话列表。
 
@@ -173,6 +180,7 @@ class SessionService:
                 await self.agent.cancel_task(task_key)
 
                 thread_id = f"{req.user_id}#{req.session_id}"
+                await self._close_thread_checkpoints([thread_id])
                 await delete_thread_records(self.db_path, thread_id)
                 if is_subagent_session(req.session_id):
                     delete_subagent_by_session(req.user_id, req.session_id)
@@ -183,6 +191,8 @@ class SessionService:
             for k in keys_to_cancel:
                 await self.agent.cancel_task(k)
 
+            thread_ids = await list_thread_ids_by_prefix(self.db_path, prefix)
+            await self._close_thread_checkpoints(thread_ids)
             pattern = f"{req.user_id}#%"
             await delete_thread_records_like(self.db_path, pattern)
             delete_subagents_for_user(req.user_id)

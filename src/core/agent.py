@@ -11,7 +11,6 @@ from typing import Annotated, TypedDict, Optional
 # LangGraph related
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 # Model related
 from langchain_openai import ChatOpenAI
@@ -38,6 +37,7 @@ from webot.skills import build_skills_prompt
 from webot.soul import build_soul_prompt
 from webot.trajectory import save_trajectory
 from utils.context_references import expand_context_references
+from utils.routed_checkpoint_saver import ThreadRoutedAsyncSqliteSaver
 from services.smart_routing import resolve_turn_route
 from webot.permission_context import (
     create_or_reuse_permission_request,
@@ -137,6 +137,10 @@ USER_INJECTED_TOOLS = {
     "list_webot_workflow_presets", "apply_webot_workflow_preset",
     "session_send_to", "session_inbox", "session_deliver_inbox",
     "claude_session_send_to", "claude_session_inbox", "claude_session_deliver_inbox",
+    "write_session_plan", "read_session_plan", "clear_session_plan",
+    "write_session_todos", "read_session_todos", "clear_session_todos",
+    "record_verification", "list_verifications", "run_verification",
+    "list_tool_approvals",
     "ultraplan_start", "ultraplan_status",
     "ultrareview_start", "ultrareview_status",
     "enter_plan_mode", "exit_plan_mode", "get_session_mode",
@@ -181,7 +185,6 @@ SESSION_INJECTED_TOOLS = {
     "list_verifications": "source_session",
     "run_verification": "source_session",
     "list_tool_approvals": "source_session",
-    "resolve_tool_approval": "source_session",
     "session_send_to": "source_session",
     "session_inbox": "source_session",
     "session_deliver_inbox": "source_session",
@@ -255,9 +258,20 @@ class UserAwareToolNode:
     1. Reads thread_id from RunnableConfig, auto-injects as username for file/command tools
     2. Intercepts calls to disabled tools at runtime, returns error ToolMessage
     """
-    def __init__(self, tools, get_mcp_tools_fn):
+    def __init__(self, tools, get_mcp_tools_fn, find_internal_session_meta_fn=None):
         self.tool_node = ToolNode(tools)
         self._get_mcp_tools = get_mcp_tools_fn
+        self._find_internal_session_meta_fn = find_internal_session_meta_fn
+
+    def _resolve_internal_session_meta(self, user_id: str, session_id: str) -> dict | None:
+        resolver = self._find_internal_session_meta_fn
+        if resolver is None or not user_id or not session_id:
+            return None
+        try:
+            return resolver(user_id, session_id)
+        except Exception as exc:
+            print(f">>> [tools] ⚠️ resolve internal session meta failed: {exc}")
+            return None
 
     @staticmethod
     def _format_policy_block_message(
@@ -360,7 +374,7 @@ class UserAwareToolNode:
                 if tc["name"] in USER_INJECTED_TOOLS:
                     tc["args"]["username"] = user_id
                 if tc["name"] in TEAM_INJECTED_TOOLS and not tc["args"].get("team"):
-                    session_meta = self._find_internal_session_meta(user_id, session_id)
+                    session_meta = self._resolve_internal_session_meta(user_id, session_id)
                     if session_meta and session_meta.get("team"):
                         tc["args"]["team"] = session_meta["team"]
                 # Auto-inject session-related args; SESSION_FORCE_INJECTED_TOOLS always overwrites model args.
@@ -923,7 +937,7 @@ class TeamAgent:
     async def startup(self):
         """Initialize MCP client, load tools, build LangGraph workflow."""
         # 1. Open checkpoint DB
-        self._memory_ctx = AsyncSqliteSaver.from_conn_string(self._db_path)
+        self._memory_ctx = ThreadRoutedAsyncSqliteSaver(self._db_path)
         self._memory = await self._memory_ctx.__aenter__()
 
         # 2. Start MCP servers
@@ -998,7 +1012,14 @@ class TeamAgent:
 
         workflow = StateGraph(AgentState)
         workflow.add_node("chatbot", self._call_model)
-        workflow.add_node("tools", UserAwareToolNode(self._mcp_tools, lambda: self._mcp_tools))
+        workflow.add_node(
+            "tools",
+            UserAwareToolNode(
+                self._mcp_tools,
+                lambda: self._mcp_tools,
+                find_internal_session_meta_fn=self._find_internal_session_meta,
+            ),
+        )
         workflow.add_edge(START, "chatbot")
         workflow.add_conditional_edges("chatbot", self._should_continue)
         workflow.add_edge("tools", "chatbot")
@@ -1023,6 +1044,15 @@ class TeamAgent:
                 await self._memory_ctx.__aexit__(None, None, None)
             except Exception:
                 pass
+
+    async def close_thread_checkpoint(self, thread_id: str) -> None:
+        """Close one thread-specific checkpoint handle so its shard can be deleted safely."""
+        if not self._memory_ctx:
+            return
+        try:
+            await self._memory_ctx.aclose_thread(thread_id)
+        except Exception as e:
+            logging.getLogger("agent").warning("close_thread_checkpoint failed for %s: %s", thread_id, e)
 
     async def purge_checkpoints(self, thread_id: str, keep: int = 1) -> int:
         """
@@ -1677,6 +1707,69 @@ class TeamAgent:
     # Public interface: tools info
     # ------------------------------------------------------------------
     @staticmethod
+    def _tool_use_blocks_from_content(msg) -> list[dict]:
+        """Extract Anthropic/Claude-style tool_use blocks from message content."""
+        blocks = []
+        content = getattr(msg, "content", None)
+        if not isinstance(content, list):
+            return blocks
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                blocks.append(
+                    {
+                        "id": block.get("id", ""),
+                        "name": block.get("name", ""),
+                    }
+                )
+        return blocks
+
+    @classmethod
+    def _message_tool_calls(cls, msg) -> list[dict]:
+        """Return all OpenAI/LangChain and Claude-style tool calls on an AIMessage."""
+        tc_list: list = []
+        seen_ids: set[str] = set()
+        for tc in list(getattr(msg, "tool_calls", None) or []):
+            tid = (tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)) or ""
+            name = (tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)) or ""
+            rec = {"id": tid, "name": name}
+            if isinstance(tc, dict):
+                rec = {**tc, **rec}
+            tc_list.append(rec)
+            if tid:
+                seen_ids.add(tid)
+        for itc in getattr(msg, "invalid_tool_calls", None) or []:
+            tid = itc.get("id", "") if isinstance(itc, dict) else ""
+            rec = {"id": tid, "name": itc.get("name", ""), **itc} if isinstance(itc, dict) else {"id": "", "name": ""}
+            tc_list.append(rec)
+            if tid:
+                seen_ids.add(tid)
+        for rec in cls._tool_use_blocks_from_content(msg):
+            tid = rec.get("id", "")
+            if tid and tid not in seen_ids:
+                tc_list.append(rec)
+                seen_ids.add(tid)
+        return tc_list
+
+    @classmethod
+    def cancelled_tool_messages_for_last_ai(cls, last_msg) -> list[ToolMessage]:
+        """Build cancellation ToolMessages for OpenAI and Claude-style tool calls."""
+        if not isinstance(last_msg, AIMessage):
+            return []
+        messages: list[ToolMessage] = []
+        for tc in cls._message_tool_calls(last_msg):
+            tool_call_id = tc.get("id", "")
+            if not tool_call_id:
+                continue
+            messages.append(
+                ToolMessage(
+                    content="⚠️ 工具调用被用户终止",
+                    tool_call_id=tool_call_id,
+                    name=tc.get("name", "") or "",
+                )
+            )
+        return messages
+
+    @staticmethod
     def _sanitize_messages(messages: list, external_tool_names: set[str] | None = None) -> list:
         """
         清理消息列表，确保每条带 tool_calls 的 AI 消息后面都有对应的 ToolMessage。
@@ -1696,47 +1789,6 @@ class TeamAgent:
         if not external_tool_names:
             external_tool_names = set()
 
-        def _tool_use_blocks_from_content(msg) -> list[dict]:
-            blocks = []
-            content = getattr(msg, "content", None)
-            if not isinstance(content, list):
-                return blocks
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    blocks.append(
-                        {
-                            "id": block.get("id", ""),
-                            "name": block.get("name", ""),
-                        }
-                    )
-            return blocks
-
-        def _get_all_tc(msg):
-            """AIMessage：tool_calls + invalid_tool_calls + content 内 tool_use 块（去重）"""
-            tc_list: list = []
-            seen_ids: set[str] = set()
-            for tc in list(getattr(msg, "tool_calls", None) or []):
-                tid = (tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)) or ""
-                name = (tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)) or ""
-                rec = {"id": tid, "name": name}
-                if isinstance(tc, dict):
-                    rec = {**tc, **rec}
-                tc_list.append(rec)
-                if tid:
-                    seen_ids.add(tid)
-            for itc in getattr(msg, "invalid_tool_calls", None) or []:
-                tid = itc.get("id", "") if isinstance(itc, dict) else ""
-                rec = {"id": tid, "name": itc.get("name", ""), **itc} if isinstance(itc, dict) else {"id": "", "name": ""}
-                tc_list.append(rec)
-                if tid:
-                    seen_ids.add(tid)
-            for rec in _tool_use_blocks_from_content(msg):
-                tid = rec.get("id", "")
-                if tid and tid not in seen_ids:
-                    tc_list.append(rec)
-                    seen_ids.add(tid)
-            return tc_list
-
         def _strip_ai_tool_blocks(msg: AIMessage) -> AIMessage:
             """移除 tool_calls / invalid 及 content 中的 tool_use 块，仅保留 thinking、text 等。"""
             content = getattr(msg, "content", None)
@@ -1745,11 +1797,17 @@ class TeamAgent:
                 content = kept if kept else "（工具调用序列异常，已省略未完成的工具块）"
             elif content is None or content == "":
                 content = "（工具调用序列异常，已清理）"
-            return AIMessage(
-                content=content,
-                tool_calls=[],
-                invalid_tool_calls=[],
-            )
+
+            kwargs = {
+                "content": content,
+                "tool_calls": [],
+                "invalid_tool_calls": [],
+            }
+            for attr in ("additional_kwargs", "response_metadata", "usage_metadata", "id", "name"):
+                value = getattr(msg, attr, None)
+                if value is not None:
+                    kwargs[attr] = value
+            return AIMessage(**kwargs)
 
         # 收集所有已存在的 tool_call_id 回复（用于末尾外部工具启发式）
         answered_ids = set()
@@ -1765,7 +1823,7 @@ class TeamAgent:
             last = clean[-1]
             if not isinstance(last, AIMessage):
                 break
-            all_tc = _get_all_tc(last)
+            all_tc = TeamAgent._message_tool_calls(last)
             if not all_tc:
                 break
             pending_ids = {tc["id"] for tc in all_tc if tc.get("id")}
@@ -1786,7 +1844,7 @@ class TeamAgent:
             if not isinstance(msg, AIMessage):
                 result.append(msg)
                 continue
-            all_tc = _get_all_tc(msg)
+            all_tc = TeamAgent._message_tool_calls(msg)
             if not all_tc:
                 result.append(msg)
                 continue
@@ -1824,7 +1882,35 @@ class TeamAgent:
                 )
             ]
 
-        return result
+        # --- 第四轮：清除仍然游离的 ToolMessage ---
+        # Claude/Anthropic 要求 tool_result 必须紧跟其 tool_use 所在 assistant 消息。
+        # 如果取消/清理只处理了 tool_calls 或 content.tool_use 的一边，可能留下不属于
+        # 前一条 AIMessage 工具调用批次的孤儿 ToolMessage；这些会触发 2013。
+        final: list = []
+        expected_tool_ids: set[str] = set()
+        for msg in result:
+            if isinstance(msg, AIMessage):
+                final.append(msg)
+                expected_tool_ids = {
+                    tc.get("id", "")
+                    for tc in TeamAgent._message_tool_calls(msg)
+                    if tc.get("id")
+                }
+                continue
+            if isinstance(msg, ToolMessage):
+                tid = getattr(msg, "tool_call_id", "") or ""
+                if not tid:
+                    final.append(msg)
+                elif tid in expected_tool_ids:
+                    final.append(msg)
+                    expected_tool_ids.discard(tid)
+                else:
+                    _log.warning("sanitize: 移除孤儿 ToolMessage, tool_call_id=%s", tid)
+                continue
+            final.append(msg)
+            expected_tool_ids = set()
+
+        return final
 
     @staticmethod
     def _strip_multimodal_parts(messages: list) -> list:

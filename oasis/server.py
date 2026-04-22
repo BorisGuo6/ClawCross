@@ -24,7 +24,6 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 import httpx
 import uvicorn
-import aiosqlite
 import yaml as _yaml
 import json
 
@@ -35,6 +34,15 @@ _this_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(_this_dir)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+_src_dir = os.path.join(_project_root, "src")
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+from utils.checkpoint_paths import DEFAULT_CHECKPOINT_DB_DIR, checkpoint_store_exists
+from utils.checkpoint_repository import (
+    fetch_latest_checkpoint_blob,
+    list_thread_ids_like,
+)
 
 env_path = os.path.join(_project_root, "config", ".env")
 
@@ -927,59 +935,41 @@ async def list_oasis_sessions(user_id: str = Query("")):
 
     Query param: user_id (optional). If provided, only sessions for that user are returned.
     """
-    db_path = os.path.join(_project_root, "data", "agent_memory.db")
-    if not os.path.exists(db_path):
+    db_path = str(DEFAULT_CHECKPOINT_DB_DIR)
+    if not checkpoint_store_exists(db_path):
         return {"sessions": []}
 
     prefix = f"{user_id}#" if user_id else None
     sessions = []
     try:
-        async with aiosqlite.connect(db_path) as db:
-            if prefix:
-                cursor = await db.execute(
-                    "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ? ORDER BY thread_id",
-                    (f"{prefix}%#oasis%",),
-                )
+        rows = await list_thread_ids_like(db_path, f"{prefix}%#oasis%" if prefix else "%#oasis%")
+        for thread_id in rows:
+            if "#" in thread_id:
+                user_part, sid = thread_id.split("#", 1)
             else:
-                cursor = await db.execute(
-                    "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE ? ORDER BY thread_id",
-                    (f"%#oasis%",),
-                )
-            rows = await cursor.fetchall()
-            for (thread_id,) in rows:
-                # thread_id format: "user#session_id"
-                if "#" in thread_id:
-                    user_part, sid = thread_id.split("#", 1)
-                else:
-                    user_part = ""
-                    sid = thread_id
-                tag = sid.split("#")[0] if "#" in sid else sid
+                user_part = ""
+                sid = thread_id
+            tag = sid.split("#")[0] if "#" in sid else sid
 
-                # get latest checkpoint message count
-                ckpt_cursor = await db.execute(
-                    "SELECT type, checkpoint FROM checkpoints WHERE thread_id = ? ORDER BY ROWID DESC LIMIT 1",
-                    (thread_id,),
-                )
-                ckpt_row = await ckpt_cursor.fetchone()
-                msg_count = 0
-                if ckpt_row:
-                    try:
-                        # Try to decode JSON-like checkpoint; conservative approach
-                        ckpt_blob = ckpt_row[1]
-                        if isinstance(ckpt_blob, (bytes, bytearray)):
-                            ckpt_blob = ckpt_blob.decode('utf-8', errors='ignore')
-                        ckpt_data = json.loads(ckpt_blob) if isinstance(ckpt_blob, str) else {}
-                        messages = ckpt_data.get("channel_values", {}).get("messages", [])
-                        msg_count = len(messages)
-                    except Exception:
-                        msg_count = 0
+            ckpt_row = await fetch_latest_checkpoint_blob(db_path, thread_id)
+            msg_count = 0
+            if ckpt_row:
+                try:
+                    ckpt_blob = ckpt_row[1]
+                    if isinstance(ckpt_blob, (bytes, bytearray)):
+                        ckpt_blob = ckpt_blob.decode("utf-8", errors="ignore")
+                    ckpt_data = json.loads(ckpt_blob) if isinstance(ckpt_blob, str) else {}
+                    messages = ckpt_data.get("channel_values", {}).get("messages", [])
+                    msg_count = len(messages)
+                except Exception:
+                    msg_count = 0
 
-                sessions.append({
-                    "user_id": user_part,
-                    "session_id": sid,
-                    "tag": tag,
-                    "message_count": msg_count,
-                })
+            sessions.append({
+                "user_id": user_part,
+                "session_id": sid,
+                "tag": tag,
+                "message_count": msg_count,
+            })
     except Exception as e:
         raise HTTPException(500, f"扫描 session 失败: {e}")
 

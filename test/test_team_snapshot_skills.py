@@ -53,8 +53,11 @@ class TeamSnapshotSkillsTests(unittest.TestCase):
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             personal_result = snapshot_skills.add_user_skills_to_zip(zf, "alice")
             team_result = snapshot_skills.add_team_skills_to_zip(zf, "alice", "ops")
+            exported_names = sorted(zf.namelist())
         self.assertGreaterEqual(personal_result["files"], 2)
         self.assertGreaterEqual(team_result["files"], 2)
+        self.assertIn("skills/clawcross_personal/deploy-script/SKILL.md", exported_names)
+        self.assertIn("skills/clawcross_team/incident-runbook/SKILL.md", exported_names)
 
         team_dir = self.tmppath / "team_restore"
         team_dir.mkdir(parents=True, exist_ok=True)
@@ -77,6 +80,26 @@ class TeamSnapshotSkillsTests(unittest.TestCase):
         self.assertEqual(result["restored_team_skill_dirs"], 1)
         self.assertGreaterEqual(result["restored_user_files"], 2)
         self.assertGreaterEqual(result["restored_team_files"], 2)
+
+    def test_restore_accepts_legacy_skill_roots(self):
+        legacy_root = self.tmppath / "legacy_team"
+        (legacy_root / "clawcross_user_skills" / "legacy-user").mkdir(parents=True, exist_ok=True)
+        (legacy_root / "clawcross_team_skills" / "legacy-team").mkdir(parents=True, exist_ok=True)
+        (legacy_root / "clawcross_user_skills" / "legacy-user" / "SKILL.md").write_text(
+            "---\nname: legacy-user\ndescription: legacy user\n---\n\nlegacy",
+            encoding="utf-8",
+        )
+        (legacy_root / "clawcross_team_skills" / "legacy-team" / "SKILL.md").write_text(
+            "---\nname: legacy-team\ndescription: legacy team\n---\n\nlegacy",
+            encoding="utf-8",
+        )
+
+        result = snapshot_skills.restore_skills_from_team_dir(legacy_root, "bob", "ops")
+
+        self.assertEqual(result["restored_user_skill_dirs"], 1)
+        self.assertEqual(result["restored_team_skill_dirs"], 1)
+        self.assertTrue((snapshot_skills._user_skills_dir("bob") / "legacy-user" / "SKILL.md").is_file())
+        self.assertTrue((snapshot_skills._team_skills_dir("bob", "ops") / "legacy-team" / "SKILL.md").is_file())
 
 
 if __name__ == "__main__":

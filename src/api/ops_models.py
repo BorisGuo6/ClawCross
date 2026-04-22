@@ -75,3 +75,19 @@ class SessionsCloseRequest(BaseModel):
     password: str = ""
     platform: str
     session_name: str
+
+
+class UpdateCheckRequest(BaseModel):
+    user_id: str
+    password: str = ""
+    refresh_remote: bool = True
+
+
+class UpdateStartRequest(BaseModel):
+    user_id: str
+    password: str = ""
+
+
+class UpdateStatusRequest(BaseModel):
+    user_id: str
+    password: str = ""

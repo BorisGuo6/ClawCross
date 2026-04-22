@@ -26,12 +26,15 @@ USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
 
 DEFAULT_TOOL_RESULT_CHAR_BUDGET = 6000
 DEFAULT_TOOL_RESULT_ITEM_LIMIT = 1600
-DEFAULT_USER_INPUT_CHAR_BUDGET = 5000
-DEFAULT_USER_INPUT_ITEM_LIMIT = 1400
+DEFAULT_USER_INPUT_CHAR_BUDGET = 131072
+DEFAULT_USER_INPUT_ITEM_LIMIT = 10000
 DEFAULT_CONTEXT_TOKEN_BUDGET = 12000
 DEFAULT_RECENT_MESSAGE_COUNT = 10
 DEFAULT_MAX_HISTORY_MESSAGES = 28
 _ARTIFACTS_ENV = "WEBOT_RUNTIME_ARTIFACTS_ENABLED"
+_USER_INPUT_CHAR_BUDGET_ENV = "WEBOT_USER_INPUT_CHAR_BUDGET"
+_USER_INPUT_ITEM_LIMIT_ENV = "WEBOT_USER_INPUT_ITEM_LIMIT"
+_SKIP_LATEST_USER_INPUT_BUDGET_ENV = "WEBOT_SKIP_LATEST_USER_INPUT_BUDGET"
 
 
 def approximate_token_count(text: str) -> int:
@@ -87,29 +90,90 @@ def _runtime_artifacts_enabled() -> bool:
     return raw not in {"0", "false", "off", "no"}
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _resolve_user_input_char_budget() -> int:
+    return _env_int(_USER_INPUT_CHAR_BUDGET_ENV, DEFAULT_USER_INPUT_CHAR_BUDGET)
+
+
+def _resolve_user_input_item_limit() -> int:
+    return _env_int(_USER_INPUT_ITEM_LIMIT_ENV, DEFAULT_USER_INPUT_ITEM_LIMIT)
+
+
+def _resolve_latest_human_message_preserve_count() -> int:
+    return 1 if _env_flag(_SKIP_LATEST_USER_INPUT_BUDGET_ENV, True) else 0
+
+
 def budget_user_messages(
     *,
     user_id: str,
     session_id: str,
     messages: list[BaseMessage],
-    total_char_budget: int = DEFAULT_USER_INPUT_CHAR_BUDGET,
-    item_char_limit: int = DEFAULT_USER_INPUT_ITEM_LIMIT,
+    total_char_budget: int | None = None,
+    item_char_limit: int | None = None,
+    preserve_latest_human_messages: int | None = None,
 ) -> list[BaseMessage]:
-    remaining_budget = max(0, total_char_budget)
+    resolved_total_budget = _resolve_user_input_char_budget() if total_char_budget is None else total_char_budget
+    resolved_item_limit = _resolve_user_input_item_limit() if item_char_limit is None else item_char_limit
+    preserve_latest_count = (
+        _resolve_latest_human_message_preserve_count()
+        if preserve_latest_human_messages is None
+        else max(0, preserve_latest_human_messages)
+    )
+
+    preserved_indexes: set[int] = set()
+    if preserve_latest_count > 0:
+        remaining_to_preserve = preserve_latest_count
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if isinstance(message, HumanMessage) and isinstance(message.content, str):
+                preserved_indexes.add(index)
+                remaining_to_preserve -= 1
+                if remaining_to_preserve <= 0:
+                    break
+
+    remaining_budget: int | None
+    if resolved_total_budget <= 0:
+        remaining_budget = None
+    else:
+        remaining_budget = max(0, resolved_total_budget)
     budgeted: list[BaseMessage] = []
     for index, message in enumerate(messages):
         if not isinstance(message, HumanMessage) or not isinstance(message.content, str):
             budgeted.append(message)
             continue
 
-        raw_text = message.content
-        keep_inline = len(raw_text) <= item_char_limit and len(raw_text) <= remaining_budget
-        if keep_inline:
-            remaining_budget -= len(raw_text)
+        if index in preserved_indexes:
             budgeted.append(message)
             continue
 
-        excerpt = _trim_text(raw_text, min(item_char_limit, 700))
+        raw_text = message.content
+        within_item_limit = resolved_item_limit <= 0 or len(raw_text) <= resolved_item_limit
+        within_total_budget = remaining_budget is None or len(raw_text) <= remaining_budget
+        keep_inline = within_item_limit and within_total_budget
+        if keep_inline:
+            if remaining_budget is not None:
+                remaining_budget = max(0, remaining_budget - len(raw_text))
+            budgeted.append(message)
+            continue
+
+        excerpt_limit = min(resolved_item_limit, 700) if resolved_item_limit > 0 else 700
+        excerpt = _trim_text(raw_text, excerpt_limit)
         stored_path: str | None = None
         if _runtime_artifacts_enabled():
             path_obj = _store_runtime_text(
@@ -138,7 +202,9 @@ def budget_user_messages(
                 )
             )
         )
-        remaining_budget = max(0, remaining_budget - min(len(excerpt), item_char_limit))
+        if remaining_budget is not None:
+            budget_cost = min(len(excerpt), resolved_item_limit) if resolved_item_limit > 0 else len(excerpt)
+            remaining_budget = max(0, remaining_budget - budget_cost)
     return budgeted
 
 

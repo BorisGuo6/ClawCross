@@ -25,3 +25,4 @@ class SystemTriggerRequest(BaseModel):
     text: str = "summary"
     session_id: str = "default"
     attachments: Optional[list[SystemTriggerAttachment]] = None
+    coalesce_key: str = ""

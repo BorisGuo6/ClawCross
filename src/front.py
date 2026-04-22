@@ -56,7 +56,13 @@ from services.team_creator_service import (
     PRESET_POOL,
 )
 from services.team_preset_assets import install_team_preset, list_team_presets
-from services.team_snapshot_skills import add_team_skills_to_zip, add_user_skills_to_zip, restore_skills_from_team_dir
+from services.team_snapshot_skills import (
+    SNAPSHOT_OPENCLAW_AGENTS_DIR,
+    SNAPSHOT_OPENCLAW_MANAGED_DIR,
+    add_team_skills_to_zip,
+    add_user_skills_to_zip,
+    restore_skills_from_team_dir,
+)
 
 # 加载 .env 配置
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -98,6 +104,9 @@ PORT_AGENT = int(os.getenv("PORT_AGENT", "51200"))
 LOCAL_AGENT_CANCEL_URL = f"http://127.0.0.1:{PORT_AGENT}/cancel"
 LOCAL_LOGIN_URL = f"http://127.0.0.1:{PORT_AGENT}/login"
 LOCAL_TOOLS_URL = f"http://127.0.0.1:{PORT_AGENT}/tools"
+LOCAL_UPDATE_CHECK_URL = f"http://127.0.0.1:{PORT_AGENT}/update_check"
+LOCAL_UPDATE_START_URL = f"http://127.0.0.1:{PORT_AGENT}/update_start"
+LOCAL_UPDATE_STATUS_URL = f"http://127.0.0.1:{PORT_AGENT}/update_status"
 LOCAL_SESSIONS_URL = f"http://127.0.0.1:{PORT_AGENT}/sessions"
 LOCAL_SESSION_HISTORY_URL = f"http://127.0.0.1:{PORT_AGENT}/session_history"
 LOCAL_DELETE_SESSION_URL = f"http://127.0.0.1:{PORT_AGENT}/delete_session"
@@ -2042,6 +2051,53 @@ def proxy_restart_services():
         with open(restart_flag, "w") as f:
             f.write("restart")
         return jsonify({"status": "success", "message": "重启信号已发送"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/proxy_update_check", methods=["POST"])
+def proxy_update_check():
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "not logged in"}), 401
+    try:
+        data = request.get_json(silent=True) or {}
+        body = {
+            "user_id": user_id,
+            "refresh_remote": bool(data.get("refresh_remote", True)),
+        }
+        r = requests.post(LOCAL_UPDATE_CHECK_URL, json=body, headers=_internal_auth_headers(), timeout=45)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/proxy_update_start", methods=["POST"])
+def proxy_update_start():
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "not logged in"}), 401
+    try:
+        body = {
+            "user_id": user_id,
+        }
+        r = requests.post(LOCAL_UPDATE_START_URL, json=body, headers=_internal_auth_headers(), timeout=20)
+        return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/proxy_update_status", methods=["POST"])
+def proxy_update_status():
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "not logged in"}), 401
+    try:
+        body = {
+            "user_id": user_id,
+        }
+        r = requests.post(LOCAL_UPDATE_STATUS_URL, json=body, headers=_internal_auth_headers(), timeout=20)
+        return jsonify(r.json()), r.status_code
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -5827,7 +5883,7 @@ def download_team_snapshot():
                                     agent_detail = resp.get("agent", {})
                                     workspace = agent_detail.get("workspace", "")
 
-                                    # 1. Add workspace skills to zip: skills/{short_name}/
+                                    # 1. Add workspace skills to zip: skills/openclaw_agents/{short_name}/
                                     if workspace:
                                         ws_skills_dir = os.path.join(os.path.expanduser(workspace), "skills")
                                         if os.path.isdir(ws_skills_dir):
@@ -5842,10 +5898,14 @@ def download_team_snapshot():
                                                     for fname in filenames:
                                                         abs_path = os.path.join(dirpath, fname)
                                                         rel_in_skills = os.path.relpath(abs_path, ws_skills_dir)
-                                                        zip_path = os.path.join("skills", short_name, rel_in_skills)
+                                                        zip_path = os.path.join(
+                                                            SNAPSHOT_OPENCLAW_AGENTS_DIR,
+                                                            short_name,
+                                                            rel_in_skills,
+                                                        )
                                                         zipf.write(abs_path, zip_path)
 
-                                    # 2. Add managed skills to zip: skills/_managed/ (once)
+                                    # 2. Add managed skills to zip: skills/openclaw_managed/ (once)
                                     if not managed_skills_added:
                                         user_skills = resp.get("user_skills", [])
                                         for sk in user_skills:
@@ -5856,7 +5916,7 @@ def download_team_snapshot():
                                                         for fname in filenames:
                                                             abs_path = os.path.join(dirpath, fname)
                                                             rel_in_sk = os.path.relpath(abs_path, sk_path)
-                                                            zip_path = os.path.join("skills", "_managed", sk["name"], rel_in_sk)
+                                                            zip_path = os.path.join(SNAPSHOT_OPENCLAW_MANAGED_DIR, sk["name"], rel_in_sk)
                                                             zipf.write(abs_path, zip_path)
                                     managed_skills_added = True
 
@@ -5944,14 +6004,18 @@ def upload_team_snapshot():
     import zipfile
     import tempfile
     import shutil
-    
+
+    temp_path = None
+    skills_extract_root = None
     try:
         # Save uploaded file to temp location
         with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_file:
             file.save(temp_file.name)
             temp_path = temp_file.name
-        
-            # Extract zip file
+
+        skills_extract_root = tempfile.mkdtemp(prefix="team_snapshot_skills_")
+
+        # Extract zip file
         with zipfile.ZipFile(temp_path, 'r') as zip_ref:
             # Validate zip contents (only allow safe file types)
             for file_info in zip_ref.infolist():
@@ -5959,23 +6023,29 @@ def upload_team_snapshot():
                 # Skip directories and absolute paths
                 if filename.endswith('/') or filename.startswith('/'):
                     continue
-                # Allow files inside skills/, clawcross_user_skills/, and clawcross_team_skills/ directories (any file type)
-                # For other files, allow team metadata plus workflow formats (json/yaml/python)
-                if not (
+                if ".." in Path(filename).parts:
+                    return jsonify({"error": f"Invalid path in zip: {filename}"}), 400
+                # Allow files inside the unified skills/ tree, plus legacy managed-skill
+                # roots for backward-compatible imports. For other files, allow team
+                # metadata plus workflow formats (json/yaml/python).
+                is_skill_payload = (
                     filename.startswith('skills/')
                     or filename.startswith('clawcross_user_skills/')
                     or filename.startswith('clawcross_team_skills/')
-                ):
+                )
+                if not is_skill_payload:
                     if not filename.endswith(('.json', '.yaml', '.yml', '.py')):
                         return jsonify({"error": f"Invalid file type in zip: {filename}"}), 400
                 # Preserve relative directory structure from zip
-                target_path = os.path.join(team_dir, filename)
+                target_root = skills_extract_root if is_skill_payload else team_dir
+                target_path = os.path.join(target_root, filename)
                 os.makedirs(os.path.dirname(target_path), exist_ok=True)
                 with zip_ref.open(file_info) as source, open(target_path, 'wb') as target:
                     target.write(source.read())
         
         # Clean up temp file
         os.unlink(temp_path)
+        temp_path = None
         
         # After extraction, recreate agents from internal_agents.json
         # The file is a flat list: [{"name": ..., "tag": ...}, ...]
@@ -6035,8 +6105,10 @@ def upload_team_snapshot():
         fallback_agent_config = team_settings.get("fallback_agent_config", {})
 
         # Paths for extracted skill folders
-        extracted_skills_dir = os.path.join(team_dir, "skills")
-        managed_skills_src = os.path.join(extracted_skills_dir, "_managed")
+        extracted_skills_dir = os.path.join(skills_extract_root, "skills")
+        extracted_openclaw_agents_dir = os.path.join(skills_extract_root, SNAPSHOT_OPENCLAW_AGENTS_DIR)
+        managed_skills_src = os.path.join(skills_extract_root, SNAPSHOT_OPENCLAW_MANAGED_DIR)
+        legacy_managed_skills_src = os.path.join(extracted_skills_dir, "_managed")
 
         if os.path.exists(openclaw_agents_path):
             try:
@@ -6084,7 +6156,8 @@ def upload_team_snapshot():
                                 if workspace:
                                     t_skills = time.perf_counter()
                                     ws_skills_target = os.path.join(os.path.expanduser(workspace), "skills")
-                                    agent_skills_src = os.path.join(extracted_skills_dir, short_name)
+                                    agent_skills_src = os.path.join(extracted_openclaw_agents_dir, short_name)
+                                    legacy_agent_skills_src = os.path.join(extracted_skills_dir, short_name)
 
                                     # Clear existing skills folder and rebuild
                                     if os.path.isdir(ws_skills_target):
@@ -6092,9 +6165,10 @@ def upload_team_snapshot():
                                     os.makedirs(ws_skills_target, exist_ok=True)
 
                                     # Copy workspace skills from snapshot
-                                    if os.path.isdir(agent_skills_src):
-                                        for item in os.listdir(agent_skills_src):
-                                            src_item = os.path.join(agent_skills_src, item)
+                                    skills_source_dir = agent_skills_src if os.path.isdir(agent_skills_src) else legacy_agent_skills_src
+                                    if os.path.isdir(skills_source_dir):
+                                        for item in os.listdir(skills_source_dir):
+                                            src_item = os.path.join(skills_source_dir, item)
                                             dst_item = os.path.join(ws_skills_target, item)
                                             if os.path.isdir(src_item):
                                                 shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
@@ -6102,9 +6176,10 @@ def upload_team_snapshot():
                                                 shutil.copy2(src_item, dst_item)
 
                                     # Merge managed skills into the same workspace skills folder
-                                    if os.path.isdir(managed_skills_src):
-                                        for item in os.listdir(managed_skills_src):
-                                            src_item = os.path.join(managed_skills_src, item)
+                                    managed_source_dir = managed_skills_src if os.path.isdir(managed_skills_src) else legacy_managed_skills_src
+                                    if os.path.isdir(managed_source_dir):
+                                        for item in os.listdir(managed_source_dir):
+                                            src_item = os.path.join(managed_source_dir, item)
                                             dst_item = os.path.join(ws_skills_target, item)
                                             if os.path.isdir(src_item) and not os.path.exists(dst_item):
                                                 shutil.copytree(src_item, dst_item)
@@ -6193,11 +6268,7 @@ def upload_team_snapshot():
             except Exception as e:
                 openclaw_errors.append(f"Failed to read external_agents.json: {e}")
 
-        # Clean up extracted skills directory from team folder (it was only temporary)
-        if os.path.isdir(extracted_skills_dir):
-            shutil.rmtree(extracted_skills_dir, ignore_errors=True)
-
-        skill_restore_result = restore_skills_from_team_dir(team_dir, user_id, team)
+        skill_restore_result = restore_skills_from_team_dir(skills_extract_root, user_id, team)
         
         # --- Restore cron jobs from cron_jobs.json ---
         cron_jobs_path = os.path.join(team_dir, "cron_jobs.json")
@@ -6251,6 +6322,11 @@ def upload_team_snapshot():
         return jsonify({"error": "Invalid zip file"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+        if skills_extract_root and os.path.isdir(skills_extract_root):
+            shutil.rmtree(skills_extract_root, ignore_errors=True)
 
 
 @app.route("/teams/snapshot/import_from_url", methods=["POST"])

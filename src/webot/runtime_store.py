@@ -2193,6 +2193,22 @@ def update_tool_approval_status(
     return _row_to_approval(row)
 
 
+def get_tool_approval(
+    approval_id: str,
+    user_id: str,
+    db_path: str | os.PathLike | None = None,
+) -> ToolApprovalRecord | None:
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM webot_tool_approvals
+            WHERE approval_id = ? AND user_id = ?
+            """,
+            (approval_id, user_id),
+        ).fetchone()
+    return _row_to_approval(row)
+
+
 def save_memory_state(
     user_id: str,
     session_id: str,

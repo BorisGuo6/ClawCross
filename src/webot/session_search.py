@@ -18,6 +18,8 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+from utils.checkpoint_paths import iter_checkpoint_db_paths
+
 
 def session_search(
     *,
@@ -40,7 +42,7 @@ def session_search(
         Dict with matches: list of session summaries
     """
     if not db_path:
-        db_path = str(PROJECT_ROOT / "data" / "agent_memory.db")
+        db_path = str(PROJECT_ROOT / "data" / "agent_checkpoints")
 
     # Also search trajectory data for richer context
     trajectory_matches = _search_trajectories(
@@ -152,47 +154,51 @@ def _search_checkpoints(
     """Search checkpoint DB for session metadata."""
     import sqlite3
 
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-    except Exception:
-        return []
+    seen_threads: list[tuple[str, str]] = []
+    seen_ids: set[str] = set()
 
-    try:
-        # Get thread IDs that belong to this user
-        cursor = conn.execute(
-            "SELECT DISTINCT thread_id FROM checkpoints ORDER BY rowid DESC LIMIT 200"
-        )
-        threads = [row["thread_id"] for row in cursor.fetchall()]
+    for path in iter_checkpoint_db_paths(db_path):
+        try:
+            conn = sqlite3.connect(path)
+            conn.row_factory = sqlite3.Row
+        except Exception:
+            continue
 
-        # Filter for user's threads (thread_id format: user_id#session_id)
-        user_threads = []
+        try:
+            cursor = conn.execute(
+                "SELECT DISTINCT thread_id FROM checkpoints ORDER BY rowid DESC LIMIT 200"
+            )
+            threads = [row["thread_id"] for row in cursor.fetchall()]
+        except Exception:
+            conn.close()
+            continue
+        finally:
+            conn.close()
+
         for tid in threads:
-            if tid.startswith(f"{user_id}#"):
-                sid = tid[len(user_id) + 1:]
-                if sid != current_session_id:
-                    user_threads.append((tid, sid))
+            if not tid.startswith(f"{user_id}#"):
+                continue
+            sid = tid[len(user_id) + 1:]
+            if sid == current_session_id or tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            seen_threads.append((tid, sid))
 
-        if not query:
-            return [
-                {
-                    "session_id": sid,
-                    "timestamp": "",
-                    "preview": f"Session: {sid}",
-                    "relevance_score": 0,
-                    "source": "checkpoint",
-                }
-                for _, sid in user_threads[:limit]
-            ]
+    if not query:
+        return [
+            {
+                "session_id": sid,
+                "timestamp": "",
+                "preview": f"Session: {sid}",
+                "relevance_score": 0,
+                "source": "checkpoint",
+            }
+            for _, sid in seen_threads[:limit]
+        ]
 
-        # For keyword search, we'd need message content in checkpoints
-        # This is limited since checkpoints store binary state
-        return []
-
-    except Exception:
-        return []
-    finally:
-        conn.close()
+    # For keyword search, we'd need message content in checkpoints
+    # This is limited since checkpoints store binary state
+    return []
 
 
 def _tokenize(text: str) -> set[str]:

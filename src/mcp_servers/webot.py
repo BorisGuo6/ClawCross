@@ -1560,50 +1560,6 @@ async def list_tool_approvals(
     return "\n".join(lines)
 
 @mcp.tool()
-async def resolve_tool_approval(
-    username: str,
-    approval_id: str,
-    action: str = "approve",
-    reason: str = "",
-    remember: bool = False,
-    source_session: str = "",
-) -> str:
-    normalized_action = "approved" if (action or "").strip().lower() in {"approve", "approved", "allow"} else "denied"
-    approval = resolve_permission_request(
-        user_id=username,
-        approval_id=approval_id,
-        action=normalized_action,
-        reason=reason,
-        remember=remember,
-    )
-    if approval is None:
-        return f"❌ 未找到 tool approval: {approval_id}"
-    try:
-        policy = get_tool_policy(username)
-        run_tool_policy_hooks(
-            policy,
-            event="permission_resolved",
-            user_id=username,
-            session_id=source_session or approval.session_id,
-            tool_name=approval.tool_name,
-            args=json.loads(approval.args_json or "{}"),
-            result={
-                "approval_id": approval.approval_id,
-                "status": approval.status,
-                "remember": remember,
-            },
-        )
-    except Exception:
-        pass
-    return (
-        f"✅ Tool approval 已处理\n"
-        f"approval_id: {approval.approval_id}\n"
-        f"tool: {approval.tool_name}\n"
-        f"status: {approval.status}\n"
-        f"remember: {'yes' if remember else 'no'}"
-    )
-
-@mcp.tool()
 async def enter_plan_mode(
     username: str,
     reason: str = "",

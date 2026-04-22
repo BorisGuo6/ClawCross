@@ -15,19 +15,19 @@ and query existing sessions:
 Runs as a stdio MCP server, just like the other mcp_*.py tools.
 """
 
-import os
 import json
-import aiosqlite
 from mcp.server.fastmcp import FastMCP
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from utils.checkpoint_paths import DEFAULT_CHECKPOINT_DB_DIR, checkpoint_store_exists
+from utils.checkpoint_repository import (
+    fetch_latest_checkpoint_blob,
+    list_thread_ids_by_prefix,
+)
 
 mcp = FastMCP("Session Management")
 
-# Checkpoint DB path — same as agent.py uses
-_DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "data", "agent_memory.db",
-)
+# Checkpoint DB root — same as mainagent uses
+_DB_PATH = str(DEFAULT_CHECKPOINT_DB_DIR)
 
 # LangGraph checkpoint serde (msgpack-based, not plain JSON)
 _serde = JsonPlusSerializer()
@@ -80,88 +80,75 @@ async def list_sessions(
     if not username:
         return "❌ 无法获取用户信息"
 
-    if not os.path.exists(_DB_PATH):
+    if not checkpoint_store_exists(_DB_PATH):
         return "❌ 对话记录数据库不存在"
 
     prefix = f"{username}#"
     sessions = []
 
     try:
-        async with aiosqlite.connect(_DB_PATH) as db:
-            cursor = await db.execute(
-                "SELECT DISTINCT thread_id FROM checkpoints "
-                "WHERE thread_id LIKE ? ORDER BY thread_id",
-                (f"{prefix}%",),
-            )
-            rows = await cursor.fetchall()
+        rows = await list_thread_ids_by_prefix(_DB_PATH, prefix)
+        for thread_id in rows:
+            sid = thread_id[len(prefix):]
 
-            for (thread_id,) in rows:
-                sid = thread_id[len(prefix):]
+            ckpt_row = await fetch_latest_checkpoint_blob(_DB_PATH, thread_id)
+            if not ckpt_row:
+                continue
 
-                # Get latest checkpoint data to extract summary
-                ckpt_cursor = await db.execute(
-                    "SELECT type, checkpoint FROM checkpoints "
-                    "WHERE thread_id = ? ORDER BY ROWID DESC LIMIT 1",
-                    (thread_id,),
-                )
-                ckpt_row = await ckpt_cursor.fetchone()
-                if not ckpt_row:
+            # Parse checkpoint using LangGraph serde (msgpack format)
+            try:
+                ckpt_data = _serde.loads_typed((ckpt_row[0], ckpt_row[1]))
+            except Exception:
+                continue
+
+            # Extract channel_values -> messages from checkpoint
+            channel_values = ckpt_data.get("channel_values", {})
+            messages = channel_values.get("messages", [])
+
+            first_human = ""
+            last_human = ""
+            msg_count = 0
+
+            for m in messages:
+                # After proper deserialization, messages are LangChain objects
+                # Check type by class name (HumanMessage, AIMessage, etc.)
+                type_name = type(m).__name__
+
+                if type_name != "HumanMessage":
                     continue
 
-                # Parse checkpoint using LangGraph serde (msgpack format)
-                try:
-                    ckpt_data = _serde.loads_typed((ckpt_row[0], ckpt_row[1]))
-                except Exception:
+                content = getattr(m, "content", "")
+                if not content:
                     continue
 
-                # Extract channel_values -> messages from checkpoint
-                channel_values = ckpt_data.get("channel_values", {})
-                messages = channel_values.get("messages", [])
+                # Handle multimodal content (list of parts)
+                if isinstance(content, list):
+                    text_parts = []
+                    for p in content:
+                        if isinstance(p, dict) and p.get("type") == "text":
+                            text_parts.append(p.get("text", ""))
+                    content = " ".join(text_parts) or "(多媒体消息)"
+                elif not isinstance(content, str):
+                    content = str(content)
 
-                first_human = ""
-                last_human = ""
-                msg_count = 0
+                # Skip system trigger messages
+                if content.startswith("[系统触发]"):
+                    continue
 
-                for m in messages:
-                    # After proper deserialization, messages are LangChain objects
-                    # Check type by class name (HumanMessage, AIMessage, etc.)
-                    type_name = type(m).__name__
-
-                    if type_name != "HumanMessage":
-                        continue
-
-                    content = getattr(m, "content", "")
-                    if not content:
-                        continue
-
-                    # Handle multimodal content (list of parts)
-                    if isinstance(content, list):
-                        text_parts = []
-                        for p in content:
-                            if isinstance(p, dict) and p.get("type") == "text":
-                                text_parts.append(p.get("text", ""))
-                        content = " ".join(text_parts) or "(多媒体消息)"
-                    elif not isinstance(content, str):
-                        content = str(content)
-
-                    # Skip system trigger messages
-                    if content.startswith("[系统触发]"):
-                        continue
-
-                    msg_count += 1
-                    if not first_human:
-                        first_human = content[:80]
-                    last_human = content[:80]
-
+                msg_count += 1
                 if not first_human:
-                    continue  # Skip empty or system-only sessions
+                    first_human = content[:80]
+                last_human = content[:80]
 
-                sessions.append({
-                    "session_id": sid,
-                    "title": first_human,
-                    "last_message": last_human,
-                    "message_count": msg_count,
-                })
+            if not first_human:
+                continue  # Skip empty or system-only sessions
+
+            sessions.append({
+                "session_id": sid,
+                "title": first_human,
+                "last_message": last_human,
+                "message_count": msg_count,
+            })
 
     except Exception as e:
         return f"❌ 查询会话列表失败: {str(e)}"

@@ -25,7 +25,7 @@ class InsightsEngine:
     """Analyze session history from the LangGraph checkpoint DB."""
 
     def __init__(self, db_path: str | Path | None = None):
-        self._db_path = str(db_path or (PROJECT_ROOT / "data" / "agent_memory.db"))
+        self._db_path = str(db_path or (PROJECT_ROOT / "data" / "agent_checkpoints"))
         self._trajectory_dir = PROJECT_ROOT / "data" / "trajectories"
 
     def generate(self, days: int = 30, user_id: str = "") -> dict[str, Any]:

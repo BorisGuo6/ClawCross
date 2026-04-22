@@ -30,13 +30,39 @@ _USER_FILES_DIR = os.path.join(
 )
 
 
-def _get_agent_tool_whitelist(session_id: str) -> set[str] | None:
-    """根据 session_id 在所有 internal_agents.json 中查找匹配的 agent，
-    如果该 agent 配置了 tools 白名单，返回允许的工具名集合。
+def _iter_user_internal_agent_files(user_id: str) -> list[str]:
+    """Return internal agent config files scoped to one user only."""
+    scoped_user_id = (user_id or "").strip()
+    if not scoped_user_id:
+        return []
 
-    查找范围：
-      1. 所有用户的非 team 目录: data/user_files/*/internal_agents.json
-      2. 所有用户的 team 目录: data/user_files/*/teams/*/internal_agents.json
+    user_dir = os.path.join(_USER_FILES_DIR, scoped_user_id)
+    if not os.path.isdir(user_dir):
+        return []
+
+    files: list[str] = []
+    user_ia = os.path.join(user_dir, "internal_agents.json")
+    if os.path.isfile(user_ia):
+        files.append(user_ia)
+
+    teams_dir = os.path.join(user_dir, "teams")
+    if not os.path.isdir(teams_dir):
+        return files
+
+    for team_name in sorted(os.listdir(teams_dir)):
+        team_ia = os.path.join(teams_dir, team_name, "internal_agents.json")
+        if os.path.isfile(team_ia):
+            files.append(team_ia)
+    return files
+
+
+def _get_agent_tool_whitelist(user_id: str, session_id: str) -> set[str] | None:
+    """根据当前 user_id + session_id 查找匹配的 internal agent tools 白名单。
+
+    只在当前用户自己的 internal_agents.json 与其 team 目录内查找，避免跨用户
+    session_id 碰撞导致白名单串用。
+
+    如果该 agent 配置了 tools 白名单，返回允许的工具名集合。
 
     Returns:
       set[str] — 白名单集合（只包含值为 true 的 key）
@@ -45,29 +71,7 @@ def _get_agent_tool_whitelist(session_id: str) -> set[str] | None:
     if not session_id or session_id == "default":
         return None
 
-    if not os.path.isdir(_USER_FILES_DIR):
-        return None
-
-    # 收集所有可能的 internal_agents.json 路径
-    ia_files: list[str] = []
-    for user_dir_name in os.listdir(_USER_FILES_DIR):
-        user_dir = os.path.join(_USER_FILES_DIR, user_dir_name)
-        if not os.path.isdir(user_dir):
-            continue
-        user_ia = os.path.join(user_dir, "internal_agents.json")
-        if os.path.isfile(user_ia):
-            ia_files.append(user_ia)
-        # 所有用户 team 目录
-        teams_dir = os.path.join(user_dir, "teams")
-        if not os.path.isdir(teams_dir):
-            continue
-        for team_name in os.listdir(teams_dir):
-            team_ia = os.path.join(teams_dir, team_name, "internal_agents.json")
-            if os.path.isfile(team_ia):
-                ia_files.append(team_ia)
-
-    # 遍历所有文件，按 session 匹配
-    for ia_file in ia_files:
+    for ia_file in _iter_user_internal_agent_files(user_id):
         try:
             with open(ia_file, "r", encoding="utf-8") as f:
                 agents_list = json.load(f)
@@ -265,14 +269,8 @@ class OpenAIChatService:
             last_msgs = snapshot.values.get("messages", [])
             if last_msgs:
                 last_msg_item = last_msgs[-1]
-                if hasattr(last_msg_item, "tool_calls") and last_msg_item.tool_calls:
-                    tool_messages = [
-                        ToolMessage(
-                            content="⚠️ 工具调用被用户终止",
-                            tool_call_id=tc["id"],
-                        )
-                        for tc in last_msg_item.tool_calls
-                    ]
+                tool_messages = self.agent.cancelled_tool_messages_for_last_ai(last_msg_item)
+                if tool_messages:
                     await self.agent.agent_app.aupdate_state(config, {"messages": tool_messages})
         except Exception:
             pass
@@ -473,7 +471,7 @@ class OpenAIChatService:
         input_messages = self._build_input_messages(req)
 
         # --- Agent tool whitelist filtering ---
-        agent_whitelist = _get_agent_tool_whitelist(session_id)
+        agent_whitelist = _get_agent_tool_whitelist(user_id, session_id)
         effective_enabled = req.enabled_tools
         if agent_whitelist is not None:
             if effective_enabled is None:

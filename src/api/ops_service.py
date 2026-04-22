@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from integrations.acpx_adapter import AcpxError, get_acpx_adapter
 from integrations.acpx_cli_tools import acpx_agent_tags_with_legacy
 from utils.auth_utils import extract_user_password_session, is_internal_bearer, parse_bearer_parts
+from api.update_manager import current_update_snapshot, start_update_process
 from api.group_repository import (
     delete_http_agent_sessions_by_global_name,
     delete_http_agent_session_by_key,
@@ -22,7 +23,7 @@ from api.group_repository import (
 from api.group_service import _load_public_external_agents, build_external_agents_map_for_owner
 from services.llm_factory import get_provider_audio_defaults, infer_provider
 from utils.logging_utils import get_logger
-from api.ops_models import ACPControlRequest, ACPStatusRequest, CancelRequest, LoginRequest, TTSRequest
+from api.ops_models import ACPControlRequest, ACPStatusRequest, CancelRequest, LoginRequest, TTSRequest, UpdateCheckRequest, UpdateStartRequest, UpdateStatusRequest
 
 logger = get_logger("ops_service")
 
@@ -477,6 +478,32 @@ class OpsService:
             results.append(status_info)
 
         return {"status": "success", "agents": results}
+
+    async def update_check(self, req: UpdateCheckRequest, x_internal_token: str | None):
+        self.verify_auth_or_token(req.user_id, req.password, x_internal_token)
+        try:
+            snapshot = current_update_snapshot(fetch_remote=bool(req.refresh_remote))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"status": "success", "update": snapshot}
+
+    async def update_start(self, req: UpdateStartRequest, x_internal_token: str | None):
+        self.verify_auth_or_token(req.user_id, req.password, x_internal_token)
+        try:
+            status = start_update_process(req.user_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"status": "success", "update": status}
+
+    async def update_status(self, req: UpdateStatusRequest, x_internal_token: str | None):
+        self.verify_auth_or_token(req.user_id, req.password, x_internal_token)
+        try:
+            snapshot = current_update_snapshot(fetch_remote=False)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"status": "success", "update": snapshot}
 
     async def _acp_status_via_cli(self, agents: list[dict]) -> list[dict] | None:
         """尝试通过 CLI 获取所有 agent sessions（一次调用，高效）。

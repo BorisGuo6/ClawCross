@@ -27,11 +27,9 @@ import subprocess
 import uuid
 
 import httpx
-import aiosqlite
 import yaml as _yaml
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 mcp = FastMCP("OASIS Forum")
 
@@ -246,13 +244,6 @@ def _pid_is_running(pid: int) -> bool:
         return True
     except OSError:
         return False
-
-# Checkpoint DB (same as agent.py / mcp_session.py)
-_DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "data", "agent_memory.db",
-)
-_serde = JsonPlusSerializer()
 
 # ======================================================================
 # Expert persona management tools

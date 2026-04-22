@@ -8,8 +8,16 @@ from typing import Any
 _SRC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 
-from integrations.agent_sender import SendToAgentRequest, SendToAgentResult, send_to_agent
+from integrations.agent_sender import (
+    ResetAgentRequest,
+    ResetAgentResult,
+    SendToAgentRequest,
+    SendToAgentResult,
+    reset_agent,
+    send_to_agent,
+)
 from oasis.agent_catalog import build_agent_catalog, build_persona_catalog
 
 
@@ -140,6 +148,43 @@ class AgentCenter:
         except Exception:
             return result
 
+    async def reset_agent(
+        self,
+        target: str,
+        *,
+        session: str | None = None,
+        connect_type: str | None = None,
+        platform: str | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> ResetAgentResult:
+        agent = self.get_agent(target)
+        merged_options = deepcopy(agent.get("options") or {})
+        if options:
+            merged_options.update(options)
+
+        effective_connect_type = connect_type or str(agent.get("connect_type", "") or "")
+        effective_platform = platform or str(agent.get("platform", "") or "")
+        effective_session = session if session is not None else agent.get("session")
+
+        merged_options.setdefault("cwd", _PROJECT_ROOT)
+        merged_options.setdefault("group_db_path", os.path.join(_PROJECT_ROOT, "data", "group_chat.db"))
+        if effective_platform == "internal":
+            merged_options.setdefault("user_id", self.user_id)
+            merged_options.setdefault("internal_token", os.getenv("INTERNAL_TOKEN", ""))
+            merged_options.setdefault(
+                "delete_session_url",
+                f"http://127.0.0.1:{os.getenv('PORT_AGENT', '51200')}/delete_session",
+            )
+
+        return await reset_agent(
+            ResetAgentRequest(
+                connect_type=effective_connect_type,
+                platform=effective_platform,
+                session=effective_session,
+                options=merged_options,
+            )
+        )
+
     async def send_persona(
         self,
         target: str,
@@ -184,6 +229,15 @@ async def send_team_agent(
     **kwargs: Any,
 ) -> SendToAgentResult:
     return await AgentCenter(user_id, team).send_agent(target, prompt, **kwargs)
+
+
+async def reset_team_agent(
+    user_id: str,
+    team: str,
+    target: str,
+    **kwargs: Any,
+) -> ResetAgentResult:
+    return await AgentCenter(user_id, team).reset_agent(target, **kwargs)
 
 
 async def send_team_persona(

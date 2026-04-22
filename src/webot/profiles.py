@@ -133,7 +133,6 @@ WEBOT_RUNTIME_TOOLS = (
     "ultrareview_start",
     "ultrareview_status",
     "list_tool_approvals",
-    "resolve_tool_approval",
 )
 
 

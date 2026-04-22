@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Header
 
-from api.ops_models import ACPControlRequest, ACPStatusRequest, CancelRequest, LoginRequest, SessionsCloseRequest, SessionsDeleteRequest, SessionsListRequest, TTSRequest
+from api.ops_models import ACPControlRequest, ACPStatusRequest, CancelRequest, LoginRequest, SessionsCloseRequest, SessionsDeleteRequest, SessionsListRequest, TTSRequest, UpdateCheckRequest, UpdateStartRequest, UpdateStatusRequest
 from api.ops_service import OpsService
 
 
@@ -74,5 +74,17 @@ def create_ops_router(
     @router.post("/sessions_close")
     async def sessions_close(req: SessionsCloseRequest, x_internal_token: str | None = Header(None)):
         return await service.close_acp_session(req.platform, req.session_name)
+
+    @router.post("/update_check")
+    async def update_check(req: UpdateCheckRequest, x_internal_token: str | None = Header(None)):
+        return await service.update_check(req, x_internal_token)
+
+    @router.post("/update_start")
+    async def update_start(req: UpdateStartRequest, x_internal_token: str | None = Header(None)):
+        return await service.update_start(req, x_internal_token)
+
+    @router.post("/update_status")
+    async def update_status(req: UpdateStatusRequest, x_internal_token: str | None = Header(None)):
+        return await service.update_status(req, x_internal_token)
 
     return router

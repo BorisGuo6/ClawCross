@@ -1,5 +1,5 @@
 """
-查看 agent_memory.db 中的历史聊天记录
+查看 Agent checkpoint 历史聊天记录。
 用法: python tools/manual/view_history.py [--user USER_ID] [--limit N]
 """
 
@@ -9,24 +9,34 @@ import os
 import sqlite3
 import sys
 
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SRC_DIR = os.path.join(PROJECT_ROOT, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from utils.checkpoint_paths import DEFAULT_CHECKPOINT_DB_DIR, checkpoint_store_exists, iter_checkpoint_db_paths
+from utils.routed_checkpoint_saver import ThreadRoutedAsyncSqliteSaver
 
 
-DATABASE_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "agent_memory.db")
+DATABASE_PATH = str(DEFAULT_CHECKPOINT_DB_DIR)
 
 
 def get_all_thread_ids() -> list[str]:
     """获取所有 thread_id。"""
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.execute("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id")
-    thread_ids = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return thread_ids
+    thread_ids: set[str] = set()
+    for path in iter_checkpoint_db_paths(DATABASE_PATH):
+        conn = sqlite3.connect(path)
+        try:
+            cursor = conn.execute("SELECT DISTINCT thread_id FROM checkpoints ORDER BY thread_id")
+            thread_ids.update(row[0] for row in cursor.fetchall())
+        finally:
+            conn.close()
+    return sorted(thread_ids)
 
 
 async def get_chat_history(thread_id: str, message_limit: int = 50) -> list[dict]:
     """通过 LangGraph 的 checkpoint saver 正确反序列化消息。"""
-    async with AsyncSqliteSaver.from_conn_string(DATABASE_PATH) as memory:
+    async with ThreadRoutedAsyncSqliteSaver(DATABASE_PATH) as memory:
         config = {"configurable": {"thread_id": thread_id}}
         checkpoint = await memory.aget(config)
 
@@ -111,13 +121,13 @@ async def async_main(args):
 
 def main():
     """主函数入口。"""
-    parser = argparse.ArgumentParser(description="查看 agent_memory.db 中的历史聊天记录")
+    parser = argparse.ArgumentParser(description="查看 Agent checkpoint 历史聊天记录")
     parser.add_argument("--user", type=str, default=None, help="指定用户 ID，不指定则显示所有用户")
     parser.add_argument("--limit", type=int, default=50, help="每个用户最多显示的消息条数（默认 50）")
     args = parser.parse_args()
 
-    if not os.path.exists(DATABASE_PATH):
-        print(f"数据库文件不存在: {os.path.abspath(DATABASE_PATH)}")
+    if not checkpoint_store_exists(DATABASE_PATH):
+        print(f"数据库目录不存在或为空: {os.path.abspath(DATABASE_PATH)}")
         print("请先运行 Agent 并进行对话后再查看。")
         sys.exit(1)
 

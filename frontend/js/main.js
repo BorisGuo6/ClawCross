@@ -1677,6 +1677,7 @@ let currentLoginMode = '';
 let localLoginBannerDismissed = false;
 let currentSessionId = null;
 let currentAbortController = null;
+let projectUpdatePollTimer = null;
 let cancelTargetSessionId = null;  // 终止按钮绑定的会话ID
 let pendingImages = []; // [{base64: "data:image/...", name: "file.jpg"}, ...]
 let pendingFiles = [];  // [{name: "data.csv", content: "...(text content)"}, ...]
@@ -7702,6 +7703,158 @@ function closeHamburgerMenu() {
 function _closeHamburgerOutside(e) {
     const wrapper = document.querySelector('.hamburger-menu-wrapper');
     if (wrapper && !wrapper.contains(e.target)) closeHamburgerMenu();
+}
+
+function _projectUpdateToast(message) {
+    if (typeof orchToast === 'function') {
+        orchToast(message);
+        return;
+    }
+    alert(message);
+}
+
+function _renderProjectUpdateSummary(update) {
+    const summaryEl = document.getElementById('project-update-summary');
+    const logWrap = document.getElementById('project-update-log-wrap');
+    const logEl = document.getElementById('project-update-log');
+    const startBtn = document.getElementById('project-update-start-btn');
+    if (!summaryEl || !startBtn) return;
+    if (!update) {
+        summaryEl.textContent = '点击“检查更新”后显示版本信息。';
+        startBtn.disabled = true;
+        if (logWrap) logWrap.style.display = 'none';
+        return;
+    }
+    const lines = [
+        `状态: ${update.status || 'idle'}`,
+        `分支: ${update.branch || 'unknown'}`,
+        `当前版本: ${(update.current_short_commit || '-')} ${update.current_subject ? `(${update.current_subject})` : ''}`.trim(),
+        `远端版本: ${(update.latest_short_commit || '-')} ${update.latest_subject ? `(${update.latest_subject})` : ''}`.trim(),
+    ];
+    if (update.dirty) {
+        lines.push('本地工作区存在未提交改动，已禁止自动更新。');
+    } else if (update.has_update) {
+        lines.push('检测到可用更新。');
+    } else {
+        lines.push('当前已经是最新版本。');
+    }
+    if (update.message) {
+        lines.push('');
+        lines.push(update.message);
+    }
+    summaryEl.textContent = lines.join('\n');
+    startBtn.disabled = !Boolean(update.has_update) || Boolean(update.dirty) || Boolean(update.in_progress);
+    if (Array.isArray(update.log_tail) && update.log_tail.length) {
+        if (logWrap) logWrap.style.display = 'block';
+        if (logEl) logEl.textContent = update.log_tail.join('\n');
+    } else if (logWrap) {
+        logWrap.style.display = 'none';
+    }
+}
+
+async function _fetchProjectUpdate(endpoint, payload) {
+    const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    let data = {};
+    try {
+        data = await resp.json();
+    } catch (_) {}
+    if (!resp.ok) {
+        throw new Error(data.detail || data.error || `HTTP ${resp.status}`);
+    }
+    return data.update || data;
+}
+
+function _projectUpdatePollingActive(update) {
+    return !!update && ['queued', 'checking', 'updating', 'restarting'].includes(update.status);
+}
+
+function _stopProjectUpdatePolling() {
+    if (projectUpdatePollTimer) {
+        clearTimeout(projectUpdatePollTimer);
+        projectUpdatePollTimer = null;
+    }
+}
+
+function openProjectUpdateModal() {
+    const modal = document.getElementById('project-update-modal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    _renderProjectUpdateSummary(null);
+}
+
+function closeProjectUpdateModal() {
+    const modal = document.getElementById('project-update-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function checkProjectUpdate(refreshRemote = true) {
+    if (!currentUserId) {
+        _projectUpdateToast('请先登录。');
+        return;
+    }
+    const checkBtn = document.getElementById('project-update-check-btn');
+    if (checkBtn) checkBtn.disabled = true;
+    try {
+        const update = await _fetchProjectUpdate('/proxy_update_check', {
+            refresh_remote: !!refreshRemote,
+        });
+        _renderProjectUpdateSummary(update);
+    } catch (err) {
+        _projectUpdateToast(`检查更新失败: ${err.message}`);
+    } finally {
+        if (checkBtn) checkBtn.disabled = false;
+    }
+}
+
+async function pollProjectUpdateStatus() {
+    if (!currentUserId) return;
+    try {
+        const update = await _fetchProjectUpdate('/proxy_update_status', {});
+        _renderProjectUpdateSummary(update);
+        if (_projectUpdatePollingActive(update)) {
+            _stopProjectUpdatePolling();
+            projectUpdatePollTimer = setTimeout(pollProjectUpdateStatus, 3000);
+            return;
+        }
+        _stopProjectUpdatePolling();
+        if (update.status === 'done') {
+            _projectUpdateToast('更新完成，页面即将刷新。');
+            setTimeout(() => window.location.reload(), 1500);
+        } else if (update.status === 'failed') {
+            _projectUpdateToast(update.message || '更新失败。');
+        }
+    } catch (err) {
+        _renderProjectUpdateSummary({
+            status: 'restarting',
+            message: `服务暂时不可用，通常表示正在重启：${err.message}`,
+            log_tail: [],
+        });
+        _stopProjectUpdatePolling();
+        projectUpdatePollTimer = setTimeout(pollProjectUpdateStatus, 3000);
+    }
+}
+
+async function startProjectUpdate() {
+    if (!currentUserId) {
+        _projectUpdateToast('请先登录。');
+        return;
+    }
+    const startBtn = document.getElementById('project-update-start-btn');
+    if (startBtn) startBtn.disabled = true;
+    try {
+        const update = await _fetchProjectUpdate('/proxy_update_start', {});
+        _renderProjectUpdateSummary(update);
+        _projectUpdateToast('更新任务已启动。');
+        _stopProjectUpdatePolling();
+        projectUpdatePollTimer = setTimeout(pollProjectUpdateStatus, 1500);
+    } catch (err) {
+        _projectUpdateToast(`启动更新失败: ${err.message}`);
+        if (startBtn) startBtn.disabled = false;
+    }
 }
 
 function toggleMobileMenu() {

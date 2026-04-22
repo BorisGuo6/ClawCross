@@ -962,6 +962,7 @@ class GroupService:
                         "user_id": user_id_member,
                         "session_id": global_id,
                         "text": trigger_msg,
+                        "coalesce_key": f"group:{group_id}:agent:{global_id}",
                     }
                     if attachments:
                         trigger_body["attachments"] = [

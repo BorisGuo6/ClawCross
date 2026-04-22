@@ -7,7 +7,7 @@ if _src_dir not in _sys.path:
 """
 MCP 指令执行工具服务 — 安全沙箱化的系统命令执行
 - 每个用户有独立的工作目录 (data/user_files/<username>/)
-- 严格白名单机制，只允许安全命令
+- 支持白名单/黑名单两种命令准入模式
 - 超时保护、输出截断、路径穿越防护
 - 跨平台支持（Linux/macOS/Windows）
 """
@@ -24,6 +24,8 @@ import uuid
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
+from webot.permission_context import create_or_reuse_permission_request
+from webot.runtime_store import find_active_approval_for_action, get_tool_approval
 from webot.workspace import resolve_session_workspace
 
 mcp = FastMCP("Commander")
@@ -94,6 +96,23 @@ if _env_commands:
 else:
     ALLOWED_COMMANDS = _DEFAULT_COMMANDS
 
+COMMANDER_COMMAND_MODE = (os.getenv("COMMANDER_COMMAND_MODE", "blacklist") or "").strip().lower()
+if COMMANDER_COMMAND_MODE not in {"whitelist", "blacklist"}:
+    COMMANDER_COMMAND_MODE = "blacklist"
+
+# 黑名单模式下额外拦截的高危基础命令名（命中即拒绝）
+if IS_WINDOWS:
+    BLOCKED_COMMANDS = {
+        "del", "erase", "format", "diskpart", "shutdown", "restart", "logoff",
+        "reg", "runas", "schtasks", "taskkill",
+    }
+else:
+    BLOCKED_COMMANDS = {
+        "rm", "sudo", "su", "shutdown", "reboot", "halt", "poweroff",
+        "systemctl", "service", "init", "mkfs", "dd", "mount", "umount",
+        "iptables",
+    }
+
 # 严格禁止的命令（即使在白名单中也拒绝这些子命令/参数模式）
 if IS_WINDOWS:
     BLOCKED_PATTERNS = [
@@ -118,6 +137,8 @@ else:
 EXEC_TIMEOUT = int(os.getenv("EXEC_TIMEOUT", "180"))
 BACKGROUND_EXEC_TIMEOUT = int(os.getenv("BACKGROUND_EXEC_TIMEOUT", str(max(EXEC_TIMEOUT, 300))))
 MAX_EXEC_TIMEOUT = int(os.getenv("MAX_EXEC_TIMEOUT", "1800"))
+COMMAND_APPROVAL_WAIT_SECONDS = int(os.getenv("COMMAND_APPROVAL_WAIT_SECONDS", "600"))
+COMMAND_APPROVAL_POLL_SECONDS = max(0.2, float(os.getenv("COMMAND_APPROVAL_POLL_SECONDS", "1.0")))
 
 # 输出最大长度（字符数）— 支持 .env 自定义
 MAX_OUTPUT_LENGTH = int(os.getenv("MAX_OUTPUT_LENGTH", "8000"))
@@ -335,10 +356,7 @@ def _validate_command(command: str) -> str | None:
         if pattern.lower() in lower_cmd:
             return f"安全策略拒绝：检测到危险模式 '{pattern}'"
 
-    # 禁止管道到破坏性命令
-    # 允许管道（|）和重定向（>）用于文本处理，但在用户沙箱目录内
-    # 提取第一个命令（管道链中每个命令都要检查）
-    # 用 ; && || | 分割命令链
+    # 允许管道（|）和重定向（>），但会逐段检查命令名
     import re
     parts = re.split(r'[;|&]+', stripped)
     for part in parts:
@@ -354,10 +372,68 @@ def _validate_command(command: str) -> str | None:
             cmd_name = os.path.basename(token)  # 取基础命令名
             break
 
-        if cmd_name and cmd_name not in ALLOWED_COMMANDS:
+        if not cmd_name:
+            continue
+
+        if cmd_name in BLOCKED_COMMANDS:
+            return f"安全策略拒绝：命令 '{cmd_name}' 在黑名单中。"
+
+        if COMMANDER_COMMAND_MODE == "whitelist" and cmd_name not in ALLOWED_COMMANDS:
             return f"安全策略拒绝：命令 '{cmd_name}' 不在白名单中。允许的命令：{', '.join(sorted(ALLOWED_COMMANDS))}"
 
     return None
+
+
+async def _wait_for_command_approval(
+    username: str,
+    session_id: str,
+    command: str,
+    reason: str,
+) -> tuple[bool, str]:
+    normalized_session = session_id or "default"
+    existing = find_active_approval_for_action(
+        username,
+        normalized_session,
+        "run_command",
+        {"command": command},
+    )
+    if existing is not None:
+        return True, (
+            "✅ 已检测到该命令存在有效人工批准，继续执行。\n"
+            f"approval_id: {existing.approval_id}"
+        )
+
+    approval = create_or_reuse_permission_request(
+        user_id=username,
+        session_id=normalized_session,
+        tool_name="run_command",
+        args={"command": command},
+        reason=reason,
+    )
+    deadline = time.monotonic() + max(1, COMMAND_APPROVAL_WAIT_SECONDS)
+    while time.monotonic() < deadline:
+        current = get_tool_approval(approval.approval_id, username)
+        if current is None:
+            return False, f"❌ 未找到 tool approval: {approval.approval_id}"
+        if current.status in {"approved", "used"}:
+            return True, (
+                "✅ 命令审批已通过，继续执行。\n"
+                f"approval_id: {current.approval_id}"
+            )
+        if current.status == "denied":
+            return False, (
+                "❌ 用户拒绝了该命令的执行。\n"
+                f"approval_id: {current.approval_id}\n"
+                f"reason: {current.resolution_reason or '无'}"
+            )
+        await asyncio.sleep(COMMAND_APPROVAL_POLL_SECONDS)
+    return False, (
+        "⏳ 命令审批等待超时，未执行该命令。\n"
+        f"approval_id: {approval.approval_id}\n"
+        f"session_id: {normalized_session}\n"
+        f"command: {command}\n"
+        f"reason: {reason}"
+    )
 
 def _truncate_output(text: str, max_len: int = MAX_OUTPUT_LENGTH) -> str:
     """截断过长输出"""
@@ -509,8 +585,24 @@ async def run_command(
     """
     # 1. 安全校验
     reject_reason = _validate_command(command)
+    approval_note = ""
     if reject_reason:
-        return f"❌ {reject_reason}"
+        if (
+            COMMANDER_COMMAND_MODE == "blacklist"
+            and "危险模式" not in reject_reason
+            and "黑名单" in reject_reason
+        ):
+            approved, approval_result = await _wait_for_command_approval(
+                username,
+                session_id,
+                command,
+                reject_reason,
+            )
+            if not approved:
+                return approval_result
+            approval_note = approval_result
+        else:
+            return f"❌ {reject_reason}"
 
     # 2. 获取用户工作目录
     workspace_state = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
@@ -553,6 +645,9 @@ async def run_command(
         exit_code = proc.returncode
 
         result_parts = []
+        if approval_note:
+            result_parts.append(approval_note)
+
         if exit_code == 0:
             result_parts.append(f"✅ 命令执行成功 (exit code: 0)")
         else:
@@ -673,8 +768,24 @@ async def start_background_command(
     启动一个后台命令任务，立即返回 job_id，适合长时间运行的命令。
     """
     reject_reason = _validate_command(command)
+    approval_note = ""
     if reject_reason:
-        return f"❌ {reject_reason}"
+        if (
+            COMMANDER_COMMAND_MODE == "blacklist"
+            and "危险模式" not in reject_reason
+            and "黑名单" in reject_reason
+        ):
+            approved, approval_result = await _wait_for_command_approval(
+                username,
+                session_id,
+                command,
+                reject_reason,
+            )
+            if not approved:
+                return approval_result
+            approval_note = approval_result
+        else:
+            return f"❌ {reject_reason}"
 
     workspace_state = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
     workspace = str(workspace_state.cwd)
@@ -698,7 +809,10 @@ async def start_background_command(
     _persist_job(job)
     job.task = asyncio.create_task(_run_background_job(job, _sandbox_env(workspace, username)))
     _BACKGROUND_JOBS[job_id] = job
-    return "✅ 后台任务已启动\n" + _job_summary(job)
+    result = "✅ 后台任务已启动\n" + _job_summary(job)
+    if approval_note:
+        result = approval_note + "\n\n" + result
+    return result
 
 
 @mcp.tool()
@@ -777,6 +891,21 @@ async def list_allowed_commands() -> str:
     列出所有允许执行的系统命令白名单。
     用户想了解能执行哪些命令时调用此工具。
     """
+    if COMMANDER_COMMAND_MODE == "blacklist":
+        blocked_names = ", ".join(sorted(BLOCKED_COMMANDS)) if BLOCKED_COMMANDS else "(空)"
+        blocked_patterns = "\n".join(f"- {pattern}" for pattern in BLOCKED_PATTERNS[:12])
+        return (
+            "📋 **命令执行模式：黑名单模式**\n\n"
+            "当前不再按白名单限制命令名；未命中黑名单的命令可进入下一层安全检查。\n\n"
+            f"🚫 基础命令黑名单: {blocked_names}\n\n"
+            "🚫 危险模式拦截（示例）:\n"
+            f"{blocked_patterns}\n\n"
+            "⚠️ 说明:\n"
+            "- 黑名单模式只放宽“命令名是否在白名单里”这一层\n"
+            "- 危险模式匹配、超时、工作目录隔离仍然有效\n"
+            "- run_command 仍可配合现有 tool approval / manual approval 机制使用\n"
+        )
+
     # 按类别分组（动态匹配当前生效的白名单，按平台区分）
     if IS_WINDOWS:
         categories = [

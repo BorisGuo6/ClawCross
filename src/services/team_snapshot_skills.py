@@ -8,8 +8,14 @@ from typing import Any
 from webot.skills import USER_FILES_DIR, _rebuild_index
 
 
-SNAPSHOT_USER_SKILLS_DIR = "clawcross_user_skills"
-SNAPSHOT_TEAM_SKILLS_DIR = "clawcross_team_skills"
+SNAPSHOT_SKILLS_ROOT = "skills"
+SNAPSHOT_OPENCLAW_AGENTS_DIR = f"{SNAPSHOT_SKILLS_ROOT}/openclaw_agents"
+SNAPSHOT_OPENCLAW_MANAGED_DIR = f"{SNAPSHOT_SKILLS_ROOT}/openclaw_managed"
+SNAPSHOT_USER_SKILLS_DIR = f"{SNAPSHOT_SKILLS_ROOT}/clawcross_personal"
+SNAPSHOT_TEAM_SKILLS_DIR = f"{SNAPSHOT_SKILLS_ROOT}/clawcross_team"
+
+LEGACY_SNAPSHOT_USER_SKILLS_DIR = "clawcross_user_skills"
+LEGACY_SNAPSHOT_TEAM_SKILLS_DIR = "clawcross_team_skills"
 
 
 def _user_root(user_id: str) -> Path:
@@ -83,14 +89,25 @@ def _restore_scope_skills(extracted: Path, target: Path) -> tuple[int, int]:
 def restore_skills_from_team_dir(team_dir: str | Path, user_id: str, team: str) -> dict[str, Any]:
     team_path = Path(team_dir)
 
-    restored_user_skill_dirs, restored_user_files = _restore_scope_skills(
+    restored_user_skill_dirs = 0
+    restored_user_files = 0
+    for source_dir in (
         team_path / SNAPSHOT_USER_SKILLS_DIR,
-        _user_skills_dir(user_id),
-    )
-    restored_team_skill_dirs, restored_team_files = _restore_scope_skills(
+        team_path / LEGACY_SNAPSHOT_USER_SKILLS_DIR,
+    ):
+        dirs, files = _restore_scope_skills(source_dir, _user_skills_dir(user_id))
+        restored_user_skill_dirs += dirs
+        restored_user_files += files
+
+    restored_team_skill_dirs = 0
+    restored_team_files = 0
+    for source_dir in (
         team_path / SNAPSHOT_TEAM_SKILLS_DIR,
-        _team_skills_dir(user_id, team),
-    )
+        team_path / LEGACY_SNAPSHOT_TEAM_SKILLS_DIR,
+    ):
+        dirs, files = _restore_scope_skills(source_dir, _team_skills_dir(user_id, team))
+        restored_team_skill_dirs += dirs
+        restored_team_files += files
 
     if restored_user_skill_dirs or restored_user_files:
         _rebuild_index(user_id)

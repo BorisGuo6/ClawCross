@@ -36,6 +36,7 @@ from api.system_routes import create_system_router
 from webot.routes import create_webot_router
 from services.message_builder import build_human_message
 from utils.logging_utils import get_logger, request_id_ctx
+from utils.checkpoint_paths import DEFAULT_CHECKPOINT_DB_DIR
 
 # --- Path setup ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -58,7 +59,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             request_id_ctx.reset(token)
 
 env_path = os.path.join(root_dir, "config", ".env")
-db_path = os.path.join(root_dir, "data", "agent_memory.db")
+db_path = str(DEFAULT_CHECKPOINT_DB_DIR)
 group_db_path = os.path.join(root_dir, "data", "group_chat.db")
 users_path = os.path.join(root_dir, "config", "users.json")
 

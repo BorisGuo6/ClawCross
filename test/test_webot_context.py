@@ -15,9 +15,51 @@ if str(SRC_DIR) not in sys.path:
 
 import webot.context as webot_context
 from webot.context import budget_tool_messages, compact_history_messages
+from webot.context import budget_user_messages
 
 
 class WeBotContextTests(unittest.TestCase):
+    def test_budget_user_messages_preserves_latest_human_message(self):
+        old_text = "old-" * 80
+        latest_text = "latest-" * 120
+
+        budgeted = budget_user_messages(
+            user_id="alice",
+            session_id="session-1",
+            messages=[
+                HumanMessage(content=old_text),
+                HumanMessage(content=latest_text),
+            ],
+            total_char_budget=100,
+            item_char_limit=80,
+            preserve_latest_human_messages=1,
+        )
+
+        self.assertEqual(len(budgeted), 2)
+        self.assertIn("[User input budgeted]", budgeted[0].content)
+        self.assertEqual(budgeted[1].content, latest_text)
+
+    def test_budget_user_messages_supports_env_unlimited_limits(self):
+        message_text = "x" * 20000
+
+        with patch.dict(
+            os.environ,
+            {
+                "WEBOT_USER_INPUT_CHAR_BUDGET": "0",
+                "WEBOT_USER_INPUT_ITEM_LIMIT": "0",
+                "WEBOT_SKIP_LATEST_USER_INPUT_BUDGET": "0",
+            },
+            clear=False,
+        ):
+            budgeted = budget_user_messages(
+                user_id="alice",
+                session_id="session-1",
+                messages=[HumanMessage(content=message_text)],
+            )
+
+        self.assertEqual(len(budgeted), 1)
+        self.assertEqual(budgeted[0].content, message_text)
+
     def test_budget_tool_messages_replaces_large_payload_with_reference(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"WEBOT_RUNTIME_ARTIFACTS_ENABLED": "1"}):
