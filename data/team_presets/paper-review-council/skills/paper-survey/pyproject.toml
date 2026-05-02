@@ -12,6 +12,7 @@ dependencies = [
   "openai",
   "requests",
   "tqdm",
+  "lxml",
   "pdfplumber",
   "PyPDF2",
 ]
