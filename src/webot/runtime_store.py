@@ -908,6 +908,37 @@ def list_runs_for_session(
     return [_row_to_run(row) for row in rows if row is not None]
 
 
+def list_runs_for_parent_session(
+    user_id: str,
+    parent_session: str,
+    db_path: str | os.PathLike | None = None,
+    limit: int = 20,
+    run_kind: str | None = None,
+) -> list[WeBotRunRecord]:
+    with _connect(db_path) as conn:
+        if run_kind:
+            rows = conn.execute(
+                """
+                SELECT * FROM webot_runs
+                WHERE user_id = ? AND parent_session = ? AND run_kind = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (user_id, parent_session, run_kind, max(1, limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM webot_runs
+                WHERE user_id = ? AND parent_session = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (user_id, parent_session, max(1, limit)),
+            ).fetchall()
+    return [_row_to_run(row) for row in rows if row is not None]
+
+
 def list_child_runs(
     user_id: str,
     parent_run_id: str,
@@ -1623,7 +1654,10 @@ def get_latest_active_run_for_session(
     session_id: str,
     db_path: str | os.PathLike | None = None,
 ) -> WeBotRunRecord | None:
-    for record in list_runs_for_session(user_id, session_id, db_path=db_path, limit=20):
+    candidates = list_runs_for_session(user_id, session_id, db_path=db_path, limit=20)
+    candidates.extend(list_runs_for_parent_session(user_id, session_id, db_path=db_path, limit=20))
+    candidates.sort(key=lambda item: item.updated_at, reverse=True)
+    for record in candidates:
         if record.status in {"queued", "running", "cancelling"}:
             return record
     return None

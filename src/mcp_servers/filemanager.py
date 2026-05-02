@@ -72,6 +72,15 @@ def _is_binary_preview(blob: bytes) -> bool:
         return False
     if b"\x00" in blob:
         return True
+    for trim in range(4):
+        candidate = blob[: len(blob) - trim] if trim else blob
+        if not candidate:
+            break
+        try:
+            candidate.decode("utf-8")
+            return False
+        except UnicodeDecodeError:
+            continue
     text_like = sum(1 for b in blob if 32 <= b <= 126 or b in (9, 10, 13))
     return (text_like / len(blob)) < 0.7
 

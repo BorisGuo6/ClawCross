@@ -42,6 +42,16 @@ class FileManagerTests(unittest.TestCase):
             self.assertIn("b\nc\n", result)
             self.assertIn("start_line=4", result)
 
+    def test_read_file_treats_utf8_text_as_text(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "notes.md").write_text("你好，普通文本。\n第二行 😄\n", encoding="utf-8")
+            workspace = SessionWorkspace(root=root, cwd=root, mode="shared", remote="")
+            with patch.object(filemanager, "resolve_session_workspace", return_value=workspace):
+                result = asyncio.run(filemanager.read_file("alice", "notes.md"))
+            self.assertIn("你好，普通文本。", result)
+            self.assertNotIn("二进制文件", result)
+
     def test_write_file_supports_replace_range_and_sha_guard(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

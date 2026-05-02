@@ -55,10 +55,11 @@ from webot.runtime_store import (
     list_inbox_messages,
     list_recoverable_runs,
     list_run_events,
-    mark_inbox_delivered,
-    list_tool_approvals as list_tool_approval_records,
+    list_runs_for_parent_session,
     list_runs_for_session,
+    list_tool_approvals as list_tool_approval_records,
     list_verification_records,
+    mark_inbox_delivered,
     record_run_event,
     record_runtime_artifact,
     release_run_worker,
@@ -150,6 +151,22 @@ def _extract_result_field(text: str, field_name: str) -> str:
         if line.startswith(prefix):
             return line[len(prefix):].strip()
     return ""
+
+def _latest_ultraplan_for_session(username: str, source_session: str):
+    session_id = source_session or "default"
+    runs = list_runs_for_parent_session(
+        username,
+        session_id,
+        limit=20,
+        run_kind="ultraplan",
+    )
+    runs.extend(
+        run
+        for run in list_runs_for_session(username, session_id, limit=20)
+        if run.run_kind == "ultraplan"
+    )
+    runs.sort(key=lambda item: item.updated_at, reverse=True)
+    return runs[0] if runs else None
 
 def _artifact_dir(user_id: str, session_id: str, bucket: str) -> Path:
     root = _RUNTIME_ROOT / (user_id or "anonymous") / bucket / (session_id or "default")
@@ -2062,6 +2079,16 @@ async def ultraplan_start(
     cwd: str = "",
     remote: str = "",
 ) -> str:
+    existing = _latest_ultraplan_for_session(username, source_session)
+    if existing is not None and existing.status in {"queued", "running", "cancelling"}:
+        return (
+            "⏳ 当前会话已有 ULTRAPLAN 正在运行\n"
+            f"run_id: {existing.run_id}\n"
+            f"session_id: {existing.session_id}\n"
+            f"status: {existing.status}\n"
+            "请用 ultraplan_status 查询进度，或取消对应子 Agent 后再启动新的 ULTRAPLAN。"
+        )
+
     plan_name = slugify(name, "") or f"ultraplan-{uuid.uuid4().hex[:6]}"
     plan_prompt = (
         "你是一个专门负责大范围项目规划的 Planner 子 Agent。\n"
@@ -2069,13 +2096,13 @@ async def ultraplan_start(
         "除非绝对必要，不要直接修改文件。\n\n"
         f"任务：\n{task.strip()}"
     )
-    result = await spawn_subagent(
+    plan_result = await spawn_subagent(
         username=username,
         task=plan_prompt,
         agent_type="planner",
         name=plan_name,
         description=f"ULTRAPLAN: {task[:80]}",
-        wait=False,
+        wait=True,
         parent_session=source_session,
         timeout=max(300, timeout),
         max_turns=24,
@@ -2084,18 +2111,19 @@ async def ultraplan_start(
         cwd=cwd,
         remote=remote,
     )
-    run_id = _extract_result_field(result, "run_id")
-    session_id = _extract_result_field(result, "session_id")
-    if session_id:
-        save_session_mode(username, session_id, mode="plan", reason=f"Ultraplan: {task[:120]}")
-    if run_id:
+    plan_run_id = _extract_result_field(plan_result, "run_id")
+    plan_session_id = _extract_result_field(plan_result, "session_id")
+    if plan_session_id:
+        save_session_mode(username, plan_session_id, mode="plan", reason=f"Ultraplan plan: {task[:120]}")
+    if plan_run_id:
         update_run_status(
-            run_id,
+            plan_run_id,
             username,
-            run_kind="ultraplan",
+            run_kind="ultraplan_plan",
             mode="plan",
             metadata={
                 "task": task,
+                "phase": "plan",
                 "source_session": source_session or "default",
                 "workspace_mode": workspace_mode,
                 "workspace_root": workspace_root,
@@ -2105,15 +2133,72 @@ async def ultraplan_start(
         )
         record_run_event(
             username,
-            run_id,
-            session_id or "default",
-            event_type="ultraplan_started",
-            status="queued",
-            message=f"ULTRAPLAN 已启动: {plan_name}",
+            plan_run_id,
+            plan_session_id or "default",
+            event_type="ultraplan_plan_completed",
+            status="completed",
+            message=f"ULTRAPLAN 规划阶段完成: {plan_name}",
+        )
+
+    execute_name = slugify(f"{plan_name}-execute", "") or f"ultraplan-execute-{uuid.uuid4().hex[:6]}"
+    execute_prompt = (
+        "你是 ULTRAPLAN 的执行型 Coder 子 Agent。\n"
+        "你必须根据下方规划直接完成原始任务，包括创建/修改文件、运行必要验证，"
+        "最后汇报实际改动和验证结果。不要只输出计划文档。\n\n"
+        f"原始任务：\n{task.strip()}\n\n"
+        f"规划阶段输出：\n{_trim(plan_result, 6000)}"
+    )
+    execute_result = await spawn_subagent(
+        username=username,
+        task=execute_prompt,
+        agent_type="coder",
+        name=execute_name,
+        description=f"ULTRAPLAN EXECUTE: {task[:80]}",
+        wait=True,
+        parent_session=source_session,
+        timeout=max(300, timeout),
+        max_turns=24,
+        workspace_mode=workspace_mode,
+        workspace_root=workspace_root,
+        cwd=cwd,
+        remote=remote,
+    )
+    execute_run_id = _extract_result_field(execute_result, "run_id")
+    execute_session_id = _extract_result_field(execute_result, "session_id")
+    if execute_session_id:
+        save_session_mode(username, execute_session_id, mode="execute", reason=f"Ultraplan execute: {task[:120]}")
+    if execute_run_id:
+        update_run_status(
+            execute_run_id,
+            username,
+            run_kind="ultraplan",
+            mode="execute",
+            metadata={
+                "task": task,
+                "phase": "execute",
+                "plan_run_id": plan_run_id,
+                "plan_session_id": plan_session_id,
+                "source_session": source_session or "default",
+                "workspace_mode": workspace_mode,
+                "workspace_root": workspace_root,
+                "cwd": cwd,
+                "remote": remote,
+            },
+        )
+        record_run_event(
+            username,
+            execute_run_id,
+            execute_session_id or "default",
+            event_type="ultraplan_execute_completed",
+            status="completed",
+            message=f"ULTRAPLAN 执行阶段完成: {execute_name}",
         )
     return (
-        "⚡ ULTRAPLAN 已启动\n"
-        f"{result}\n\n"
+        "⚡ ULTRAPLAN 已完成\n"
+        "## Plan\n"
+        f"{plan_result}\n\n"
+        "## Execute\n"
+        f"{execute_result}\n\n"
         "可稍后用 ultraplan_status 查询进度。"
     )
 
@@ -2131,8 +2216,10 @@ async def ultraplan_status(
         record = _resolve_subagent_ref(username, agent_ref)
         if record is not None:
             target_run = get_latest_run_for_agent(username, record.agent_id)
+    else:
+        target_run = _latest_ultraplan_for_session(username, source_session)
     if target_run is None:
-        return "❌ 未找到对应的 ULTRAPLAN 运行。请提供 run_id 或 agent_ref。"
+        return "❌ 未找到对应的 ULTRAPLAN 运行。请提供 run_id / agent_ref，或先在当前会话启动 ultraplan_start。"
 
     metadata = _safe_json_loads(target_run.metadata_json)
     if target_run.status == "completed" and target_run.last_result and not metadata.get("artifact_path"):

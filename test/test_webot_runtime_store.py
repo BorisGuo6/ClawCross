@@ -85,6 +85,34 @@ class WeBotRuntimeStoreTests(unittest.TestCase):
                 self.assertEqual(released.worker_id, "")
                 self.assertFalse(released.interrupt_requested)
                 self.assertIsNone(runtime_store.get_latest_active_run_for_session("alice", "default"))
+
+                child_run = runtime_store.create_run_record(
+                    run_id="run-child-1",
+                    user_id="alice",
+                    agent_id="planner-1",
+                    session_id="subagent__planner__planner-1",
+                    parent_session="default",
+                    agent_type="planner",
+                    title="Plan migration",
+                    input_text="Plan a migration",
+                    status="queued",
+                    timeout_seconds=120,
+                    max_turns=12,
+                    wait_mode=False,
+                    run_kind="ultraplan",
+                    mode="plan",
+                )
+                runtime_store.upsert_run(child_run)
+
+                active = runtime_store.get_latest_active_run_for_session("alice", "default")
+                self.assertIsNotNone(active)
+                self.assertEqual(active.run_id, "run-child-1")
+                parent_runs = runtime_store.list_runs_for_parent_session(
+                    "alice",
+                    "default",
+                    run_kind="ultraplan",
+                )
+                self.assertEqual([item.run_id for item in parent_runs], ["run-child-1"])
             finally:
                 runtime_store.DEFAULT_DB_PATH = original_runtime_db_path
 
