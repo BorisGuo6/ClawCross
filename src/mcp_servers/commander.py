@@ -15,8 +15,11 @@ MCP 指令执行工具服务 — 安全沙箱化的系统命令执行
 import os
 import sys
 import asyncio
+import contextlib
 from collections import deque
 import json
+import signal
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
@@ -146,6 +149,7 @@ MAX_CAPTURE_LENGTH = int(os.getenv("MAX_CAPTURE_LENGTH", str(max(MAX_OUTPUT_LENG
 DEFAULT_BACKGROUND_READ_CHARS = 12000
 MAX_BACKGROUND_READ_CHARS = 50000
 _BACKGROUND_JOBS: dict[str, "BackgroundJob"] = {}
+_DETACHED_RUNNERS: list[subprocess.Popen] = []
 
 
 @dataclass
@@ -165,6 +169,7 @@ class BackgroundJob:
     exit_code: int | None = None
     error: str = ""
     session_id: str = ""
+    pid: int | None = None
     task: asyncio.Task | None = None
     proc: asyncio.subprocess.Process | None = None
 
@@ -196,6 +201,7 @@ def _persist_job(job: BackgroundJob) -> None:
         "exit_code": job.exit_code,
         "error": job.error,
         "session_id": job.session_id,
+        "pid": job.pid,
     }
     _job_meta_path(job.workspace, job.job_id).write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -227,18 +233,230 @@ def _load_job_from_workspace(workspace: str, job_id: str) -> BackgroundJob | Non
         exit_code=payload.get("exit_code"),
         error=str(payload.get("error") or ""),
         session_id=str(payload.get("session_id") or ""),
+        pid=int(payload["pid"]) if payload.get("pid") is not None else None,
     )
 
 
+def _reap_detached_runners() -> None:
+    _DETACHED_RUNNERS[:] = [proc for proc in _DETACHED_RUNNERS if proc.poll() is None]
+
+
+def _pid_is_running(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        if IS_WINDOWS:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5,
+            )
+            return str(pid) in result.stdout
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _refresh_background_job(job: BackgroundJob) -> BackgroundJob:
+    if job.status != "running":
+        return job
+    if job.task is not None and not job.task.done():
+        return job
+    if job.proc is not None:
+        return_code = job.proc.returncode
+        if return_code is None:
+            return job
+        job.exit_code = return_code
+        job.status = "completed" if return_code == 0 else "failed"
+        job.finished_at = job.finished_at or time.time()
+        _persist_job(job)
+        return job
+    fresh = _load_job_from_workspace(job.workspace, job.job_id)
+    if fresh is not None and fresh.status != "running":
+        return fresh
+    if _pid_is_running(job.pid):
+        return fresh or job
+    job.status = "failed"
+    job.error = job.error or "后台 runner 已退出但未写入最终状态。"
+    job.finished_at = job.finished_at or time.time()
+    _persist_job(job)
+    return job
+
+
 def _resolve_background_job(job_id: str, username: str = "", session_id: str = "", cwd: str = "") -> BackgroundJob | None:
+    _reap_detached_runners()
     key = (job_id or "").strip()
     if not key:
         return None
     live = _BACKGROUND_JOBS.get(key)
     if live is not None:
-        return live
+        refreshed = _refresh_background_job(live)
+        _BACKGROUND_JOBS[key] = refreshed
+        return refreshed
     workspace_state = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
-    return _load_job_from_workspace(str(workspace_state.cwd), key)
+    job = _load_job_from_workspace(str(workspace_state.cwd), key)
+    if job is None:
+        return None
+    return _refresh_background_job(job)
+
+
+def _write_runner_script(jobs_dir: Path) -> Path:
+    script_path = jobs_dir / "runner.py"
+    if script_path.exists():
+        return script_path
+    script_path.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+
+def _write_meta(meta_path, updates):
+    try:
+        with open(meta_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except Exception:
+        payload = {}
+    payload.update(updates)
+    with open(meta_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def main():
+    cfg = json.loads(sys.argv[1])
+    meta_path = cfg["meta_path"]
+    proc = None
+    started = time.time()
+    try:
+        with open(cfg["stdout_path"], "ab", buffering=0) as stdout_handle, open(
+            cfg["stderr_path"], "ab", buffering=0
+        ) as stderr_handle:
+            kwargs = {
+                "shell": True,
+                "cwd": cfg["workspace"],
+                "env": cfg["env"],
+                "stdout": stdout_handle,
+                "stderr": stderr_handle,
+            }
+            if os.name == "nt":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            else:
+                kwargs["start_new_session"] = True
+            proc = subprocess.Popen(cfg["command"], **kwargs)
+            _write_meta(meta_path, {"child_pid": proc.pid, "status": "running"})
+            try:
+                return_code = proc.wait(timeout=int(cfg["timeout_seconds"]))
+                status = "completed" if return_code == 0 else "failed"
+                _write_meta(
+                    meta_path,
+                    {
+                        "status": status,
+                        "exit_code": return_code,
+                        "finished_at": time.time(),
+                    },
+                )
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    proc.kill()
+                else:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                return_code = proc.wait()
+                _write_meta(
+                    meta_path,
+                    {
+                        "status": "timeout",
+                        "exit_code": return_code,
+                        "finished_at": time.time(),
+                        "error": f"命令执行超时（{cfg['timeout_seconds']}秒限制），已终止。",
+                    },
+                )
+    except BaseException as exc:
+        _write_meta(
+            meta_path,
+            {
+                "status": "failed",
+                "finished_at": time.time(),
+                "error": str(exc),
+            },
+        )
+
+
+if __name__ == "__main__":
+    main()
+""",
+        encoding="utf-8",
+    )
+    return script_path
+
+
+def _launch_detached_background_job(job: BackgroundJob, env: dict[str, str]) -> None:
+    jobs_dir = _jobs_dir(job.workspace)
+    runner_path = _write_runner_script(jobs_dir)
+    payload = {
+        "command": job.command,
+        "workspace": job.workspace,
+        "env": env,
+        "stdout_path": job.stdout_path,
+        "stderr_path": job.stderr_path,
+        "meta_path": str(_job_meta_path(job.workspace, job.job_id)),
+        "timeout_seconds": job.timeout_seconds,
+    }
+    kwargs = {
+        "cwd": job.workspace,
+        "env": env,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": not IS_WINDOWS,
+    }
+    if IS_WINDOWS:
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    runner = subprocess.Popen(
+        [_python_cmd(), str(runner_path), json.dumps(payload, ensure_ascii=False)],
+        **kwargs,
+    )
+    _DETACHED_RUNNERS.append(runner)
+    job.pid = runner.pid
+    _persist_job(job)
+
+
+def _terminate_background_job(job: BackgroundJob) -> None:
+    if job.proc is not None and job.proc.returncode is None:
+        job.proc.kill()
+        return
+    child_pid = None
+    with contextlib.suppress(Exception):
+        payload = json.loads(_job_meta_path(job.workspace, job.job_id).read_text(encoding="utf-8"))
+        if payload.get("child_pid") is not None:
+            child_pid = int(payload["child_pid"])
+    try:
+        if IS_WINDOWS:
+            for pid in (child_pid, job.pid):
+                if pid and _pid_is_running(pid):
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10,
+                    )
+        else:
+            for pid in (child_pid, job.pid):
+                if pid and _pid_is_running(pid):
+                    os.killpg(pid, signal.SIGKILL)
+    except Exception:
+        for pid in (child_pid, job.pid):
+            if pid:
+                with contextlib.suppress(Exception):
+                    os.kill(pid, signal.SIGKILL)
+
 
 
 def _bounded_int(value: int, default: int, minimum: int, maximum: int) -> int:
@@ -807,7 +1025,7 @@ async def start_background_command(
     Path(job.stdout_path).write_text("", encoding="utf-8")
     Path(job.stderr_path).write_text("", encoding="utf-8")
     _persist_job(job)
-    job.task = asyncio.create_task(_run_background_job(job, _sandbox_env(workspace, username)))
+    _launch_detached_background_job(job, _sandbox_env(workspace, username))
     _BACKGROUND_JOBS[job_id] = job
     result = "✅ 后台任务已启动\n" + _job_summary(job)
     if approval_note:
@@ -883,6 +1101,13 @@ async def cancel_background_command(job_id: str, username: str = "", session_id:
             await job.task
         except asyncio.CancelledError:
             pass
+    else:
+        _terminate_background_job(job)
+        job.status = "cancelled"
+        job.error = "后台任务已取消。"
+        job.finished_at = time.time()
+        _persist_job(job)
+        _BACKGROUND_JOBS[job.job_id] = job
     return "🛑 后台任务已取消\n" + _job_summary(job)
 
 @mcp.tool()

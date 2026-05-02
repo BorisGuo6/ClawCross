@@ -16,6 +16,19 @@ from webot.workspace import SessionWorkspace
 
 
 class CommanderTests(unittest.TestCase):
+    async def _wait_for_not_running(self, job_id: str, *, username: str = "alice", session_id: str = "", attempts: int = 20) -> str:
+        status = ""
+        for _ in range(attempts):
+            status = await commander.get_background_command_status(
+                job_id,
+                username=username,
+                session_id=session_id,
+            )
+            if "状态: running" not in status:
+                return status
+            await asyncio.sleep(0.1)
+        return status
+
     def test_run_command_truncates_large_stream_output(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -95,6 +108,64 @@ class CommanderTests(unittest.TestCase):
                 status, output = asyncio.run(_exercise())
             self.assertIn("状态:", status)
             self.assertIn("persisted", output)
+
+    def test_background_command_status_and_stdout_survive_stdio_process_end(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = SessionWorkspace(root=root, cwd=root, mode="shared", remote="")
+            command = f'{sys.executable} -c "print(\'detached-output\', flush=True)"'
+
+            async def _exercise() -> tuple[str, str, str, Path]:
+                start = await commander.start_background_command("alice", command, session_id="sess-detached")
+                job_id = start.split("job_id: ", 1)[1].splitlines()[0].strip()
+                commander._BACKGROUND_JOBS.clear()
+                status = await self._wait_for_not_running(job_id, session_id="sess-detached")
+                output = await commander.read_background_command_output(
+                    job_id,
+                    username="alice",
+                    session_id="sess-detached",
+                )
+                return start, status, output, root / ".mcp_jobs" / f"{job_id}.stdout.log"
+
+            with patch.object(commander, "resolve_session_workspace", return_value=workspace), patch.object(
+                commander, "ALLOWED_COMMANDS", {Path(sys.executable).name}
+            ):
+                start, status, output, stdout_path = asyncio.run(_exercise())
+            self.assertIn("job_id", start)
+            self.assertIn("状态: completed", status)
+            self.assertIn("detached-output", output)
+            self.assertGreater(stdout_path.stat().st_size, 0)
+
+    def test_cancel_background_command_persists_cancelled_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workspace = SessionWorkspace(root=root, cwd=root, mode="shared", remote="")
+            command = f'{sys.executable} -c "import time; print(\'started\', flush=True); time.sleep(10)"'
+
+            async def _exercise() -> tuple[str, str, str]:
+                start = await commander.start_background_command("alice", command, session_id="sess-cancel")
+                job_id = start.split("job_id: ", 1)[1].splitlines()[0].strip()
+                await asyncio.sleep(0.3)
+                cancelled = await commander.cancel_background_command(
+                    job_id,
+                    username="alice",
+                    session_id="sess-cancel",
+                )
+                commander._BACKGROUND_JOBS.clear()
+                status = await commander.get_background_command_status(
+                    job_id,
+                    username="alice",
+                    session_id="sess-cancel",
+                )
+                return start, cancelled, status
+
+            with patch.object(commander, "resolve_session_workspace", return_value=workspace), patch.object(
+                commander, "ALLOWED_COMMANDS", {Path(sys.executable).name}
+            ):
+                start, cancelled, status = asyncio.run(_exercise())
+            self.assertIn("job_id", start)
+            self.assertIn("已取消", cancelled)
+            self.assertIn("状态: cancelled", status)
 
 
 if __name__ == "__main__":
