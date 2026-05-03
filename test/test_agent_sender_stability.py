@@ -110,6 +110,33 @@ class TestAgentSenderStability(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[1][0], ["claude", "sessions", "close", "agent:demo:clawcrosschat"])
         self.assertTrue(all(call[1]["allow_nonzero"] for call in calls))
 
+    async def test_acpx_close_session_still_closes_when_cancel_fails(self):
+        adapter = AcpxAdapter.__new__(AcpxAdapter)
+        adapter._acpx_bin = "/usr/bin/acpx"
+        adapter._cwd = str(PROJECT_ROOT)
+        calls = []
+
+        async def fake_run_json(args, **kwargs):
+            calls.append((args, kwargs))
+            if args[:2] == ["claude", "cancel"]:
+                from integrations.acpx_adapter import AcpxError
+                raise AcpxError("cancel timed out")
+            return ""
+
+        adapter._run_json = fake_run_json
+
+        await adapter.close_session(
+            tool="claude",
+            session_key="agent:demo:clawcrosschat",
+            acpx_session="agent:demo:clawcrosschat",
+            timeout_sec=12,
+            ttl_sec=60,
+            approve_all=False,
+        )
+
+        self.assertEqual(calls[0][0], ["claude", "cancel", "-s", "agent:demo:clawcrosschat"])
+        self.assertEqual(calls[1][0], ["claude", "sessions", "close", "agent:demo:clawcrosschat"])
+
 
 if __name__ == "__main__":
     unittest.main()

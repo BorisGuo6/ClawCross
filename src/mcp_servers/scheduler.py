@@ -33,6 +33,17 @@ load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
 PORT_SCHEDULER = int(os.getenv("PORT_SCHEDULER", "51201"))
 SCHEDULER_URL = f"http://127.0.0.1:{PORT_SCHEDULER}/tasks"
 
+
+def _http_error(resp: httpx.Response) -> str:
+    detail = resp.text
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            detail = str(data.get("detail") or data.get("error") or detail)
+    except Exception:
+        pass
+    return f"HTTP {resp.status_code}: {detail[:300]}"
+
 @mcp.tool()
 async def get_current_time(timezone_name: str = "Asia/Shanghai") -> str:
     """
@@ -119,8 +130,12 @@ async def list_alarms(username: str) -> str:
     """
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(SCHEDULER_URL)
+            resp = await client.get(SCHEDULER_URL, timeout=10.0)
+            if resp.status_code != 200:
+                return f"❌ 读取列表失败，服务器返回: {_http_error(resp)}"
             tasks = resp.json()
+            if not isinstance(tasks, list):
+                return "❌ 读取列表失败，服务器返回的数据格式不正确。"
             # 过滤只显示该用户的任务
             user_tasks = [t for t in tasks if t.get("user_id") == username]
             if not user_tasks:
@@ -149,8 +164,12 @@ async def delete_alarm(username: str, task_id: str) -> str:
     async with httpx.AsyncClient() as client:
         try:
             # 先查询任务列表，确认任务属于该用户
-            resp = await client.get(SCHEDULER_URL)
+            resp = await client.get(SCHEDULER_URL, timeout=10.0)
+            if resp.status_code != 200:
+                return f"❌ 删除前查询失败，服务器返回: {_http_error(resp)}"
             tasks = resp.json()
+            if not isinstance(tasks, list):
+                return "❌ 删除前查询失败，服务器返回的数据格式不正确。"
             target_task = next((t for t in tasks if t.get("task_id") == task_id), None)
 
             if not target_task:
@@ -159,10 +178,10 @@ async def delete_alarm(username: str, task_id: str) -> str:
                 return f"❌ 无权删除任务 {task_id}，该任务不属于您。"
 
             # 验证通过，执行删除
-            resp = await client.delete(f"{SCHEDULER_URL}/{task_id}")
+            resp = await client.delete(f"{SCHEDULER_URL}/{task_id}", timeout=10.0)
             if resp.status_code == 200:
                 return f"🗑️ 任务 {task_id} 已成功删除。"
-            return f"❌ 删除失败: {resp.text}"
+            return f"❌ 删除失败: {_http_error(resp)}"
         except Exception as e:
             return f"⚠️ 连接失败: {str(e)}"
 

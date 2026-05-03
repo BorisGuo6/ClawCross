@@ -4060,7 +4060,7 @@ async function switchToSession(sessionId, force = false, options = {}) {
         });
         // 高亮代码块
         highlightMarkdownIn(chatBox);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        scrollChatToBottom(chatBox);
     } catch (e) {
         chatBox.innerHTML = `
             <div class="text-xs text-red-400 text-center py-4">${t('history_error')}: ${e.message}</div>`;
@@ -6515,6 +6515,26 @@ function hideNewMsgBanner() {
     refreshChatBtn.classList.remove('has-new');
 }
 
+function scrollChatToBottom(target = null, options = {}) {
+    const box = target || document.getElementById('chat-box');
+    if (!box) return;
+    const settle = options.settle !== false;
+    const apply = () => {
+        box.scrollTop = box.scrollHeight;
+    };
+    apply();
+    if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+            apply();
+            requestAnimationFrame(apply);
+        });
+    }
+    if (settle) {
+        setTimeout(apply, 80);
+        setTimeout(apply, 300);
+    }
+}
+
 function handleNewMsgRefresh() {
     hideNewMsgBanner();
     switchToSession(currentSessionId, true);
@@ -6717,7 +6737,7 @@ function appendMessage(content, isUser = false, images = [], fileNames = [], aud
     }
     wrapper.appendChild(div);
     chatBox.appendChild(wrapper);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom(chatBox, { settle: false });
     return div;
 }
 
@@ -6730,7 +6750,7 @@ function showTyping() {
             crossing...
         </div>`;
     chatBox.appendChild(wrapper);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom(chatBox, { settle: false });
 }
 
 function renderWeBotWelcomeMessage(message = null) {
@@ -6742,7 +6762,7 @@ function renderWeBotWelcomeMessage(message = null) {
                 ${message || t('welcome_message')}
             </div>
         </div>`;
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom(chatBox);
 }
 
 async function handleSend() {
@@ -6985,7 +7005,7 @@ async function handleSend() {
             d.innerHTML = `<div><span class="stream-tool-icon">🔧</span> <span class="stream-tool-name">${escapeHtml(toolName)}</span> <span class="stream-tool-status stream-tool-running">…</span></div><div class="stream-tool-result" style="display:none;margin-top:8px;"></div>`;
             w.appendChild(d);
             chatBox.appendChild(w);
-            chatBox.scrollTop = chatBox.scrollHeight;
+            scrollChatToBottom(chatBox, { settle: false });
         }
 
         function acpxToolDisplayName(meta = {}) {
@@ -7018,7 +7038,7 @@ async function handleSend() {
             }
             const nameEl = indicator.querySelector('.stream-tool-name');
             if (nameEl) nameEl.textContent = acpxToolDisplayName(meta);
-            chatBox.scrollTop = chatBox.scrollHeight;
+            scrollChatToBottom(chatBox, { settle: false });
             return indicator;
         }
 
@@ -7040,7 +7060,7 @@ async function handleSend() {
             acpxToolContents.set(toolCallId, next);
             preEl.textContent = next;
             detailsEl.style.display = '';
-            chatBox.scrollTop = chatBox.scrollHeight;
+            scrollChatToBottom(chatBox, { settle: false });
         }
 
         function finishAcpxToolIndicator(meta = {}) {
@@ -7053,7 +7073,7 @@ async function handleSend() {
                 statusEl.classList.remove('stream-tool-running');
                 statusEl.classList.add('stream-tool-done');
             }
-            chatBox.scrollTop = chatBox.scrollHeight;
+            scrollChatToBottom(chatBox, { settle: false });
         }
 
         while (true) {
@@ -7117,7 +7137,7 @@ async function handleSend() {
                         agentDiv.innerHTML = renderMarkdown(fullText);
                         agentDiv.classList.add('tc-markdown');
                         highlightMarkdownIn(agentDiv);
-                        chatBox.scrollTop = chatBox.scrollHeight;
+                        scrollChatToBottom(chatBox, { settle: false });
                     }
                 } catch(e) {
                     // 跳过无法解析的 chunk
@@ -7131,7 +7151,7 @@ async function handleSend() {
             highlightMarkdownIn(agentDiv);
             const ttsBtn = createTtsButton(() => extractTtsTextFromElement(agentDiv));
             agentDiv.appendChild(ttsBtn);
-            chatBox.scrollTop = chatBox.scrollHeight;
+            scrollChatToBottom(chatBox);
         }
 
         if (!fullText && allSegmentTexts.length === 0) {
@@ -15043,7 +15063,7 @@ async function acpLoadSessionHistory(force = false) {
     if (!force && _acpTranscriptByKey[cacheKey]) {
         chatBox.innerHTML = _acpTranscriptByKey[cacheKey];
         ocRefreshTtsButtonsIn(chatBox);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        scrollChatToBottom(chatBox);
         return true;
     }
 
@@ -15065,7 +15085,7 @@ async function acpLoadSessionHistory(force = false) {
             _acpTranscriptByKey[cacheKey] = html;
             chatBox.innerHTML = html;
             ocRefreshTtsButtonsIn(chatBox);
-            chatBox.scrollTop = chatBox.scrollHeight;
+            scrollChatToBottom(chatBox);
             return true;
         }
     } catch (e) {
@@ -15087,7 +15107,7 @@ async function acpPaintTranscript() {
     if (_acpTranscriptByKey[k]) {
         chatBox.innerHTML = _acpTranscriptByKey[k];
         ocRefreshTtsButtonsIn(chatBox);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        scrollChatToBottom(chatBox);
         return;
     }
     const label = _acpDisplayLabel(_acpTool || '');
@@ -15098,7 +15118,7 @@ async function acpPaintTranscript() {
         '<br><span style="font-size:0.85em;color:#6b7280;">' +
         escapeHtml(t('oc_acp_via')) +
         '</span></div></div>';
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom(chatBox);
     _acpLastTranscriptKey = acpComputeTranscriptKey();
 }
 
@@ -15135,7 +15155,7 @@ function ocRenderOpenClawWelcomeForAgent(name) {
         '<br><span style="font-size:0.85em;color:#6b7280;">OpenClaw Agent — ' +
         safe +
         '</span></div></div>';
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom(chatBox);
 }
 
 function ocRenderOpenClawSelectPrompt() {
@@ -15146,7 +15166,7 @@ function ocRenderOpenClawSelectPrompt() {
         '<div class="message-agent bg-white border p-4 max-w-[85%] shadow-sm text-gray-700">' +
         escapeHtml(t('oc_select_agent_hint')) +
         '<br><span style="font-size:0.85em;color:#6b7280;">OpenClaw</span></div></div>';
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom(chatBox);
 }
 
 function ocPaintOpenClawChatFromCache() {
@@ -15163,7 +15183,7 @@ function ocPaintOpenClawChatFromCache() {
     } else {
         ocRenderOpenClawSelectPrompt();
     }
-    chatBox.scrollTop = chatBox.scrollHeight;
+    scrollChatToBottom(chatBox);
 }
 
 /**
@@ -15254,7 +15274,7 @@ function ocOnAgentChange() {
             } else {
                 ocRenderOpenClawWelcomeForAgent(agentName);
             }
-            chatBox.scrollTop = chatBox.scrollHeight;
+            scrollChatToBottom(chatBox);
         }
     } else {
         _ocSelectedAgent = null;

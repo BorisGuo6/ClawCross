@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -11,6 +12,9 @@ from typing import Any, Literal
 
 class AcpxError(RuntimeError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -186,15 +190,18 @@ class AcpxAdapter:
     ) -> None:
         # Safety first: cancel any in-flight prompt before closing the transport
         # session record. Missing/idle sessions should not fail callers.
-        await self.cancel_session(
-            tool=tool,
-            session_key=session_key,
-            acpx_session=acpx_session,
-            timeout_sec=timeout_sec,
-            ttl_sec=ttl_sec,
-            approve_all=approve_all,
-            non_interactive_permissions=non_interactive_permissions,
-        )
+        try:
+            await self.cancel_session(
+                tool=tool,
+                session_key=session_key,
+                acpx_session=acpx_session,
+                timeout_sec=timeout_sec,
+                ttl_sec=ttl_sec,
+                approve_all=approve_all,
+                non_interactive_permissions=non_interactive_permissions,
+            )
+        except AcpxError as e:
+            logger.warning("acpx cancel before close failed for %s: %s", acpx_session, e)
         await self._run_json(
             self._command_prefix(tool=tool, session_key=session_key) + ["sessions", "close", acpx_session],
             timeout_sec=timeout_sec,
