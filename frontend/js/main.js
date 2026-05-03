@@ -1999,7 +1999,7 @@ function initSession() {
     }
     currentSessionId = saved;
     updateSessionDisplay();
-    loadSessionList()
+    return loadSessionList()
         .then(() => switchToSession(currentSessionId, true, { quiet: true }))
         .catch(() => {});
 }
@@ -4083,6 +4083,7 @@ async function switchToSession(sessionId, force = false, options = {}) {
         if (_ocChatMode === 'internal') {
             ocInternalSyncNameInput();
             ocInternalRepaintSessionPick();
+            scrollChatToBottom(chatBox);
         }
         if (!quiet) hidePageLoading();
     }
@@ -4419,7 +4420,6 @@ async function handleLocalLogin() {
         currentUserHasPassword = Boolean(data && data.has_password);
         currentLoginMode = data && data.mode ? data.mode : 'local_no_password';
         _syncLocalLoginBannerDismissedState();
-        initSession();
 
         // Check if we should redirect to another page (e.g. group_chat)
         if (checkRedirectAfterLogin()) return;
@@ -4427,6 +4427,7 @@ async function handleLocalLogin() {
         document.getElementById('uid-display').textContent = 'UID: ' + name;
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('chat-screen').style.display = 'flex';
+        await initSession();
         document.getElementById('user-input').focus();
         loadTools();
         refreshOasisTopics();
@@ -4502,7 +4503,6 @@ async function handleLogin() {
         currentLoginMode = data && data.mode ? data.mode : 'password';
         _syncLocalLoginBannerDismissedState();
         // Auth is managed by server-side session + cookie, no sessionStorage needed
-        initSession();
 
         // Check if we should redirect to another page (e.g. group_chat)
         if (checkRedirectAfterLogin()) return;
@@ -4510,6 +4510,7 @@ async function handleLogin() {
         document.getElementById('uid-display').textContent = 'UID: ' + name;
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('chat-screen').style.display = 'flex';
+        await initSession();
         document.getElementById('user-input').focus();
         loadTools();
         refreshOasisTopics(); // Load OASIS topics after login
@@ -6054,10 +6055,10 @@ async function applyStudioInitialTabAfterAuth() {
                 currentUserHasPassword = Boolean(data && data.has_password);
                 currentLoginMode = data && data.mode ? data.mode : 'token_login';
                 _syncLocalLoginBannerDismissedState();
-                initSession();
                 document.getElementById('uid-display').textContent = 'UID: ' + currentUserId;
                 document.getElementById('login-screen').style.display = 'none';
                 document.getElementById('chat-screen').style.display = 'flex';
+                await initSession();
                 // Check if we should redirect to another page after login
                 updateLocalLoginBanner();
                 if (checkRedirectAfterLogin()) return;
@@ -6095,13 +6096,13 @@ async function applyStudioInitialTabAfterAuth() {
                 currentUserHasPassword = Boolean(data.has_password);
                 currentLoginMode = data.mode || '';
                 _syncLocalLoginBannerDismissedState();
-                initSession();
                 // Check if we should redirect to another page after login
                 updateLocalLoginBanner();
                 if (checkRedirectAfterLogin()) return;
                 document.getElementById('uid-display').textContent = 'UID: ' + data.user_id;
                 document.getElementById('login-screen').style.display = 'none';
                 document.getElementById('chat-screen').style.display = 'flex';
+                await initSession();
                 loadTools();
                 refreshOasisTopics();
                 startHistoryPolling();
@@ -6515,12 +6516,28 @@ function hideNewMsgBanner() {
     refreshChatBtn.classList.remove('has-new');
 }
 
+let _chatBottomStickCleanup = null;
+
 function scrollChatToBottom(target = null, options = {}) {
     const box = target || document.getElementById('chat-box');
     if (!box) return;
     const settle = options.settle !== false;
+    if (settle && typeof _chatBottomStickCleanup === 'function') {
+        _chatBottomStickCleanup();
+        _chatBottomStickCleanup = null;
+    }
     const apply = () => {
-        box.scrollTop = box.scrollHeight;
+        if (!box.isConnected) return;
+        const top = Math.max(box.scrollHeight, box.scrollTop, 0);
+        if (typeof box.scrollTo === 'function') {
+            box.scrollTo({ top, behavior: 'auto' });
+        }
+        box.scrollTop = top;
+        const last = box.lastElementChild;
+        if (last && typeof last.scrollIntoView === 'function') {
+            last.scrollIntoView({ block: 'end', inline: 'nearest', behavior: 'auto' });
+        }
+        box.scrollTop = Math.max(box.scrollHeight, box.scrollTop, 0);
     };
     apply();
     if (typeof requestAnimationFrame === 'function') {
@@ -6530,9 +6547,90 @@ function scrollChatToBottom(target = null, options = {}) {
         });
     }
     if (settle) {
-        setTimeout(apply, 80);
-        setTimeout(apply, 300);
+        _chatBottomStickCleanup = keepChatPinnedToBottomUntilStable(box, apply);
     }
+}
+
+function keepChatPinnedToBottomUntilStable(box, apply) {
+    let frame = 0;
+    let stableFrames = 0;
+    let lastSignature = '';
+    let stopped = false;
+    const cleanups = [];
+
+    const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        while (cleanups.length) {
+            const cleanup = cleanups.pop();
+            try { cleanup(); } catch (e) {}
+        }
+        if (_chatBottomStickCleanup === stop) {
+            _chatBottomStickCleanup = null;
+        }
+    };
+
+    const pendingImages = () => Array.from(box.querySelectorAll('img')).filter(img => !img.complete);
+    const isAtBottom = () => (box.scrollHeight - box.scrollTop - box.clientHeight) <= 2;
+    const signature = () => [
+        box.scrollHeight,
+        box.clientHeight,
+        box.children.length,
+        pendingImages().length,
+    ].join(':');
+
+    const tick = () => {
+        if (stopped || !box.isConnected) {
+            stop();
+            return;
+        }
+        apply();
+        const nextSignature = signature();
+        stableFrames = nextSignature === lastSignature && isAtBottom() ? stableFrames + 1 : 0;
+        lastSignature = nextSignature;
+        if (stableFrames >= 2) {
+            stop();
+            return;
+        }
+        frame = requestAnimationFrame(tick);
+    };
+
+    if (typeof MutationObserver === 'function') {
+        const observer = new MutationObserver(() => {
+            stableFrames = 0;
+            apply();
+        });
+        observer.observe(box, { childList: true, subtree: true, attributes: true });
+        cleanups.push(() => observer.disconnect());
+    }
+    if (typeof ResizeObserver === 'function') {
+        const observer = new ResizeObserver(() => {
+            stableFrames = 0;
+            apply();
+        });
+        observer.observe(box);
+        cleanups.push(() => observer.disconnect());
+    }
+    pendingImages().forEach((img) => {
+        const onDone = () => {
+            stableFrames = 0;
+            apply();
+        };
+        img.addEventListener('load', onDone, { once: true });
+        img.addEventListener('error', onDone, { once: true });
+        cleanups.push(() => {
+            img.removeEventListener('load', onDone);
+            img.removeEventListener('error', onDone);
+        });
+    });
+    if (typeof requestAnimationFrame === 'function') {
+        frame = requestAnimationFrame(tick);
+        cleanups.push(() => cancelAnimationFrame(frame));
+    } else {
+        apply();
+        stop();
+    }
+    return stop;
 }
 
 function handleNewMsgRefresh() {

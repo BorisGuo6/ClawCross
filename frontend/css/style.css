@@ -165,7 +165,7 @@ header {
     padding-bottom: var(--safe-bottom);
 }
 
-.chat-container { flex: 1; min-height: 0; overflow-y: auto; }
+.chat-container { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; }
 .markdown-body pre { background: #1e1e1e; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; overflow-x: auto; -webkit-overflow-scrolling: touch; box-sizing: border-box; max-width: 100%; }
 .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; }
 .message-user { border-radius: 1.25rem 1.25rem 0.2rem 1.25rem; max-width: min(85%, 800px); }
