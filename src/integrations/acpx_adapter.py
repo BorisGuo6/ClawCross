@@ -73,7 +73,7 @@ def normalize_acpx_run_options(
     options: dict[str, Any] | None = None,
     *,
     default_timeout_sec: int | None = None,
-    default_ttl_sec: int = 86400,
+    default_ttl_sec: int = 300,
 ) -> dict[str, Any]:
     """Normalize acpx run policy from user/agent config.
 
@@ -155,7 +155,7 @@ class AcpxAdapter:
         session_key: str,
         acpx_session: str,
         system_prompt: str | None = None,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> bool:
@@ -180,13 +180,43 @@ class AcpxAdapter:
         session_key: str,
         acpx_session: str,
         timeout_sec: int = 10,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> None:
-        # close is best-effort; missing session should not fail callers
+        # Safety first: cancel any in-flight prompt before closing the transport
+        # session record. Missing/idle sessions should not fail callers.
+        await self.cancel_session(
+            tool=tool,
+            session_key=session_key,
+            acpx_session=acpx_session,
+            timeout_sec=timeout_sec,
+            ttl_sec=ttl_sec,
+            approve_all=approve_all,
+            non_interactive_permissions=non_interactive_permissions,
+        )
         await self._run_json(
             self._command_prefix(tool=tool, session_key=session_key) + ["sessions", "close", acpx_session],
+            timeout_sec=timeout_sec,
+            allow_nonzero=True,
+            ttl_sec=ttl_sec,
+            approve_all=approve_all,
+            non_interactive_permissions=non_interactive_permissions,
+        )
+
+    async def cancel_session(
+        self,
+        *,
+        tool: str,
+        session_key: str,
+        acpx_session: str,
+        timeout_sec: int = 10,
+        ttl_sec: int = 300,
+        approve_all: bool | None = None,
+        non_interactive_permissions: str | None = None,
+    ) -> None:
+        await self._run_json(
+            self._command_prefix(tool=tool, session_key=session_key) + ["cancel", "-s", acpx_session],
             timeout_sec=timeout_sec,
             allow_nonzero=True,
             ttl_sec=ttl_sec,
@@ -202,7 +232,7 @@ class AcpxAdapter:
         session_key: str,
         slash: Literal["/new", "/stop"],
         timeout_sec: int = 180,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> None:
@@ -223,7 +253,7 @@ class AcpxAdapter:
         tool: str,
         session_key: str,
         timeout_sec: int = 15,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> None:
@@ -245,7 +275,7 @@ class AcpxAdapter:
         tool: str,
         session_key: str,
         timeout_sec: int = 25,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> None:
@@ -267,7 +297,7 @@ class AcpxAdapter:
         *,
         timeout_sec: int,
         allow_nonzero: bool,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> str:
@@ -304,6 +334,7 @@ class AcpxAdapter:
         except asyncio.TimeoutError as e:
             with contextlib.suppress(Exception):
                 proc.kill()
+                await proc.wait()
             raise AcpxError(
                 f"acpx timeout after {timeout_sec}s: {' '.join(shlex.quote(x) for x in cmd)}"
             ) from e
@@ -426,7 +457,7 @@ class AcpxAdapter:
         reset_session: bool = False,
         system_prompt: str | None = None,
         attachments: list[dict] | None = None,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> str:
@@ -502,7 +533,7 @@ class AcpxAdapter:
         reset_session: bool = False,
         system_prompt: str | None = None,
         attachments: list[dict] | None = None,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> AcpxPromptTrace:
@@ -683,7 +714,7 @@ class AcpxAdapter:
         *,
         timeout_sec: int,
         allow_nonzero: bool,
-        ttl_sec: int = 86400,
+        ttl_sec: int = 300,
         approve_all: bool | None = None,
         non_interactive_permissions: str | None = None,
     ) -> str:
@@ -725,6 +756,7 @@ class AcpxAdapter:
         except asyncio.TimeoutError as e:
             with contextlib.suppress(Exception):
                 proc.kill()
+                await proc.wait()
             raise AcpxError(f"acpx timeout after {timeout_sec}s: {' '.join(shlex.quote(x) for x in cmd)}") from e
 
         out = out_b.decode("utf-8", errors="replace")
@@ -754,6 +786,7 @@ class AcpxAdapter:
         except asyncio.TimeoutError as e:
             with contextlib.suppress(Exception):
                 proc.kill()
+                await proc.wait()
             raise AcpxError(f"acpx timeout after {timeout_sec}s: {' '.join(shlex.quote(x) for x in cmd)}") from e
 
         out = out_b.decode("utf-8", errors="replace")

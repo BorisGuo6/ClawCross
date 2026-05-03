@@ -756,70 +756,60 @@ class GroupService:
         """
         # 标记正在输入
         self.set_typing(group_id, agent_name)
-        # Select transport explicitly by tag.
-        platform = _external_platform_from_agent(agent_info)
-        transport = _select_external_transport(platform)
-        if transport == "drop":
-            logger.warning(
-                "Drop external agent %s due to unknown platform '%s'",
-                agent_name,
-                agent_info.get("platform", "") or agent_info.get("tag", ""),
-            )
-            return
-        if transport == "acp":
-            reply = await self._send_to_acp_agent(
-                agent_info,
-                message,
-                attachments=attachments,
-                metadata=metadata,
-            )
-            if not reply:
-                logger.info(
-                    "ACP failed/no reply for %s, fallback to HTTP",
+        try:
+            # Select transport explicitly by tag.
+            platform = _external_platform_from_agent(agent_info)
+            transport = _select_external_transport(platform)
+            if transport == "drop":
+                logger.warning(
+                    "Drop external agent %s due to unknown platform '%s'",
                     agent_name,
+                    agent_info.get("platform", "") or agent_info.get("tag", ""),
                 )
-                reply = await self._send_to_http_agent(
-                    agent_info,
-                    message,
-                    attachments=attachments,
-                    metadata=metadata,
-                )
-        else:
-            reply = await self._send_to_http_agent(
-                agent_info,
-                message,
-                attachments=attachments,
-                metadata=metadata,
-            )
-            if not reply and platform == "openclaw":
-                logger.info(
-                    "HTTP failed/no reply for openclaw %s, fallback to ACP",
-                    agent_name,
-                )
+                return
+            if transport == "acp":
                 reply = await self._send_to_acp_agent(
                     agent_info,
                     message,
                     attachments=attachments,
                     metadata=metadata,
                 )
-        if not reply:
-            logger.info("External agent %s did not reply", agent_name)
-            # ACP/HTTP 已返回（无回复），清除输入状态
-            self.clear_typing(group_id, agent_name)
-            return
+                if not reply:
+                    logger.info(
+                        "ACP failed/no reply for %s, fallback to HTTP",
+                        agent_name,
+                    )
+                    reply = await self._send_to_http_agent(
+                        agent_info,
+                        message,
+                        attachments=attachments,
+                        metadata=metadata,
+                    )
+            else:
+                reply = await self._send_to_http_agent(
+                    agent_info,
+                    message,
+                    attachments=attachments,
+                    metadata=metadata,
+                )
+            if not reply:
+                logger.info("External agent %s did not reply", agent_name)
+                return
 
-        members = await list_group_member_targets(self.group_db_path, group_id)
-        is_private = len(members) <= 2
-        if is_private:
-            logger.info(
-                "Private chat: agent %s returned sync reply (ignored; waiting for push): %s",
-                agent_name,
-                reply[:200] if reply else "",
-            )
-        else:
-            logger.info("Group chat: agent %s replied (not auto-posting): %s", agent_name, reply[:200] if reply else "")
-        # ACP/HTTP 已返回，清除输入状态
-        self.clear_typing(group_id, agent_name)
+            members = await list_group_member_targets(self.group_db_path, group_id)
+            is_private = len(members) <= 2
+            if is_private:
+                logger.info(
+                    "Private chat: agent %s returned sync reply (ignored; waiting for push): %s",
+                    agent_name,
+                    reply[:200] if reply else "",
+                )
+            else:
+                logger.info("Group chat: agent %s replied (not auto-posting): %s", agent_name, reply[:200] if reply else "")
+        except Exception:
+            logger.exception("External agent %s delivery crashed", agent_name)
+        finally:
+            self.clear_typing(group_id, agent_name)
 
     async def broadcast_to_group(
         self,

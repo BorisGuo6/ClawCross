@@ -40,6 +40,15 @@ def test_normalize_acpx_run_options_clamps_and_parses(monkeypatch):
     assert opts["non_interactive_permissions"] == "read-only"
 
 
+def test_normalize_acpx_run_options_defaults_to_short_idle_ttl(monkeypatch):
+    monkeypatch.delenv("ACPX_APPROVE_ALL", raising=False)
+    monkeypatch.delenv("ACPX_NON_INTERACTIVE_PERMISSIONS", raising=False)
+
+    opts = normalize_acpx_run_options({})
+
+    assert opts["ttl_sec"] == 300
+
+
 def test_acpx_options_from_agent_prefers_meta_acp_then_overrides():
     agent = {
         "timeout_sec": 30,
