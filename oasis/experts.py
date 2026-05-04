@@ -34,37 +34,20 @@ Both participate() methods accept an optional `instruction` parameter,
 which is injected into the expert's prompt to guide their focus.
 """
 
-import asyncio
 import json
 import logging
 import os
 import re
-import shlex
-import shutil
 import sys
-import threading
-import time
 from typing import Any
 
 # ACPX-backed ACP support
-_ACP_AVAILABLE = bool(shutil.which("acpx"))
-
-# 确保 src/ 在 import 路径中，以便导入 llm_factory
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
-from integrations.acpx_adapter import AcpxError, acpx_options_from_agent, get_acpx_adapter, load_external_agent_system_prompt
 from integrations.agent_sender import SendToAgentRequest, send_to_agent
 from services.llm_factory import create_chat_model, extract_text
 
 from oasis.forum import DiscussionForum
 
-# OASIS ACP 调试：logger [ACP_TRACE] + logs/acp_oasis_trace.jsonl（与群聊 acp_group_trace 同风格）
-_CLAWCROSS_ROOT = os.path.dirname(os.path.dirname(__file__))
-_EXTERNAL_AGENT_SYSTEM_PROMPT = load_external_agent_system_prompt(_CLAWCROSS_ROOT)
-_OASIS_ACP_TRACE_PATH = os.path.join(_CLAWCROSS_ROOT, "logs", "acp_oasis_trace.jsonl")
-_oasis_acp_trace_file_lock = threading.Lock()
-_oasis_acp_trace_log = logging.getLogger("oasis.acp_trace")
-
-
+# OASIS trace disabled
 def _acp_oasis_trace(event: str, **fields: Any) -> None:
     """Temporarily disabled ACP trace output for OASIS."""
     return
@@ -1079,31 +1062,22 @@ class SessionExpert:
 # Backend 3: ExternalExpert — direct call to external OpenAI-compatible API
 #   name = "title#ext#id"
 #   Does NOT go through local WeBot agent.
-#   Calls external api_url directly using httpx + OpenAI chat format.
-#   ACP agent support: tag (codex/claude/gemini/aider) determines ACP binary.
+#   Calls external api_url or ACP agent via platform-based connector architecture.
 # ======================================================================
 
-# ── ACP long-lived connection helpers (inline from acptest4.py) ──
-
-# ACP-capable CLI tags (keep in sync with src/group_service._ACP_KNOWN_TOOLS)
-_OASIS_ACP_KNOWN_TOOLS: frozenset[str] = frozenset({
-    "openclaw", "codex", "claude", "gemini", "aider",
-    "claude-code", "gemini-cli",
-})
-_OASIS_ACP_AGENT_TAGS: frozenset[str] = frozenset({
-    "codex", "claude", "gemini", "aider",
-    "claude-code", "gemini-cli",
-})
-_OASIS_HTTP_AGENT_TAGS: frozenset[str] = frozenset({"openclaw"})
-
-
 def _canonical_external_platform(platform_name: str) -> str:
+    """Canonicalize platform names (e.g. claude-code -> claude, gemini-cli -> gemini)."""
     pl = (platform_name or "").strip().lower()
     if pl in ("claude-code", "claudecode"):
         return "claude"
     if pl in ("gemini-cli", "geminicli"):
         return "gemini"
     return pl
+
+
+# ======================================================================
+# Backend 3: ExternalExpert — direct call to external API via connectors
+# ======================================================================
 
 
 class ExternalExpert:
@@ -1114,21 +1088,14 @@ class ExternalExpert:
     ExternalExpert directly calls any OpenAI-compatible endpoint (DeepSeek,
     GPT-4, Moonshot, Ollama, another WeBot instance, etc).
 
-    **ACP Agent Support**: When the ``model`` field matches
-    ``agent:<agent_name>`` or ``agent:<agent_name>:<session>``, ACP
-    long-lived subprocess connections are preferred. If ACP is unavailable
-    (binary not found or start failed), falls back to HTTP API when
-    ``api_url`` is configured. The ``tag`` field (e.g. "codex", "claude")
-    determines which CLI binary is used for the ACP subprocess. Session
-    suffix defaults to ``clawcrosschat`` if not specified in the model string (same as group/ops ACP).
+    All agent sending goes through the platform-based connector architecture
+    (``send_to_agent`` in integrations.agent_sender → registry → platform connector).
+    Strategy is determined by the registered connector for the platform:
+    - openclaw: OpenclawConnector (HTTP-first + ACP fallback)
+    - codex/claude/gemini/etc.: GenericAcpConnector (ACP-first + HTTP fallback)
+    - other platforms: GenericHttpConnector
 
-    ACP subprocesses are stored in a **process-global pool** (same cache key as
-    group chat: ``tool`` + ``agent:<global_name>:<suffix>``). ``acp_start()`` only
-    warms the pool entry; ``acp_stop()`` does **not** kill the process (other
-    features may reuse it). Messages are sent via ``acp_send()``, serialized with a per-connection ``prompt_lock``.
-
-    Session management is handled by the ACP connection internally —
-    users cannot and do not need to specify session IDs.
+    Session suffix defaults to ``clawcrosschat`` if not specified in the model string.
 
     The external service is assumed to be **stateful** (maintaining its own
     conversation history server-side). Therefore this class sends only
@@ -1186,9 +1153,6 @@ class ExternalExpert:
 
     _OASIS_REPLY_MAX_RETRIES = 3
 
-    # YAML tag must be in this set for engine to treat expert as ACP-capable.
-    _ACP_TOOL_TAGS = _OASIS_ACP_AGENT_TAGS
-
     # Default CLI --session suffix when model has no agent:name:<suffix> third segment.
     # Matches group/ops ACP usage so the same external agent shares one session across teams.
     _DEFAULT_ACP_SESSION_SUFFIX = "clawcrosschat"
@@ -1219,53 +1183,12 @@ class ExternalExpert:
         self.model = model
         self._team = team
         self._extra_headers = extra_headers or {}
-        self._acpx_policy = acpx_options_from_agent(
-            {"meta": {"acp": acp_options or {}}},
-            default_timeout_sec=int(timeout or 180),
-        )
         self._platform_lower = self.platform
         self._http_global_name = oc_agent_name
-        self._drop_unknown_platform = not self._platform_lower
 
-        # ACP routing is decided by platform, not persona tag.
-        # If model matches agent:<name>:<session>, only the optional session suffix is used.
+        # Session suffix from model (agent:<name>:<session>) or default
         m = self._AGENT_MODEL_RE.match(model)
         self._session_suffix = m.group(2) if m and m.group(2) else self._DEFAULT_ACP_SESSION_SUFFIX
-        if self._platform_lower in _OASIS_ACP_AGENT_TAGS:
-            self._is_acp_agent = True
-            if not oc_agent_name:
-                raise ValueError(
-                    f"ACP platform '{self.platform}' requires a global_name in "
-                    f"external_agents.json, but none was found for '{name}'."
-                )
-            self._oc_agent_name = oc_agent_name
-
-            # Session suffix: explicit from model's third segment if present, else clawcrosschat.
-            self._acp_session_suffix = self._session_suffix
-
-            # Determine ACP tool binary from tag (same rules as src/group_service)
-            if self._platform_lower in _OASIS_ACP_AGENT_TAGS:
-                self._acp_tool_name = self._platform_lower
-            else:
-                self._acp_tool_name = ""
-            self._acp_bin = shutil.which("acpx")
-
-            # ── ACP via process-global pool (no per-expert subprocess) ──
-            self._acp_available = bool(self._acp_bin)
-            self._acp_started = False   # True after successful acp_start() warm-up
-
-            status = "ACP ready" if self._acp_available else f"⚠️ {self._acp_tool_name} not found"
-            print(f"  [OASIS] 🔌 ACP agent detected: name={self._oc_agent_name}"
-                  f" session={self._acp_session_suffix}"
-                  f" tool={self._acp_tool_name}"
-                  f" — {status}")
-        else:
-            self._is_acp_agent = False
-            self._oc_agent_name = ""
-            self._acp_tool_name = ""
-            self._acp_bin = None
-            self._acp_available = False
-            self._acp_started = False
 
         if self._platform_lower == "openclaw":
             # OpenClaw endpoint varies by device: env has higher priority than YAML.
@@ -1281,305 +1204,90 @@ class ExternalExpert:
                 api_url += "/chat/completions"
         self._api_url = api_url
         self._api_key = api_key
+        self._acp_options = acp_options  # passed to connectors via send_to_agent options dict
 
         # Track state for incremental context (external service holds history)
         self._initialized = False
         self._seen_post_ids: set[int] = set()
-        self._acp_dispatch_tasks: set[asyncio.Task] = set()
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json"}
         if self._api_key:
             h["Authorization"] = f"Bearer {self._api_key}"
-        if self._platform_lower == "openclaw" and self._http_global_name:
-            h["x-openclaw-session-key"] = f"agent:{self._http_global_name}:{self._session_suffix}"
         h.update(self._extra_headers)
         return h
 
-    # ── ACP long-lived connection lifecycle ──
-
-    # [DEPRECATED] acp_start() was a pre-warm method that is no longer needed.
-    # The ACP session is created lazily on first prompt via _acp_pooled_prompt().
-    # async def acp_start(self):
-    #     """Ensure acpx session exists for this expert (optional warm-up)."""
-    #     if not self._acp_available or not self._is_acp_agent:
-    #         return
-    #
-    #     if self._acp_started:
-    #         return
-    #
-    #     try:
-    #         adapter = get_acpx_adapter(cwd=os.path.dirname(os.path.dirname(__file__)))
-    #         acp_session = f"agent:{self._oc_agent_name}:{self._acp_session_suffix}"
-    #         acpx_session = adapter.to_acpx_session_name(tool=self._acp_tool_name, session_key=acp_session)
-    #         await adapter.ensure_session(
-    #             tool=self._acp_tool_name,
-    #             session_key=acp_session,
-    #             acpx_session=acpx_session,
-    #             system_prompt=_EXTERNAL_AGENT_SYSTEM_PROMPT,
-    #         )
-    #         self._acp_started = True
-    #         print(f"  [OASIS] ✅ ACPX session warmed for {self.name}")
-    #     except Exception as e:
-    #         print(f"  [OASIS] ❌ ACPX warm failed for {self.name} (tool={self._acp_tool_name}): {e}")
-    #         self._acp_started = False
-
-    def _acp_pool_key(self) -> str:
-        return f"{self._acp_tool_name}\x1fagent:{self._oc_agent_name}:{self._acp_session_suffix}"
-
-    async def _acp_pooled_prompt(self, cli_message: str, *, _retry_dead: bool = False) -> str:
-        """One full acpx prompt on the named ACP session."""
-        t0 = time.time()
-        cli_session = f"agent:{self._oc_agent_name}:{self._acp_session_suffix}"
-        acpx_session = ""
-        try:
-            adapter = get_acpx_adapter(cwd=os.path.dirname(os.path.dirname(__file__)))
-            acpx_session = adapter.to_acpx_session_name(tool=self._acp_tool_name, session_key=cli_session)
-            system_prompt = (
-                _EXTERNAL_AGENT_SYSTEM_PROMPT + "\n\n" + _build_identity_prompt(self.title, self.persona)
-                if not self._acp_started
-                else None
-            )
-            result = await send_to_agent(
-                SendToAgentRequest(
-                    prompt=cli_message,
-                    connect_type="acp",
-                    platform=self._acp_tool_name,
-                    session=cli_session,
-                    options={
-                        "cwd": os.path.dirname(os.path.dirname(__file__)),
-                        **self._acpx_policy,
-                        "system_prompt": system_prompt,
-                    },
-                )
-            )
-            if not result.ok:
-                raise AcpxError(result.error or "unknown acpx send error")
-            reply = result.content or ""
-            _acp_oasis_trace(
-                "acp_prompt_complete",
-                agent_global_name=self._oc_agent_name,
-                cli_session_arg=cli_session,
-                reply_chars=len(reply or ""),
-                attachment_count=0,
-                elapsed_ms=round((time.time() - t0) * 1000),
-                cached=True,
-                backend="acpx",
-                acpx_session=acpx_session,
-            )
-            return reply
-        except AcpxError as e:
-            _acp_oasis_trace(
-                "acp_error",
-                agent_global_name=self._oc_agent_name,
-                cli_session_arg=cli_session,
-                error_type=type(e).__name__,
-                error=str(e),
-                elapsed_ms=round((time.time() - t0) * 1000),
-                backend="acpx",
-                acpx_session=acpx_session,
-            )
-            if not _retry_dead:
-                return await self._acp_pooled_prompt(cli_message, _retry_dead=True)
-            raise RuntimeError(str(e)) from e
-
-    async def acp_send(self, message: str) -> str:
-        """Send a message via the global ACP pool and return assistant text."""
-        if not self._is_acp_agent or not self._acp_available:
-            raise RuntimeError(f"ACP not available for {self.name}")
-
-        reply = await self._acp_pooled_prompt(message)
-        self._acp_started = True
-        return reply
-
-    async def acp_stop(self):
-        """Clear local warm-up flag only; the global ACP pool stays alive for reuse."""
-        self._acp_started = False
-
     async def _call_api(self, messages: list[dict], timeout_override: float | None = ...) -> str:
-        """Send messages to external API and return the assistant response text.
+        """Send messages to external API via connector and return the assistant response text.
 
-        For ACP agent-type externals (model="agent:<name>" with tag codex/claude/gemini/aider):
-          - Prefers ACP persistent connection when available.
-          - Falls back to HTTP API if ACP not started and api_url is configured.
-          - Raises RuntimeError only when neither ACP nor HTTP is available.
-
-        For non-agent externals: direct HTTP API call.
+        Strategy is determined by the connector registered for the platform:
+        - openclaw: OpenclawConnector (HTTP-first + ACP fallback)
+        - codex/claude/gemini/etc.: GenericAcpConnector (ACP-first + HTTP fallback)
+        - other platforms: GenericHttpConnector
 
         Args:
             timeout_override: Explicit timeout value. None = no timeout;
                               ... (default sentinel) = use self.timeout.
         """
         effective_timeout = self.timeout if timeout_override is ... else timeout_override
-        if self._drop_unknown_platform:
-            raise RuntimeError(f"Unsupported external platform '{self.platform}' for {self.name}; dropped.")
+        if not self.platform:
+            raise RuntimeError(f"Unsupported external platform for {self.name}; no platform specified.")
 
-        # ── ACP agent type: keep legacy user-only extraction for sync paths ──
-        if self._is_acp_agent:
-            cli_message = ""
-            for msg in reversed(messages):
-                if msg.get("role") == "user":
-                    cli_message = msg.get("content", "")
-                    break
-            if not cli_message:
-                cli_message = messages[-1].get("content", "") if messages else ""
+        # Build options with acp_options from config
+        options: dict[str, Any] = {
+            "timeout": effective_timeout,
+        }
+        if self._api_url:
+            options["api_url"] = self._api_url
+        if self._api_key:
+            options["api_key"] = self._api_key
+        if acp_options := getattr(self, '_acp_options', None):
+            options.update(acp_options)
 
-            if self._acp_available:
-                try:
-                    reply = await self._acp_pooled_prompt(cli_message)
-                    print(f"  [OASIS] 🔌 ACP send success for {self.name} ({len(reply)} chars)")
-                    self._acp_started = True
-                    return reply
-                except Exception as acp_err:
-                    if self._api_url:
-                        print(f"  [OASIS] ⚠️ ACP failed for {self.name}, fallback to HTTP: {acp_err}")
-                    else:
-                        raise RuntimeError(
-                            f"ACP failed for agent {self.name} "
-                            f"(agent={self._oc_agent_name}, tool={self._acp_tool_name}): {acp_err}"
-                        ) from acp_err
-            elif not self._api_url:
-                raise RuntimeError(
-                    f"ACP unavailable for agent {self.name} "
-                    f"(agent={self._oc_agent_name}, tool={self._acp_tool_name})"
-                )
-
-        # ── HTTP API call (non-ACP route) ──
-        if not self._api_url:
-            raise RuntimeError(f"No api_url configured for external expert {self.name}")
+        # Prepare messages body for HTTP fallback
         req_model = self.model
         if self._platform_lower == "openclaw" and self._http_global_name:
             model_str = str(req_model or "").strip()
             if not model_str.startswith("agent:"):
                 req_model = f"agent:{self._http_global_name}"
+
         body = {
             "model": req_model,
             "messages": messages,
             "stream": False,
         }
+        options["headers"] = self._headers()
+        options["body"] = body
+
+        # Build session key: agent:{name}:{session_suffix}
+        http_session_key = None
+        if self._platform_lower == "openclaw" and self._http_global_name:
+            http_session_key = f"agent:{self._http_global_name}:{self._session_suffix}"
+
+        # For openclaw platform, pass messages directly as prompt
+        # The connector handles HTTP-first + ACP fallback
         result = await send_to_agent(
             SendToAgentRequest(
                 prompt=messages,
                 connect_type="http",
                 platform=self.platform,
-                session=f"agent:{self._http_global_name}:{self._session_suffix}" if self._platform_lower == "openclaw" and self._http_global_name else None,
-                options={
-                    "api_url": self._api_url,
-                    "headers": self._headers(),
-                    "body": body,
-                    "timeout": effective_timeout,
-                },
+                session=http_session_key,
+                options=options,
             )
         )
+
         if result.ok:
             return result.content or ""
 
-        api_err = result.error or "unknown HTTP send error"
-        # OpenClaw: prefer HTTP first, then fallback to ACP.
-        if self._platform_lower == "openclaw" and self._http_global_name and bool(shutil.which("acpx")):
-            try:
-                cli_message = ""
-                for msg in reversed(messages):
-                    if msg.get("role") == "user":
-                        cli_message = msg.get("content", "")
-                        break
-                if not cli_message:
-                    cli_message = messages[-1].get("content", "") if messages else ""
-                acp_session = f"agent:{self._http_global_name}:{self._session_suffix}"
-                fallback = await send_to_agent(
-                    SendToAgentRequest(
-                        prompt=cli_message,
-                        connect_type="acp",
-                        platform="openclaw",
-                        session=acp_session,
-                        options={
-                            "cwd": os.path.dirname(os.path.dirname(__file__)),
-                            **self._acpx_policy,
-                            "system_prompt": _EXTERNAL_AGENT_SYSTEM_PROMPT
-                            + "\n\n"
-                            + _build_identity_prompt(self.title, self.persona),
-                        },
-                    )
-                )
-                if not fallback.ok:
-                    raise RuntimeError(fallback.error or "openclaw ACP fallback failed")
-                reply = fallback.content or ""
-                print(f"  [OASIS] ⚠️ HTTP failed for {self.name}, fallback to ACP succeeded")
-                return reply
-            except Exception as acp_err:
-                raise RuntimeError(
-                    f"API call failed for {self.name}: {api_err}; ACP fallback failed: {acp_err}"
-                ) from acp_err
+        api_err = result.error or "unknown send error"
         raise RuntimeError(f"API call failed for {self.name}: {api_err}")
+
     def _inject_oasis_reply_instruction(self, messages: list[dict]) -> None:
-        """Append OASIS JSON reply instruction to the last user message (ACP agent only)."""
-        if not self._is_acp_agent:
-            return
+        """Append OASIS JSON reply instruction to the last user message."""
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 msg["content"] = msg["content"] + self._OASIS_REPLY_INSTRUCTION
                 return
-
-    def _compose_acp_prompt(self, messages: list[dict]) -> str:
-        """Compose the transient ACP prompt for one round without replaying old turns."""
-        parts: list[str] = []
-        for msg in messages:
-            content = (msg.get("content") or "").strip()
-            if not content:
-                continue
-            if msg.get("role") == "system":
-                parts.append(f"[系统设定]\n{content}")
-            else:
-                parts.append(content)
-        return "\n\n".join(parts).strip()
-
-    async def _run_pooled_acp_prompt(self, prompt_text: str) -> None:
-        """Run one full ACP prompt on the global pool (callback rounds; await until prompt completes)."""
-        if not self._acp_available or not self._acp_bin:
-            print(f"  [OASIS] ❌ ACP unavailable for pooled dispatch ({self.name})")
-            return
-        try:
-            await self._acp_pooled_prompt(prompt_text)
-            self._acp_started = True
-        except Exception as e:
-            print(f"  [OASIS] ❌ ACP pooled dispatch failed for {self.name}: {e}")
-
-    def _dispatch_acp_prompt(self, prompt_text: str) -> asyncio.Task:
-        """Start one ACP prompt task on the shared pool; completion is independent of forum callback."""
-        task = asyncio.create_task(self._run_pooled_acp_prompt(prompt_text))
-        self._acp_dispatch_tasks.add(task)
-        task.add_done_callback(lambda t: self._acp_dispatch_tasks.discard(t))
-        return task
-
-    async def _call_api_with_agent_callback(
-        self,
-        forum: DiscussionForum,
-        messages: list[dict],
-        timeout_override: float | None = ...,
-    ) -> None:
-        """Dispatch ACP work, then wait until the agent callbacks or times out."""
-        effective_timeout = self.timeout if timeout_override is ... else timeout_override
-        round_num = forum.current_round
-        before_count = await forum.count_posts_by_author(self.name, round_num=round_num)
-        prompt_text = self._compose_acp_prompt(messages)
-        dispatch_task = self._dispatch_acp_prompt(prompt_text)
-        wait_timeout = effective_timeout if effective_timeout is not None else self.timeout
-        await forum.add_waiting_expert(self.name)
-        callback_ok = await forum.wait_for_author_post(
-            self.name,
-            round_num=round_num,
-            min_count=before_count + 1,
-            timeout=max(float(wait_timeout or 0.0), 0.0),
-        )
-        await forum.remove_waiting_expert(self.name)
-
-        if callback_ok:
-            print(f"  [OASIS] ✅ {self.name} callback applied for round {round_num}")
-            return
-
-        print(f"  [OASIS] ⏰ {self.name} callback timeout at round {round_num}")
-        if dispatch_task.done() and dispatch_task.exception():
-            print(f"  [OASIS] ⚠️ {self.name} ACP task exception: {dispatch_task.exception()}")
 
     # Regex to strip [end padding] lines (may be partially truncated)
     _END_PADDING_RE = re.compile(r"\[end\s*padding\]", re.IGNORECASE)
@@ -1636,7 +1344,7 @@ class ExternalExpert:
     async def _call_api_with_oasis_check(self, messages: list[dict], **kwargs) -> str | dict:
         """Call API up to _OASIS_REPLY_MAX_RETRIES times within one participate turn.
 
-        For ACP agents, inject the OASIS JSON protocol instruction, then:
+        Inject the OASIS JSON protocol instruction, then:
           1. Strict extraction: look for JSON with recognised "clawcross_type" → return dict
           2. Tolerant extraction: try _parse_expert_response (any valid JSON) → return dict
           3. Both failed → ask agent to retry with correct format
@@ -1648,24 +1356,7 @@ class ExternalExpert:
         No cross-reply buffering: each retry is independent.
         Each participate() call is independent; no state carries across rounds.
         """
-        if not self._is_acp_agent:
-            raw_reply = await self._call_api(messages, **kwargs)
-
-            status, parsed = self._extract_oasis_json(raw_reply)
-            if status == "found":
-                print(f"  [OASIS] ✅ {self.name} valid OASIS JSON extracted (non-ACP external)")
-                return parsed
-
-            try:
-                tolerant_result = _parse_expert_response(raw_reply)
-                if isinstance(tolerant_result, dict):
-                    print(f"  [OASIS] ✅ {self.name} tolerant JSON extracted (non-ACP external)")
-                    return tolerant_result
-            except json.JSONDecodeError:
-                pass
-
-            return self._END_PADDING_RE.sub("", raw_reply).strip()
-
+        # Always inject OASIS reply instruction
         self._inject_oasis_reply_instruction(messages)
 
         last_raw = ""
@@ -1735,44 +1426,6 @@ class ExternalExpert:
             new_posts = [p for p in others if p.id not in self._seen_post_ids]
             self._seen_post_ids.update(p.id for p in others)
 
-            if self._is_acp_agent:
-                messages: list[dict] = []
-                if not self._initialized:
-                    identity_prompt = _build_identity_prompt(self.title, self.persona).strip()
-                    if identity_prompt:
-                        messages.append({"role": "system", "content": identity_prompt})
-                    task_parts = [f"任务主题: {forum.question}"]
-                    if instruction:
-                        task_parts.append(f"\n执行指令: {instruction}")
-                    if others:
-                        task_parts.append(f"\n前序 agent 的执行结果:\n{_format_posts(others)}")
-                    task_parts.append("\n请直接执行任务并返回结果。")
-                    task_parts.append(_BEHAVIOR_RULES)
-                    task_parts.append(_EXEC_JSON_HINT)
-                    messages.append({"role": "user", "content": "\n".join(task_parts)})
-                    self._initialized = True
-                else:
-                    ctx_parts = [f"【第 {forum.current_round} 轮】"]
-                    if instruction:
-                        ctx_parts.append(f"执行指令: {instruction}")
-                    if new_posts:
-                        ctx_parts.append(f"其他 agent 的新结果:\n{_format_posts(new_posts)}")
-                    ctx_parts.append("请继续执行任务并返回结果。")
-                    ctx_parts.append(_BEHAVIOR_RULES)
-                    ctx_parts.append(_EXEC_JSON_HINT)
-                    messages.append({"role": "user", "content": "\n".join(ctx_parts)})
-
-                try:
-                    reply = await self._call_api_with_oasis_check(messages)
-                    if isinstance(reply, dict):
-                        result = reply
-                    else:
-                        result = _parse_expert_response(reply)
-                    await _apply_response(result, self.name, forum, others)
-                except Exception as e:
-                    print(f"  [OASIS] ❌ {self.name} (external ACP execute) error: {e}")
-                return
-
             messages: list[dict] = []
             if not self._initialized:
                 if self.persona:
@@ -1821,8 +1474,8 @@ class ExternalExpert:
         new_posts = [p for p in others if p.id not in self._seen_post_ids]
         self._seen_post_ids.update(p.id for p in others)
 
-        if self._is_acp_agent:
-            messages: list[dict] = []
+        messages: list[dict] = []
+        if not self._initialized:
             posts_text = _format_posts(others) if others else "(还没有其他人发言，你来开启讨论吧)"
             system_prompt, user_prompt = _build_discuss_prompt(
                 self.title, self.persona, forum.question, posts_text, split=True,
@@ -1831,30 +1484,6 @@ class ExternalExpert:
                 messages.append({"role": "system", "content": system_prompt})
             if instruction:
                 user_prompt += f"\n\n📋 本轮你的专项指令：{instruction}\n请在回复中重点关注和执行这个指令。"
-            messages.append({"role": "user", "content": user_prompt})
-            if not self._initialized:
-                self._initialized = True
-
-            try:
-                reply = await self._call_api_with_oasis_check(messages)
-                if isinstance(reply, dict):
-                    result = reply
-                else:
-                    result = _parse_expert_response(reply)
-                await _apply_response(result, self.name, forum, others)
-            except Exception as e:
-                print(f"  [OASIS] ❌ {self.name} (external ACP discussion) error: {e}")
-            return
-
-        messages: list[dict] = []
-        if not self._initialized:
-            posts_text = _format_posts(others) if others else "(还没有其他人发言，你来开启讨论吧)"
-            system_prompt, user_prompt = _build_discuss_prompt(
-                self.title, self.persona, forum.question, posts_text, split=True,
-            )
-            if instruction:
-                user_prompt += f"\n\n📋 本轮你的专项指令：{instruction}\n请在回复中重点关注和执行这个指令。"
-            messages.append({"role": "system", "content": system_prompt})
             messages.append({"role": "user", "content": user_prompt})
             self._initialized = True
         else:
