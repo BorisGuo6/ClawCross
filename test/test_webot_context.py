@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +14,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 import webot.context as webot_context
+from utils import checkpoint_repository
 from webot.context import budget_tool_messages, compact_history_messages
 from webot.context import budget_user_messages
 
@@ -103,6 +104,116 @@ class WeBotContextTests(unittest.TestCase):
         self.assertTrue(
             any(isinstance(msg, HumanMessage) and msg.content == "latest user request must remain" for msg in result)
         )
+
+    def test_persistent_compaction_writes_state_and_reuses_it(self):
+        messages = [HumanMessage(content=f"message-{index} " * 80) for index in range(24)]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir) / "agent_checkpoints"
+            first, first_info = webot_context.apply_persistent_compaction(
+                user_id="alice",
+                session_id="session-1",
+                messages=messages,
+                context_token_budget=600,
+                preserve_recent=4,
+                max_messages=8,
+                checkpoint_store_path=checkpoint_dir,
+            )
+            record = checkpoint_repository.get_context_compaction(
+                checkpoint_dir,
+                "alice#session-1",
+            )
+
+            self.assertTrue(first_info["updated"])
+            self.assertIsNotNone(record)
+            self.assertIsInstance(first[0], HumanMessage)
+            self.assertIn("压缩摘要", first[0].content)
+
+            second, second_info = webot_context.apply_persistent_compaction(
+                user_id="alice",
+                session_id="session-1",
+                messages=messages,
+                context_token_budget=600,
+                preserve_recent=4,
+                max_messages=8,
+                checkpoint_store_path=checkpoint_dir,
+            )
+
+            self.assertFalse(second_info["updated"])
+            self.assertTrue(second_info["loaded"])
+            self.assertEqual(second[0].content, first[0].content)
+
+    def test_persistent_compaction_waits_for_min_new_messages(self):
+        messages = [HumanMessage(content=f"message-{index} " * 80) for index in range(24)]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir) / "agent_checkpoints"
+            _, first_info = webot_context.apply_persistent_compaction(
+                user_id="alice",
+                session_id="session-1",
+                messages=messages,
+                context_token_budget=600,
+                preserve_recent=4,
+                max_messages=8,
+                checkpoint_store_path=checkpoint_dir,
+            )
+            updated_messages = messages + [
+                HumanMessage(content="small addition one " * 80),
+                HumanMessage(content="small addition two " * 80),
+            ]
+            _, second_info = webot_context.apply_persistent_compaction(
+                user_id="alice",
+                session_id="session-1",
+                messages=updated_messages,
+                context_token_budget=600,
+                preserve_recent=4,
+                max_messages=8,
+                checkpoint_store_path=checkpoint_dir,
+            )
+
+            self.assertTrue(first_info["updated"])
+            self.assertFalse(second_info["updated"])
+            self.assertEqual(second_info["reason"], "min_new_messages")
+
+    def test_persistent_compaction_writes_existing_checkpoint_db(self):
+        messages = [HumanMessage(content=f"message-{index} " * 80) for index in range(24)]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir) / "agent_checkpoints"
+            existing_db = checkpoint_dir / "alice#session-1.db"
+            checkpoint_dir.mkdir(parents=True)
+            existing_db.touch()
+
+            webot_context.apply_persistent_compaction(
+                user_id="alice",
+                session_id="session-1",
+                messages=messages,
+                context_token_budget=600,
+                preserve_recent=4,
+                max_messages=8,
+                checkpoint_store_path=checkpoint_dir,
+            )
+
+            self.assertTrue(existing_db.exists())
+            self.assertIsNotNone(
+                checkpoint_repository.get_context_compaction(checkpoint_dir, "alice#session-1")
+            )
+
+    def test_safe_compaction_boundary_does_not_orphan_tool_message(self):
+        messages = [
+            HumanMessage(content="start"),
+            AIMessage(
+                content="tool call",
+                tool_calls=[{"name": "read_file", "args": {}, "id": "call-1"}],
+            ),
+            ToolMessage(content="result", tool_call_id="call-1", name="read_file"),
+            HumanMessage(content="latest"),
+        ]
+
+        boundary = webot_context.find_safe_compaction_boundary(messages, 2)
+
+        self.assertEqual(boundary, 1)
+        self.assertIsInstance(messages[boundary], AIMessage)
 
     def test_context_limits_support_model_defaults_and_user_override(self):
         from utils.context_limits import infer_model_context_window, resolve_history_token_budget

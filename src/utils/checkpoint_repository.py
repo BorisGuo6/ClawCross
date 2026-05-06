@@ -8,8 +8,12 @@ SQLite checkpoint 持久化操作模块
 from __future__ import annotations
 
 from contextlib import suppress
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import json
 from pathlib import Path
 import sqlite3
+from typing import Any
 
 import aiosqlite
 
@@ -23,9 +27,169 @@ from utils.checkpoint_paths import (
 _VACUUM_FREE_PAGE_RATIO_THRESHOLD = 0.35
 
 
+@dataclass(frozen=True)
+class ContextCompactionRecord:
+    thread_id: str
+    summary: str
+    compacted_until: int
+    source_message_count: int
+    summary_token_estimate: int
+    metadata: dict[str, Any] = field(default_factory=dict)
+    updated_at: str = ""
+    created_at: str = ""
+
+    @property
+    def metadata_json(self) -> str:
+        return _json_dumps(self.metadata)
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _json_loads_dict(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _is_missing_table_error(exc: sqlite3.OperationalError) -> bool:
     """判断异常是否为 'no such table' 错误。"""
     return "no such table" in str(exc).lower()
+
+
+def _ensure_context_compaction_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS context_compactions (
+            thread_id TEXT PRIMARY KEY,
+            summary TEXT NOT NULL DEFAULT '',
+            compacted_until INTEGER NOT NULL DEFAULT 0,
+            source_message_count INTEGER NOT NULL DEFAULT 0,
+            summary_token_estimate INTEGER NOT NULL DEFAULT 0,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _row_to_context_compaction(row: sqlite3.Row | None) -> ContextCompactionRecord | None:
+    if row is None:
+        return None
+    data = dict(row)
+    data["metadata"] = _json_loads_dict(data.pop("metadata_json", ""))
+    return ContextCompactionRecord(**data)
+
+
+def get_context_compaction(
+    store_path: str | Path | None,
+    thread_id: str,
+) -> ContextCompactionRecord | None:
+    """Load persistent compaction state from this thread's checkpoint DB."""
+    for path in candidate_checkpoint_db_paths_for_thread(store_path, thread_id):
+        with sqlite3.connect(path, timeout=30) as conn:
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT * FROM context_compactions
+                    WHERE thread_id = ?
+                    """,
+                    (thread_id,),
+                ).fetchone()
+            except sqlite3.OperationalError as exc:
+                if _is_missing_table_error(exc):
+                    continue
+                raise
+        record = _row_to_context_compaction(row)
+        if record is not None:
+            return record
+    return None
+
+
+def save_context_compaction(
+    store_path: str | Path | None,
+    thread_id: str,
+    *,
+    summary: str,
+    compacted_until: int,
+    source_message_count: int,
+    summary_token_estimate: int,
+    metadata: dict[str, Any] | None = None,
+) -> ContextCompactionRecord:
+    """Persist compaction state in the same per-thread DB as LangGraph checkpoints."""
+    candidates = candidate_checkpoint_db_paths_for_thread(store_path, thread_id)
+    path = candidates[0] if candidates else checkpoint_db_path_for_thread(thread_id, store_path)
+    now = _utc_now()
+    with sqlite3.connect(path, timeout=30) as conn:
+        conn.row_factory = sqlite3.Row
+        _ensure_context_compaction_table(conn)
+        conn.execute(
+            """
+            INSERT INTO context_compactions (
+                thread_id, summary, compacted_until, source_message_count,
+                summary_token_estimate, metadata_json, updated_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                summary=excluded.summary,
+                compacted_until=excluded.compacted_until,
+                source_message_count=excluded.source_message_count,
+                summary_token_estimate=excluded.summary_token_estimate,
+                metadata_json=excluded.metadata_json,
+                updated_at=excluded.updated_at
+            """,
+            (
+                thread_id,
+                summary.strip(),
+                max(0, int(compacted_until)),
+                max(0, int(source_message_count)),
+                max(0, int(summary_token_estimate)),
+                _json_dumps(metadata or {}),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT * FROM context_compactions
+            WHERE thread_id = ?
+            """,
+            (thread_id,),
+        ).fetchone()
+    record = _row_to_context_compaction(row)
+    assert record is not None
+    return record
+
+
+def delete_context_compaction(
+    store_path: str | Path | None,
+    thread_id: str,
+) -> None:
+    for path in candidate_checkpoint_db_paths_for_thread(store_path, thread_id):
+        with sqlite3.connect(path, timeout=30) as conn:
+            try:
+                conn.execute(
+                    """
+                    DELETE FROM context_compactions
+                    WHERE thread_id = ?
+                    """,
+                    (thread_id,),
+                )
+            except sqlite3.OperationalError as exc:
+                if not _is_missing_table_error(exc):
+                    raise
+            conn.commit()
 
 
 async def list_thread_ids_by_prefix(db_path: str, prefix: str) -> list[str]:

@@ -27,6 +27,7 @@ from webot.policy import (
     run_tool_policy_hooks,
 )
 from webot.context import (
+    apply_persistent_compaction,
     budget_user_messages,
     budget_tool_messages,
     compact_history_messages,
@@ -1565,6 +1566,26 @@ class TeamAgent:
         if len(history_messages) > 1:
             history_messages = self._strip_multimodal_parts(history_messages[:-1]) + [history_messages[-1]]
 
+        history_token_budget = resolve_history_token_budget(is_subagent=is_subagent)
+        max_history_messages, preserve_recent_messages = resolve_history_message_limits(
+            is_subagent=is_subagent,
+            token_budget=history_token_budget,
+        )
+        history_messages, compaction_state = apply_persistent_compaction(
+            user_id=user_id,
+            session_id=session_id,
+            messages=history_messages,
+            context_token_budget=history_token_budget,
+            preserve_recent=preserve_recent_messages,
+            max_messages=max_history_messages,
+            checkpoint_store_path=self._db_path,
+        )
+        if compaction_state.get("updated"):
+            print(
+                f">>> [compact-state] updated until={compaction_state.get('compacted_until')} "
+                f"tail_tokens≈{compaction_state.get('tokens')}"
+            )
+
         history_messages = budget_user_messages(
             user_id=user_id,
             session_id=session_id,
@@ -1574,11 +1595,6 @@ class TeamAgent:
             user_id=user_id,
             session_id=session_id,
             messages=history_messages,
-        )
-        history_token_budget = resolve_history_token_budget(is_subagent=is_subagent)
-        max_history_messages, preserve_recent_messages = resolve_history_message_limits(
-            is_subagent=is_subagent,
-            token_budget=history_token_budget,
         )
 
         with contextlib.suppress(Exception):

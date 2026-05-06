@@ -18,6 +18,11 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
+from utils.checkpoint_repository import (
+    ContextCompactionRecord,
+    get_context_compaction,
+    save_context_compaction,
+)
 from webot.runtime_store import create_runtime_artifact
 
 
@@ -32,9 +37,16 @@ DEFAULT_CONTEXT_TOKEN_BUDGET = 12000
 DEFAULT_RECENT_MESSAGE_COUNT = 10
 DEFAULT_MAX_HISTORY_MESSAGES = 28
 _ARTIFACTS_ENV = "WEBOT_RUNTIME_ARTIFACTS_ENABLED"
+_COMPACTION_STATE_ENV = "WEBOT_COMPACTION_STATE_ENABLED"
+_COMPACTION_TRIGGER_RATIO_ENV = "WEBOT_COMPACTION_TRIGGER_RATIO"
+_COMPACTION_TARGET_RATIO_ENV = "WEBOT_COMPACTION_TARGET_RATIO"
+_COMPACTION_MIN_NEW_MESSAGES_ENV = "WEBOT_COMPACTION_MIN_NEW_MESSAGES"
 _USER_INPUT_CHAR_BUDGET_ENV = "WEBOT_USER_INPUT_CHAR_BUDGET"
 _USER_INPUT_ITEM_LIMIT_ENV = "WEBOT_USER_INPUT_ITEM_LIMIT"
 _SKIP_LATEST_USER_INPUT_BUDGET_ENV = "WEBOT_SKIP_LATEST_USER_INPUT_BUDGET"
+DEFAULT_COMPACTION_TRIGGER_RATIO = 0.80
+DEFAULT_COMPACTION_TARGET_RATIO = 0.50
+DEFAULT_COMPACTION_MIN_NEW_MESSAGES = 8
 
 
 def approximate_token_count(text: str) -> int:
@@ -100,6 +112,17 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw.strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -117,6 +140,22 @@ def _resolve_user_input_item_limit() -> int:
 
 def _resolve_latest_human_message_preserve_count() -> int:
     return 1 if _env_flag(_SKIP_LATEST_USER_INPUT_BUDGET_ENV, True) else 0
+
+
+def persistent_compaction_enabled() -> bool:
+    return _env_flag(_COMPACTION_STATE_ENV, True)
+
+
+def _resolve_compaction_trigger_ratio() -> float:
+    return min(0.95, max(0.10, _env_float(_COMPACTION_TRIGGER_RATIO_ENV, DEFAULT_COMPACTION_TRIGGER_RATIO)))
+
+
+def _resolve_compaction_target_ratio() -> float:
+    return min(0.90, max(0.05, _env_float(_COMPACTION_TARGET_RATIO_ENV, DEFAULT_COMPACTION_TARGET_RATIO)))
+
+
+def _resolve_compaction_min_new_messages() -> int:
+    return max(0, _env_int(_COMPACTION_MIN_NEW_MESSAGES_ENV, DEFAULT_COMPACTION_MIN_NEW_MESSAGES))
 
 
 def budget_user_messages(
@@ -279,6 +318,226 @@ def _message_summary_line(message: BaseMessage, limit: int = 280) -> str:
         role = "system"
     text = _trim_text(_stringify(message.content).replace("\n", " "), limit)
     return f"- {role}: {text}"
+
+
+_COMPACTION_SUMMARY_PREFIX = "以下为早期对话的压缩摘要"
+
+
+def _message_has_tool_calls(message: BaseMessage) -> bool:
+    if not isinstance(message, AIMessage):
+        return False
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if tool_calls:
+        return True
+    content = getattr(message, "content", None)
+    if isinstance(content, list):
+        return any(isinstance(part, dict) and part.get("type") == "tool_use" for part in content)
+    return False
+
+
+def find_safe_compaction_boundary(messages: list[BaseMessage], desired_until: int) -> int:
+    """Return a boundary that does not leave a ToolMessage orphaned at tail start."""
+    if not messages:
+        return 0
+    boundary = min(max(0, desired_until), len(messages))
+    if boundary <= 0 or boundary >= len(messages):
+        return boundary
+
+    # If the tail would start with ToolMessage(s), move the whole AI/tool block
+    # back into the tail. The summarized prefix is no longer sent as tool calls,
+    # so the live tail must be sequence-valid on its own.
+    if isinstance(messages[boundary], ToolMessage):
+        while boundary > 0 and isinstance(messages[boundary], ToolMessage):
+            boundary -= 1
+        if boundary > 0 and _message_has_tool_calls(messages[boundary - 1]):
+            boundary -= 1
+    return max(0, boundary)
+
+
+def _latest_human_index(messages: list[BaseMessage]) -> int:
+    for index in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[index], HumanMessage):
+            return index
+    return len(messages)
+
+
+def _estimate_messages(messages: list[BaseMessage]) -> int:
+    return sum(approximate_token_count(_stringify(msg.content)) for msg in messages)
+
+
+def _valid_compaction_record(
+    record: ContextCompactionRecord | None,
+    messages: list[BaseMessage],
+) -> ContextCompactionRecord | None:
+    if record is None:
+        return None
+    if not record.summary.strip():
+        return None
+    if record.compacted_until <= 0:
+        return None
+    if record.compacted_until > len(messages):
+        return None
+    return record
+
+
+def _summary_message(summary: str) -> HumanMessage:
+    text = summary.strip()
+    if not text.startswith(_COMPACTION_SUMMARY_PREFIX):
+        text = f"{_COMPACTION_SUMMARY_PREFIX}，仅保留任务关键上下文、已做尝试和结论：\n{text}"
+    return HumanMessage(content=text)
+
+
+def _build_incremental_summary(
+    *,
+    previous_summary: str,
+    segment: list[BaseMessage],
+    max_lines: int,
+) -> str:
+    lines = [
+        "以下为早期对话的压缩摘要，仅保留任务关键上下文、已做尝试和结论：",
+    ]
+    previous = previous_summary.strip()
+    if previous:
+        previous_body = previous
+        if previous_body.startswith(_COMPACTION_SUMMARY_PREFIX):
+            previous_body = "\n".join(previous_body.splitlines()[1:]).strip()
+        if previous_body:
+            lines.append("- previous_summary: " + _trim_text(previous_body.replace("\n", " "), 1200))
+
+    for message in segment[-max(4, max_lines):]:
+        lines.append(_message_summary_line(message))
+    return "\n".join(lines)
+
+
+def _choose_compaction_boundary(
+    messages: list[BaseMessage],
+    *,
+    preserve_recent: int,
+    target_tokens: int,
+) -> int:
+    if len(messages) <= 2:
+        return 0
+
+    latest_human = _latest_human_index(messages)
+    max_boundary = max(0, latest_human)
+    boundary = min(max_boundary, max(0, len(messages) - max(1, preserve_recent)))
+    if boundary <= 0:
+        return 0
+
+    while boundary < max_boundary and _estimate_messages(messages[boundary:]) > target_tokens:
+        boundary += 1
+    return find_safe_compaction_boundary(messages, boundary)
+
+
+def apply_persistent_compaction(
+    *,
+    user_id: str,
+    session_id: str,
+    messages: list[BaseMessage],
+    context_token_budget: int,
+    preserve_recent: int,
+    max_messages: int,
+    checkpoint_store_path: str | os.PathLike | None = None,
+) -> tuple[list[BaseMessage], dict[str, Any]]:
+    """
+    Replace already-compacted prefix history with a persistent summary.
+
+    The original LangGraph checkpoint remains intact. This only shapes the
+    message list sent to the model and persists a deterministic summary cursor
+    so old history is not re-compacted on every turn.
+    """
+    info: dict[str, Any] = {
+        "enabled": persistent_compaction_enabled(),
+        "loaded": False,
+        "updated": False,
+        "compacted_until": 0,
+        "reason": "disabled",
+    }
+    if not info["enabled"] or not user_id or not session_id or not messages:
+        return messages, info
+
+    thread_id = f"{user_id}#{session_id}"
+    trigger_ratio = _resolve_compaction_trigger_ratio()
+    target_ratio = min(_resolve_compaction_target_ratio(), trigger_ratio)
+    trigger_tokens = max(1, int(context_token_budget * trigger_ratio))
+    target_tokens = max(1, int(context_token_budget * target_ratio))
+    min_new_messages = _resolve_compaction_min_new_messages()
+
+    record = _valid_compaction_record(
+        get_context_compaction(checkpoint_store_path, thread_id),
+        messages,
+    )
+    previous_until = record.compacted_until if record else 0
+    previous_summary = record.summary if record else ""
+    if record:
+        info.update(
+            {
+                "loaded": True,
+                "compacted_until": previous_until,
+                "summary_tokens": record.summary_token_estimate,
+                "reason": "loaded",
+            }
+        )
+
+    current_view = (
+        [_summary_message(previous_summary)] + messages[previous_until:]
+        if record
+        else list(messages)
+    )
+    current_tokens = _estimate_messages(current_view)
+    if len(current_view) <= max_messages and current_tokens <= trigger_tokens:
+        info.update({"tokens": current_tokens, "reason": "below_trigger"})
+        return current_view, info
+
+    boundary = _choose_compaction_boundary(
+        messages,
+        preserve_recent=preserve_recent,
+        target_tokens=target_tokens,
+    )
+    new_message_count = max(0, boundary - previous_until)
+    if boundary <= previous_until or (record and new_message_count < min_new_messages):
+        info.update(
+            {
+                "tokens": current_tokens,
+                "reason": "min_new_messages",
+                "new_message_count": new_message_count,
+            }
+        )
+        return current_view, info
+
+    summary = _build_incremental_summary(
+        previous_summary=previous_summary,
+        segment=messages[previous_until:boundary],
+        max_lines=max_messages,
+    )
+    summary_tokens = approximate_token_count(summary)
+    saved = save_context_compaction(
+        checkpoint_store_path,
+        thread_id,
+        summary=summary,
+        compacted_until=boundary,
+        source_message_count=len(messages),
+        summary_token_estimate=summary_tokens,
+        metadata={
+            "trigger_tokens": trigger_tokens,
+            "target_tokens": target_tokens,
+            "preserve_recent": preserve_recent,
+            "new_message_count": new_message_count,
+        },
+    )
+    compacted_view = [_summary_message(saved.summary)] + messages[saved.compacted_until:]
+    info.update(
+        {
+            "loaded": bool(record),
+            "updated": True,
+            "compacted_until": saved.compacted_until,
+            "summary_tokens": saved.summary_token_estimate,
+            "tokens": _estimate_messages(compacted_view),
+            "reason": "updated",
+            "new_message_count": new_message_count,
+        }
+    )
+    return compacted_view, info
 
 
 def compact_history_messages(
