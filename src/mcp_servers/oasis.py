@@ -1075,6 +1075,31 @@ async def list_oasis_workflows(username: str = "", team: str = "") -> str:
 
 
 @mcp.tool()
+async def get_workflow_writing_rules() -> str:
+    """
+    Return the canonical authoring rules for ClawCross/OASIS Python workflows
+    (workflowpy). Call this BEFORE writing or editing a workflow file so you
+    follow the exact bootstrap, ctx API, and orchestration constraints.
+
+    The rules cover:
+      • Required structure (`from oasis.workflow import Context, workflow`,
+        `@workflow` decorator)
+      • Context API: identity, list/get helpers, send_agent / send_persona,
+        publish, topics, set_conclusion / set_result
+      • SendToAgentResult attribute access
+      • Agent vs persona selection
+      • Multi-round prompt splicing
+      • Hard constraints (no sys.path / PYTHONPATH bootstrap, no direct
+        python_workflow_cli import, etc.)
+    """
+    try:
+        from oasis.workflow_rules import get_workflow_writing_rules as _rules
+        return _rules()
+    except Exception as e:
+        return f"❌ 读取 workflow 规则失败: {e}"
+
+
+@mcp.tool()
 async def list_oasis_python_workflows(username: str = "", team: str = "") -> str:
     """
     List all saved Python workflows for the current user.
