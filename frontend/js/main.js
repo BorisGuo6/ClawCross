@@ -78,6 +78,16 @@ const i18n = {
         llm_not_configured: 'LLM API 未配置，请先前往设置填写 API Key',
         project_update_banner: '发现新版本 {latest}，点击查看并更新',
         project_update_banner_dirty: '发现新版本 {latest}，但本地有未提交改动',
+        project_update_summary_placeholder: '点击"检查更新"后显示版本信息。',
+        project_update_status_label: '状态',
+        project_update_branch_label: '分支',
+        project_update_channel_label: '通道',
+        project_update_current_label: '当前版本',
+        project_update_remote_label: '远端版本',
+        project_update_dirty_warning: '本地工作区存在未提交改动；完整更新会使用远端覆盖本地。',
+        project_update_has_update: '检测到可用更新。',
+        project_update_has_update_npm: '检测到可用更新（npm 升级）。',
+        project_update_up_to_date: '当前已经是最新版本。',
 
         // 头部
         encrypted: '● 已加密',
@@ -849,6 +859,16 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         llm_not_configured: 'LLM API not configured. Click here to set up API Key.',
         project_update_banner: 'New version {latest} is available. Click to review and update.',
         project_update_banner_dirty: 'New version {latest} is available, but local changes block auto update.',
+        project_update_summary_placeholder: 'Click "Check for updates" to view version info.',
+        project_update_status_label: 'Status',
+        project_update_branch_label: 'Branch',
+        project_update_channel_label: 'Channel',
+        project_update_current_label: 'Current',
+        project_update_remote_label: 'Latest',
+        project_update_dirty_warning: 'Local working tree has uncommitted changes; a full update would overwrite local with remote.',
+        project_update_has_update: 'Update available.',
+        project_update_has_update_npm: 'Update available (npm upgrade).',
+        project_update_up_to_date: 'Already on the latest version.',
 
         // Header
         encrypted: '● Encrypted',
@@ -8263,23 +8283,25 @@ function _renderProjectUpdateSummary(update) {
     if (!summaryEl || !startBtn) return;
     if (!update) {
         updateProjectUpdateBanner(null);
-        summaryEl.textContent = '点击“检查更新”后显示版本信息。';
+        summaryEl.textContent = t('project_update_summary_placeholder');
         startBtn.disabled = true;
         if (logWrap) logWrap.style.display = 'none';
         return;
     }
+    const isNpm = update.deployment_mode === 'npm';
+    const channelLabel = t(isNpm ? 'project_update_channel_label' : 'project_update_branch_label');
     const lines = [
-        `状态: ${update.status || 'idle'}`,
-        `分支: ${update.branch || 'unknown'}`,
-        `当前版本: ${(update.current_short_commit || '-')} ${update.current_subject ? `(${update.current_subject})` : ''}`.trim(),
-        `远端版本: ${(update.latest_short_commit || '-')} ${update.latest_subject ? `(${update.latest_subject})` : ''}`.trim(),
+        `${t('project_update_status_label')}: ${update.status || 'idle'}`,
+        `${channelLabel}: ${update.branch || (isNpm ? 'latest' : 'unknown')}`,
+        `${t('project_update_current_label')}: ${(update.current_short_commit || '-')} ${update.current_subject ? `(${update.current_subject})` : ''}`.trim(),
+        `${t('project_update_remote_label')}: ${(update.latest_short_commit || '-')} ${update.latest_subject ? `(${update.latest_subject})` : ''}`.trim(),
     ];
-    if (update.dirty) {
-        lines.push('本地工作区存在未提交改动；完整更新会使用远端覆盖本地。');
+    if (!isNpm && update.dirty) {
+        lines.push(t('project_update_dirty_warning'));
     } else if (update.has_update) {
-        lines.push('检测到可用更新。');
+        lines.push(t(isNpm ? 'project_update_has_update_npm' : 'project_update_has_update'));
     } else {
-        lines.push('当前已经是最新版本。');
+        lines.push(t('project_update_up_to_date'));
     }
     if (update.message) {
         lines.push('');

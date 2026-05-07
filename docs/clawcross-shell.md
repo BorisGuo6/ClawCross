@@ -112,11 +112,13 @@ ACP-backed platforms route through the local `acpx` bridge and the frontend prox
 
 ## NPM Packaging
 
-The repository package exposes a `clawcross` binary through `bin/clawcross.js`. The package file list is intentionally restricted to the shell wrapper, Python CLI, docs, license, and README so `npm pack` does not include runtime data, frontend bundles, logs, or binaries.
+The repository is published as the `clawcross-cli` npm package. `bin/clawcross.js` is the CLI entrypoint declared in the `bin` field. The package ships the full git-tracked source tree (frontend, agents, scripts, docs) so a global install behaves like a `git clone` of the project — minus everything excluded by `.gitignore` / `.npmignore` (virtual envs, logs, runtime data, large binaries such as `bin/cloudflared`).
 
-For a standalone CLI tarball without frontend dependencies, use the package under `npm/clawcross-cli`:
+Build a tarball from the repo root:
 
 ```bash
-npm pack ./npm/clawcross-cli
+npm pack
 npm install -g ./clawcross-cli-0.0.1.tgz
 ```
+
+`.npmignore` mirrors `.gitignore` and additionally drops `.git/`, `.github/`, `.pytest_cache/`, the cloudflared binary, and runtime logs so they never reach the registry.

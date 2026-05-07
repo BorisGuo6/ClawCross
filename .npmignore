@@ -31,8 +31,7 @@ pyrightconfig.json
 Thumbs.db
 
 # cloudflared / bark-server 二进制
-bin/*
-!bin/clawcross.js
+bin/
 
 # 打包产物
 build/
@@ -97,3 +96,12 @@ docs/media/teamclaw-demo.mp4
 # 临时 LLM 请求调试导出（CLAWCROSS_DEBUG_LLM_PAYLOAD=1）
 data/debug_llm_payload_last.json
 .claude/settings.local.json
+
+# npm 包不需要的开发资源
+.git/
+.github/
+.pytest_cache/
+
+# 显式排除大体积二进制（npm 对 bin/ 字段所在目录有强制保留）
+bin/cloudflared
+logs/*.log

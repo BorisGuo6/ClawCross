@@ -12,6 +12,7 @@ import re
 import select
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -201,16 +202,15 @@ def _load_state() -> dict:
 
 
 def _package_version() -> str:
-    for path in (PROJECT_ROOT / "package.json", PROJECT_ROOT / "npm" / "clawcross-cli" / "package.json"):
-        if not path.exists():
-            continue
+    path = PROJECT_ROOT / "package.json"
+    if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            version = data.get("version")
+            if isinstance(version, str) and version:
+                return version
         except Exception:
-            continue
-        version = data.get("version")
-        if isinstance(version, str) and version:
-            return version
+            pass
     return "dev"
 
 
@@ -707,6 +707,27 @@ def cmd_cancel(args, state: dict) -> int:
         return 1
 
 
+def cmd_update(args, _state: dict) -> int:
+    target = "clawcross-cli@latest" if not args.version else f"clawcross-cli@{args.version}"
+    npm_bin = "npm.cmd" if sys.platform == "win32" else "npm"
+    cmd = [npm_bin, "install", "-g", target]
+    print(f"Running: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, check=False)
+    except FileNotFoundError:
+        print("npm not found in PATH. Install Node.js first: https://nodejs.org", file=sys.stderr)
+        return 127
+    if result.returncode != 0:
+        print(
+            "Update failed. If this is a permission error, retry with sudo or "
+            "use a Node version manager (nvm/fnm) so global installs land in your home directory.",
+            file=sys.stderr,
+        )
+        return result.returncode
+    print(f"Updated to {target}. Re-run 'clawcross --version' to confirm.")
+    return 0
+
+
 def _prompt_label(state: dict) -> str:
     current = _current(state)
     platform = _fit(current.get("platform", "internal"), 14)
@@ -1088,6 +1109,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="clawcross",
         description="ClawCross Shell: Codex-style multi-platform agent CLI",
     )
+    parser.add_argument(
+        "-V", "--version", action="version",
+        version=f"%(prog)s {_package_version()}",
+    )
     sub = parser.add_subparsers(dest="command")
 
     run = sub.add_parser("run", help="Run one prompt on the current or selected platform")
@@ -1110,6 +1135,12 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument("-s", "--session", help="Session id")
     cancel.add_argument("-u", "--user", help="User id")
 
+    update = sub.add_parser("update", help="Upgrade clawcross-cli via npm")
+    update.add_argument(
+        "version", nargs="?", default=None,
+        help="Specific version (e.g. 0.0.2). Defaults to latest.",
+    )
+
     return parser
 
 
@@ -1131,6 +1162,8 @@ def main() -> int:
         return repl(state)
     if args.command == "cancel":
         return cmd_cancel(args, state)
+    if args.command == "update":
+        return cmd_update(args, state)
     parser.print_help()
     return 0
 
