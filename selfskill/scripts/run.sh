@@ -99,10 +99,12 @@ fi
 PIDFILE="$PROJECT_ROOT/.clawcross.pid"
 CLAWCROSS_SERVICE_PATTERNS=(
     "scripts/launcher.py"
-    "src/time.py"
+    "src/utils/scheduler_service.py"
     "oasis/server.py"
     "src/mainagent.py"
     "src/front.py"
+    "chatbot/main.py"
+    "weclaw start -f"
 )
 
 is_wsl() {
@@ -486,7 +488,7 @@ case "${1:-help}" in
         FRONTEND_PORT=${PORT_FRONTEND:-51209}
         echo -n "   等待服务就绪"
         SERVICE_READY=false
-        for i in $(seq 1 30); do
+        for i in $(seq 1 60); do
             if curl -sf "http://127.0.0.1:$AGENT_PORT/v1/models" > /dev/null 2>&1 && \
                curl -sf "http://127.0.0.1:$OASIS_PORT/experts" > /dev/null 2>&1; then
                 echo " ✅"
@@ -494,7 +496,7 @@ case "${1:-help}" in
                 break
             fi
             echo -n "."
-            sleep 2
+            sleep 0.5
         done
         if [ "$SERVICE_READY" = false ]; then
             echo ""
@@ -520,7 +522,7 @@ case "${1:-help}" in
             TUNNEL_PID=$!
             echo "$TUNNEL_PID" > "$TUNNEL_PIDFILE"
             echo -n "   等待公网地址"
-            for i in $(seq 1 20); do
+            for i in $(seq 1 40); do
                 source config/.env 2>/dev/null || true
                 if [ -n "$PUBLIC_DOMAIN" ] && [ "$PUBLIC_DOMAIN" != "wait to set" ] && echo "$PUBLIC_DOMAIN" | grep -q "trycloudflare.com"; then
                     echo " ✅"
@@ -528,7 +530,7 @@ case "${1:-help}" in
                     break
                 fi
                 echo -n "."
-                sleep 2
+                sleep 1
             done
             source config/.env 2>/dev/null || true
             if [ -z "$PUBLIC_DOMAIN" ] || [ "$PUBLIC_DOMAIN" = "wait to set" ]; then
@@ -654,6 +656,32 @@ case "${1:-help}" in
         print_magic_links
         echo ""
         print_clawcross_docs_hint
+        exit 0
+        ;;
+
+    logs)
+        LOG_NAME="${2:-launcher}"
+        case "$LOG_NAME" in
+            launcher|main)
+                LOG_FILE="$PROJECT_ROOT/logs/launcher.log"
+                ;;
+            error|errors)
+                LOG_FILE="$PROJECT_ROOT/logs/error.log"
+                ;;
+            tunnel)
+                LOG_FILE="$PROJECT_ROOT/logs/tunnel.log"
+                ;;
+            *)
+                echo "未知日志: $LOG_NAME" >&2
+                echo "可用日志: launcher, error, tunnel" >&2
+                exit 1
+                ;;
+        esac
+        if [ ! -f "$LOG_FILE" ]; then
+            echo "日志文件不存在: $LOG_FILE" >&2
+            exit 1
+        fi
+        tail -n "${CLAWCROSS_LOG_LINES:-200}" "$LOG_FILE"
         exit 0
         ;;
 
@@ -1046,6 +1074,7 @@ case "${1:-help}" in
         echo "  start-foreground [--no-openclaw] [--no-tunnel] [--no-channel]  前台启动；同上"
         echo "  stop                           停止服务"
         echo "  status                         检查服务状态"
+        echo "  logs [launcher|error|tunnel]   查看最近日志"
         echo "  start-tunnel                   启动公网隧道（自动下载 cloudflared）"
         echo "  stop-tunnel                    停止公网隧道"
         echo "  tunnel-status                  查看隧道状态和公网地址"

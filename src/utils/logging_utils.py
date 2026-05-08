@@ -49,6 +49,8 @@ def setup_basic_logging() -> None:
     error_handler.setFormatter(logging.Formatter(log_format))
     error_handler.addFilter(request_filter)
     logging.getLogger().addHandler(error_handler)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     _LOG_INITIALIZED = True
 
 

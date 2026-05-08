@@ -264,8 +264,8 @@ function Wait-HttpEndpoint {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Url,
-        [int]$Attempts = 30,
-        [int]$DelaySeconds = 2
+        [int]$Attempts = 60,
+        [int]$DelayMilliseconds = 500
     )
 
     for ($i = 0; $i -lt $Attempts; $i++) {
@@ -273,7 +273,7 @@ function Wait-HttpEndpoint {
             Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 | Out-Null
             return $true
         } catch {
-            Start-Sleep -Seconds $DelaySeconds
+            Start-Sleep -Milliseconds $DelayMilliseconds
         }
     }
 

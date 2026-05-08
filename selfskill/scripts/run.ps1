@@ -328,6 +328,7 @@ function Show-Help {
     Write-Host "  start-foreground [--no-openclaw] [--no-tunnel]   Foreground start; --no-openclaw same (--no-tunnel ignored; no tunnel in this mode)"
     Write-Host "  stop                           Stop services"
     Write-Host "  status                         Show current service status"
+    Write-Host "  logs [launcher|error|tunnel]   Show recent logs"
     Write-Host "  add-user <name> <password>     Create or update a password user"
     Write-Host "  configure ...                  Run selfskill/scripts/configure.py"
     Write-Host "  auto-model                     Query available models from the configured API"
@@ -419,10 +420,12 @@ function Show-StartupFailureDiagnostics {
 function Get-ClawcrossServiceProcesses {
     $scriptPatterns = @(
         "scripts[\\/]+launcher\.py",
-        "src[\\/]+time\.py",
+        "src[\\/]+utils[\\/]+scheduler_service\.py",
         "oasis[\\/]+server\.py",
         "src[\\/]+mainagent\.py",
-        "src[\\/]+front\.py"
+        "src[\\/]+front\.py",
+        "chatbot[\\/]+main\.py",
+        "weclaw start -f"
     )
 
     $candidatePids = New-Object System.Collections.Generic.List[int]
@@ -441,6 +444,18 @@ function Get-ClawcrossServiceProcesses {
         }
     }
 
+    foreach ($proc in Get-CimInstance Win32_Process -ErrorAction SilentlyContinue) {
+        if ($proc.Name -notin @("python.exe", "pythonw.exe", "weclaw.exe", "weclaw")) {
+            continue
+        }
+        if (-not $proc.CommandLine) {
+            continue
+        }
+        if ($scriptPatterns | Where-Object { $proc.CommandLine -match $_ }) {
+            $candidatePids.Add([int]$proc.ProcessId)
+        }
+    }
+
     $matched = New-Object System.Collections.Generic.List[object]
     foreach ($pidValue in ($candidatePids | Sort-Object -Unique)) {
         $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $pidValue" -ErrorAction SilentlyContinue
@@ -448,7 +463,7 @@ function Get-ClawcrossServiceProcesses {
             continue
         }
 
-        if ($proc.Name -notin @("python.exe", "pythonw.exe")) {
+        if ($proc.Name -notin @("python.exe", "pythonw.exe", "weclaw.exe", "weclaw")) {
             continue
         }
 
@@ -665,8 +680,8 @@ switch ($Command) {
             Write-Host "Tunnel started. PID: $($tunnelProcess.Id)"
 
             $tunnelReady = $false
-            for ($i = 0; $i -lt 20; $i++) {
-                Start-Sleep -Seconds 2
+            for ($i = 0; $i -lt 40; $i++) {
+                Start-Sleep -Seconds 1
                 $envContent = Get-Content $envPath -ErrorAction SilentlyContinue | Out-String
                 if ($envContent -match 'PUBLIC_DOMAIN=(https://\S+trycloudflare\.com\S*)') {
                     $publicDomain = $matches[1]
@@ -834,6 +849,26 @@ switch ($Command) {
 
         Write-MagicLinks
 
+        exit 0
+    }
+
+    "logs" {
+        $logName = if ($Rest.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($Rest[0])) { $Rest[0] } else { "launcher" }
+        switch ($logName) {
+            { $_ -in @("launcher", "main") } { $logPath = Join-Path $projectRoot "logs\launcher.out.log"; break }
+            { $_ -in @("error", "errors") } { $logPath = Join-Path $projectRoot "logs\launcher.err.log"; break }
+            "tunnel" { $logPath = Join-Path $projectRoot "logs\tunnel.out.log"; break }
+            default {
+                Write-Host "Unknown log: $logName"
+                Write-Host "Available logs: launcher, error, tunnel"
+                exit 1
+            }
+        }
+        if (-not (Test-Path $logPath)) {
+            Write-Host "Log file does not exist: $logPath"
+            exit 1
+        }
+        Get-Content $logPath -Tail 200
         exit 0
     }
 
