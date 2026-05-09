@@ -560,6 +560,7 @@ class FrontendIntegrationTests(unittest.TestCase):
             self.assertEqual(kwargs["user_id"], "integration-user")
             self.assertEqual(kwargs["team_name"], "现代企业制")
             self.assertEqual(kwargs["preset_id"], "modern-ceo")
+            self.assertNotIn("project_root", kwargs)
 
     def test_proxy_webot_bridge_memory_and_buddy_controls_forward_payloads(self):
         with self.subTest("bridge attach"):

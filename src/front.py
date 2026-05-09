@@ -5741,7 +5741,6 @@ def install_builtin_team_preset():
 
     try:
         result = install_team_preset(
-            project_root=Path(root_dir),
             user_id=user_id,
             team_name=team_name,
             preset_id=preset_id,

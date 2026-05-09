@@ -7073,6 +7073,9 @@ async function installMobileBuiltinTeamPreset(presetId, suggestedTeamName = '') 
 async function _afterMobileBuiltinPresetInstall(teamName) {
   invalidateContactsPrefetch();
   try {
+    await _afterImportSelectTeam(teamName);
+  } catch (e) { /* ignore */ }
+  try {
     await loadTeamsForCreate();
   } catch (e) { /* ignore */ }
   const createSel = document.getElementById('create-team-select');
