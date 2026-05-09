@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from datetime import datetime
+import io
 import json
 import os
 from pathlib import Path
@@ -154,10 +156,15 @@ CLI_COMMANDS = [
     ("clawcross", "enter interactive shell"),
     ("clawcross run [-p platform] <prompt>", "run one prompt"),
     ("clawcross use <platform>", "persist current platform"),
+    ("clawcross config KEY VALUE", "set a config value in config/.env"),
+    ("clawcross config get KEY", "print one config value"),
+    ("clawcross config list", "list configured values"),
     ("clawcross platforms", "list available platforms"),
     ("clawcross state", "print state json"),
     ("clawcross cancel", "cancel internal generation"),
 ]
+
+SENSITIVE_CONFIG_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASS|COOKIE|AUTH)", re.IGNORECASE)
 
 
 def _repo_session_name(cwd: str | None = None) -> str:
@@ -185,15 +192,18 @@ def _default_state() -> dict:
     }
 
 
-def _load_state() -> dict:
-    if not STATE_PATH.exists():
-        return _default_state()
+def _load_state(path: Path | str | None = None) -> dict:
+    state_path = Path(path) if path else STATE_PATH
+    if not state_path.exists():
+        state = _default_state()
+        state["__state_path"] = str(state_path)
+        return state
     try:
-        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(state_path.read_text(encoding="utf-8"))
     except Exception:
-        return _default_state()
+        data = _default_state()
     if not isinstance(data, dict):
-        return _default_state()
+        data = _default_state()
     default = _default_state()
     data.setdefault("version", STATE_VERSION)
     data.setdefault("current", default["current"])
@@ -201,7 +211,22 @@ def _load_state() -> dict:
     data.setdefault("recent", [])
     for key, value in default["current"].items():
         data["current"].setdefault(key, value)
+    data["__state_path"] = str(state_path)
     return data
+
+
+def _chatbot_state_path(channel: str, user_id: str) -> Path:
+    raw = f"{channel or 'chat'}-{user_id or 'anonymous'}"
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._") or "chat-anonymous"
+    return STATE_DIR / "chatbot" / f"{safe}.json"
+
+
+def load_chatbot_state(channel: str, user_id: str, username: str | None = None) -> dict:
+    state = _load_state(_chatbot_state_path(channel, user_id))
+    current = _current(state)
+    current["user"] = username or user_id or DEFAULT_USER
+    current["session"] = current.get("session") or f"{channel}-{user_id}"
+    return state
 
 
 def _package_version() -> str:
@@ -375,12 +400,14 @@ def print_welcome(state: dict) -> None:
 
 
 def _save_state(state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    state_path = Path(state.get("__state_path") or STATE_PATH)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    serializable = {k: v for k, v in state.items() if not k.startswith("__")}
+    payload = json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     with tempfile.NamedTemporaryFile(
         "w",
         encoding="utf-8",
-        dir=str(STATE_DIR),
+        dir=str(state_path.parent),
         delete=False,
         prefix="state.",
         suffix=".tmp",
@@ -389,7 +416,7 @@ def _save_state(state: dict) -> None:
         handle.flush()
         os.fsync(handle.fileno())
         tmp_name = handle.name
-    os.replace(tmp_name, STATE_PATH)
+    os.replace(tmp_name, state_path)
 
 
 def _current(state: dict) -> dict:
@@ -660,9 +687,111 @@ def cmd_platforms(_args, state: dict) -> int:
 
 
 def cmd_state(_args, state: dict) -> int:
-    print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
-    print(f"\nstate_file: {STATE_PATH}")
+    serializable = {k: v for k, v in state.items() if not k.startswith("__")}
+    print(json.dumps(serializable, ensure_ascii=False, indent=2, sort_keys=True))
+    print(f"\nstate_file: {state.get('__state_path') or STATE_PATH}")
     return 0
+
+
+def _read_env_file() -> list[str]:
+    if not ENV_FILE.exists():
+        return []
+    return ENV_FILE.read_text(encoding="utf-8").splitlines()
+
+
+def _parse_env_lines(lines: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if (
+            (value.startswith('"') and value.endswith('"'))
+            or (value.startswith("'") and value.endswith("'"))
+        ):
+            value = value[1:-1]
+        if key:
+            values[key] = value
+    return values
+
+
+def _quote_env_value(value: str) -> str:
+    value = str(value)
+    if not value or any(ch.isspace() for ch in value) or any(ch in value for ch in "#'\""):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _mask_config_value(key: str, value: str) -> str:
+    if not value:
+        return ""
+    if SENSITIVE_CONFIG_RE.search(key):
+        if len(value) <= 8:
+            return "*" * len(value)
+        return f"{value[:4]}...{value[-4:]}"
+    return value
+
+
+def _set_config_value(key: str, value: str) -> None:
+    key = key.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        raise ValueError(f"invalid config key: {key!r}")
+    ensure_runtime_dirs()
+    lines = _read_env_file()
+    rendered = f"{key}={_quote_env_value(value)}"
+    replaced = False
+    out = []
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped and not stripped.startswith("#") and stripped.split("=", 1)[0].strip() == key:
+            if not replaced:
+                out.append(rendered)
+                replaced = True
+            continue
+        out.append(raw)
+    if not replaced:
+        if out and out[-1].strip():
+            out.append("")
+        out.append(rendered)
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+
+
+def cmd_config(args, _state: dict) -> int:
+    action = args.config_action
+    if action == "list":
+        values = _parse_env_lines(_read_env_file())
+        if not values:
+            print(f"No config values found in {ENV_FILE}")
+            return 0
+        for key in sorted(values):
+            print(f"{key}={_mask_config_value(key, values[key])}")
+        print(f"\nconfig_file: {ENV_FILE}")
+        return 0
+    if action == "get":
+        values = _parse_env_lines(_read_env_file())
+        value = values.get(args.key)
+        if value is None:
+            print(f"{args.key} is not set")
+            return 1
+        print(f"{args.key}={_mask_config_value(args.key, value)}")
+        return 0
+    if action == "set":
+        value = " ".join(args.value or [])
+        try:
+            _set_config_value(args.key, value)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        os.environ[args.key] = value
+        print(f"{args.key}={_mask_config_value(args.key, value)}")
+        print(f"config_file: {ENV_FILE}")
+        return 0
+    print("usage: clawcross config [list|get KEY|set KEY VALUE|KEY VALUE]")
+    return 2
 
 
 def cmd_use(args, state: dict) -> int:
@@ -1086,6 +1215,29 @@ def _handle_slash(command: str, state: dict) -> bool:
     return True
 
 
+def welcome_text(state: dict) -> str:
+    return _strip_ansi("\n".join(_welcome_lines(state))).strip()
+
+
+def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
+    """Handle one ClawCross shell input line for non-terminal chat channels.
+
+    Returns (active, reply). active becomes False when /exit or /quit is used.
+    """
+    line = (text or "").strip()
+    if not line:
+        return True, ""
+    out = io.StringIO()
+    active = True
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        if line.startswith("/"):
+            active = _handle_slash(line, state)
+        else:
+            run_prompt(line, state)
+    reply = _strip_ansi(out.getvalue()).strip()
+    return active, reply
+
+
 def repl(state: dict) -> int:
     print_welcome(state)
     while True:
@@ -1144,6 +1296,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Specific version (e.g. 0.0.2). Defaults to latest.",
     )
 
+    config = sub.add_parser("config", help="Read or write config/.env values")
+    config.add_argument("items", nargs="*", help="list | get KEY | set KEY VALUE | KEY VALUE")
+
     return parser
 
 
@@ -1167,6 +1322,29 @@ def main() -> int:
         return cmd_cancel(args, state)
     if args.command == "update":
         return cmd_update(args, state)
+    if args.command == "config":
+        items = list(args.items or [])
+        if not items or items[0] == "list":
+            args.config_action = "list"
+            args.key = ""
+            args.value = []
+        elif items[0] == "get" and len(items) == 2:
+            args.config_action = "get"
+            args.key = items[1]
+            args.value = []
+        elif items[0] == "set" and len(items) >= 3:
+            args.config_action = "set"
+            args.key = items[1]
+            args.value = items[2:]
+        elif len(items) >= 2:
+            args.config_action = "set"
+            args.key = items[0]
+            args.value = items[1:]
+        else:
+            args.config_action = "usage"
+            args.key = ""
+            args.value = []
+        return cmd_config(args, state)
     parser.print_help()
     return 0
 

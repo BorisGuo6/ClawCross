@@ -15,17 +15,41 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import datetime
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from pathlib import Path
+
 from src.utils.runtime_paths import DATA_DIR
 
 logger = logging.getLogger("chatbot.base")
 
 CROSS_COMMAND = "/cross"
+CLI_COMMAND = "/cli"
+
+
+def resolve_chatbot_data_path(value: str | None, default_name: str) -> str:
+    """Resolve chatbot data files under the runtime data directory.
+
+    Older templates used values like data/whitelist.json. In the user-home
+    runtime layout services run from CLAWCROSS_WORKSPACE_DIR, so that relative
+    value can accidentally become CLAWCROSS_DATA_DIR/data/whitelist.json. Treat
+    leading data/ as a repo-era hint and normalize it to CLAWCROSS_DATA_DIR.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return str(DATA_DIR / default_name)
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return str(path)
+    parts = path.parts
+    if parts and parts[0] == "data":
+        path = Path(*parts[1:]) if len(parts) > 1 else Path(default_name)
+    return str(DATA_DIR / path)
 
 
 @dataclass
@@ -64,8 +88,9 @@ class ChannelAdapter(ABC):
         self._agent_url = os.getenv("AI_API_URL", f"http://127.0.0.1:{os.getenv('PORT_AGENT', '51200')}/v1/chat/completions")
         self._internal_token = os.getenv("INTERNAL_TOKEN", "")
         self._llm_model = os.getenv("LLM_MODEL", "")
-        _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self._whitelist_file = os.getenv("WHITELIST_FILE") or os.path.join(str(DATA_DIR), "whitelist.json")
+        self._whitelist_file = resolve_chatbot_data_path(os.getenv("WHITELIST_FILE"), "whitelist.json")
+        self._cli_enabled: set[str] = set()
+        self._cli_lock = threading.RLock()
 
     @abstractmethod
     async def handle_message(self, message: ChatMessage) -> str:
@@ -155,6 +180,56 @@ class ChannelAdapter(ABC):
             return False
         parts = text.strip().split(maxsplit=1)
         return bool(parts) and parts[0].lower() == CROSS_COMMAND
+
+    @staticmethod
+    def is_cli_command(text: str) -> bool:
+        if not text:
+            return False
+        parts = text.strip().split(maxsplit=1)
+        return bool(parts) and parts[0].lower() == CLI_COMMAND
+
+    def _cli_key(self, channel: str, user_id: str) -> str:
+        return f"{channel or self.channel}:{user_id or 'anonymous'}"
+
+    async def handle_cli_mode(
+        self,
+        *,
+        text: str,
+        channel: str,
+        user_id: str,
+        username: str | None,
+    ) -> tuple[bool, str | None]:
+        """Handle /cli social shell mode.
+
+        Returns (handled, reply). When handled is False, callers should continue
+        with their normal AI flow.
+        """
+        key = self._cli_key(channel, user_id)
+        stripped = (text or "").strip()
+        lower = stripped.lower()
+        if self.is_cli_command(stripped):
+            arg = stripped.split(maxsplit=1)[1].strip().lower() if len(stripped.split(maxsplit=1)) > 1 else ""
+            if arg in {"off", "exit", "quit", "stop"}:
+                self._cli_enabled.discard(key)
+                return True, "ClawCross CLI mode closed."
+            self._cli_enabled.add(key)
+            from scripts.clawcross import load_chatbot_state, welcome_text
+            state = load_chatbot_state(channel, user_id, username)
+            return True, welcome_text(state)
+        if lower in {"/exit", "/quit", "/q"} and key in self._cli_enabled:
+            self._cli_enabled.discard(key)
+            return True, "ClawCross CLI mode closed."
+        if key not in self._cli_enabled:
+            return False, None
+
+        from scripts.clawcross import handle_chatbot_input, load_chatbot_state
+        state = load_chatbot_state(channel, user_id, username)
+        with self._cli_lock:
+            active, reply = handle_chatbot_input(stripped, state)
+        if not active:
+            self._cli_enabled.discard(key)
+            return True, "ClawCross CLI mode closed."
+        return True, reply or "(no output)"
 
     @staticmethod
     def extract_text(content_list: list[dict]) -> str:

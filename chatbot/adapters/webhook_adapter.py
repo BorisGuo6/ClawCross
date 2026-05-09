@@ -125,14 +125,25 @@ class WebhookAdapter(ChannelAdapter):
             return None
 
         content_list = await self.build_content(event)
+        text = self.extract_text(content_list)
 
         # /cross 命令：直接返回 magic link，跳过 AI
-        text = self.extract_text(content_list)
         if self.is_cross_command(text):
             link = await self.generate_magic_link(username)
             reply = self.format_cross_reply(link)
             await self._send_reply(event, reply)
             return reply
+
+        user_id = str(event.get("user_id", "") or event.get("from_user_id", "") or username or "anonymous")
+        handled, cli_reply = await self.handle_cli_mode(
+            text=text,
+            channel=self._platform_name,
+            user_id=user_id,
+            username=username,
+        )
+        if handled:
+            await self._send_reply(event, cli_reply or "")
+            return cli_reply
 
         api_key = self.build_api_key(username)
         result = await self.call_ai(content_list, api_key)

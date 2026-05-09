@@ -30,6 +30,7 @@ if sys.version_info < (3, 9):
 
 import subprocess
 import concurrent.futures
+import json
 import os
 import signal
 import atexit
@@ -515,14 +516,81 @@ def _detect_chatbot_platforms():
     platforms = []
     if any(k.endswith("_WEBHOOK_URL") and v.strip() for k, v in os.environ.items()):
         platforms.append("webhook")
-    nonebot_adapters = os.getenv("NONEBOT_ADAPTERS", "").strip()
-    if nonebot_adapters:
-        names = [n.strip() for n in nonebot_adapters.split(",") if n.strip()]
-        if names:
-            platforms.append(f"nonebot[{'+'.join(names)}]")
+    names = _configured_nonebot_adapter_names()
+    if names:
+        platforms.append(f"nonebot[{'+'.join(names)}]")
     if (os.getenv("WECLAW_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")):
         platforms.append("weclaw")
     return platforms
+
+
+def _looks_placeholder(value):
+    if value is None:
+        return True
+    text = str(value).strip()
+    if not text:
+        return True
+    lowered = text.lower()
+    return (
+        lowered.startswith("your_")
+        or lowered in {"changeme", "change_me", "placeholder", "null", "none"}
+        or "your_" in lowered
+    )
+
+
+def _nonebot_env_keys(name):
+    name_lower = name.lower().replace(" ", "")
+    std_name = name_lower.replace("-", "").replace("_", "").replace(".", "")
+    return [f"{std_name.upper()}_BOTS", f"{name.upper()}_BOTS"]
+
+
+def _bots_json_for_nonebot_adapter(name):
+    for key in _nonebot_env_keys(name):
+        value = os.getenv(key, "")
+        if value:
+            return key, value
+    return "", ""
+
+
+def _has_real_nonebot_bots(name):
+    _key, raw = _bots_json_for_nonebot_adapter(name)
+    if not raw:
+        return False
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return True
+    bots = data if isinstance(data, list) else [data]
+    if not bots:
+        return False
+    for bot in bots:
+        if not isinstance(bot, dict):
+            continue
+        sensitive_values = [
+            bot.get("token"),
+            bot.get("secret"),
+            bot.get("access_token"),
+            bot.get("api_key"),
+            bot.get("password"),
+        ]
+        if any(value and not _looks_placeholder(value) for value in sensitive_values):
+            return True
+    return False
+
+
+def _configured_nonebot_adapter_names():
+    nonebot_adapters = os.getenv("NONEBOT_ADAPTERS", "").strip()
+    names = [n.strip() for n in nonebot_adapters.split(",") if n.strip()]
+    configured = []
+    skipped = []
+    for name in names:
+        if _has_real_nonebot_bots(name):
+            configured.append(name)
+        else:
+            skipped.append(name)
+    if skipped:
+        print(f"💬 [skip] NoneBot adapter 缺少真实 BOTS 配置或仍是模板占位值: {', '.join(skipped)}")
+    return configured
 
 
 def _ensure_nonebot_deps(adapter_names):
@@ -531,11 +599,20 @@ def _ensure_nonebot_deps(adapter_names):
     检测顺序：先 import nonebot；缺失或缺 adapter 时优先用 uv 装，否则 fallback pip。
     任何失败都返回 False，不抛异常 —— 由调用方决定是否 skip chatbot。
     """
-    short_names = []
+    adapter_specs = []
     for n in adapter_names:
-        s = n.strip().split(".")[0].replace("_", "-").lower()
-        if s and s not in short_names:
-            short_names.append(s)
+        s = n.strip().replace("_", "-").lower()
+        if s and s not in adapter_specs:
+            adapter_specs.append(s)
+
+    def _module_candidates(name):
+        dotted = name.replace("-", "_")
+        flat = dotted.replace(".", "_")
+        return [f"nonebot.adapters.{dotted}", f"nonebot_adapter_{flat}"]
+
+    def _package_name(name):
+        package_base = name.split(".", 1)[0]
+        return "nonebot-adapter-" + package_base.replace("_", "-").lower()
 
     def _check_imports():
         # 在 venv_python 子进程中检测 import 状态，避免污染 launcher 进程
@@ -546,13 +623,19 @@ def _ensure_nonebot_deps(adapter_names):
             "    import nonebot\n"
             "except Exception:\n"
             "    missing.append('nonebot2')\n"
-            "for n in {names}:\n"
-            "    try:\n"
-            "        importlib.import_module('nonebot.adapters.' + n.replace('-','_'))\n"
-            "    except Exception:\n"
-            "        missing.append('nonebot-adapter-' + n)\n"
+            "for n, candidates, package in {specs}:\n"
+            "    ok = False\n"
+            "    for mod in candidates:\n"
+            "        try:\n"
+            "            importlib.import_module(mod)\n"
+            "            ok = True\n"
+            "            break\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    if not ok:\n"
+            "        missing.append(package)\n"
             "print('|'.join(missing))\n"
-        ).format(names=repr(short_names))
+        ).format(specs=repr([(n, _module_candidates(n), _package_name(n)) for n in adapter_specs]))
         try:
             result = subprocess.run(
                 [venv_python, "-c", check_code],
@@ -611,7 +694,7 @@ chatbot_main = os.path.join(PROJECT_ROOT, "chatbot", "main.py")
 should_start_chatbot = has_chatbot_config and os.path.exists(chatbot_main)
 
 if should_start_chatbot:
-    nonebot_names = [n.strip() for n in os.getenv("NONEBOT_ADAPTERS", "").split(",") if n.strip()]
+    nonebot_names = _configured_nonebot_adapter_names()
     deps_ok = True
     if nonebot_names:
         deps_ok = _ensure_nonebot_deps(nonebot_names)

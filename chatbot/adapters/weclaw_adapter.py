@@ -30,6 +30,7 @@ WeClaw（github.com/fastclaw-ai/weclaw）是一个 Go 写的微信 bot 桥，
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -106,6 +107,7 @@ class WeClawAdapter(ChannelAdapter):
         self._http_server: ThreadingHTTPServer | None = None
         self._qr_buffer: list[str] = []
         self._qr_path = str(DATA_DIR / "weclaw_qr.txt")
+        atexit.register(self._terminate)
 
     # ── 抽象方法（weclaw 自己处理协议层）─────────────────────────────
 
@@ -248,8 +250,8 @@ class WeClawAdapter(ChannelAdapter):
                     return
 
                 text = _last_user_text(data)
+                user_id = adapter_self._username_from_auth(self.headers.get("Authorization", ""))
                 if adapter_self.is_cross_command(text):
-                    user_id = adapter_self._username_from_auth(self.headers.get("Authorization", ""))
                     link = adapter_self._gen_magic_link_sync(user_id)
                     content = adapter_self.format_cross_reply(link)
                     self._send_json(200, {
@@ -265,6 +267,32 @@ class WeClawAdapter(ChannelAdapter):
                         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                     })
                     logger.info(f"/cross 命令处理完成 (user={user_id})")
+                    return
+
+                try:
+                    handled, cli_reply = asyncio.run(adapter_self.handle_cli_mode(
+                        text=text,
+                        channel=adapter_self.channel,
+                        user_id=user_id,
+                        username=user_id,
+                    ))
+                except Exception as e:
+                    logger.error(f"/cli 命令处理失败: {e}")
+                    handled, cli_reply = True, f"CLI 错误: {e}"
+                if handled:
+                    self._send_json(200, {
+                        "id": "weclaw-cli",
+                        "object": "chat.completion",
+                        "created": int(time.time()),
+                        "model": data.get("model", ""),
+                        "choices": [{
+                            "index": 0,
+                            "message": {"role": "assistant", "content": cli_reply or ""},
+                            "finish_reason": "stop",
+                        }],
+                        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                    })
+                    logger.info(f"/cli 模式消息处理完成 (user={user_id})")
                     return
 
                 # 透传到真正的 agent endpoint（含流式）
@@ -361,10 +389,13 @@ class WeClawAdapter(ChannelAdapter):
         except (NotImplementedError, RuntimeError):
             pass  # Windows / 子线程情况
 
-        await asyncio.gather(
-            self._pump_logs(),
-            self._wait_proc(),
-        )
+        try:
+            await asyncio.gather(
+                self._pump_logs(),
+                self._wait_proc(),
+            )
+        finally:
+            self._terminate()
 
     async def _pump_logs(self) -> None:
         """边读边检测 QR 块；非 QR 行 forward 到 logger。"""

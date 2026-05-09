@@ -64,10 +64,13 @@ class SettingsService:
     def _chatbot_whitelist_path(self) -> str:
         settings = read_env_settings(self.env_path, ["WHITELIST_FILE"])
         configured = (settings.get("WHITELIST_FILE") or "").strip()
-        path = configured or str(DATA_DIR / "whitelist.json")
-        if not os.path.isabs(path):
-            path = os.path.join(str(DATA_DIR), path)
-        return os.path.abspath(os.path.expanduser(path))
+        path = os.path.expanduser(configured) if configured else str(DATA_DIR / "whitelist.json")
+        if os.path.isabs(path):
+            return os.path.abspath(path)
+        parts = path.replace("\\", "/").split("/")
+        if parts and parts[0] == "data":
+            path = "/".join(parts[1:]) or "whitelist.json"
+        return os.path.abspath(os.path.join(str(DATA_DIR), path))
 
     def _normalize_chatbot_whitelist(self, raw: dict | None) -> dict:
         normalized = {}

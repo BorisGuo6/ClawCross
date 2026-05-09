@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import logging
 import os
 import threading
@@ -43,6 +44,35 @@ logger = logging.getLogger("chatbot.nonebot_bridge")
 
 # 与现有手写 adapter 冲突的 NoneBot 模块短名（目前只有 Slack 不在 NoneBot 列表）
 _OVERLAPPING_ADAPTERS: set[str] = set()
+
+
+def _looks_placeholder(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    lowered = text.lower()
+    return (
+        lowered.startswith("your_")
+        or "your_" in lowered
+        or lowered in {"changeme", "change_me", "placeholder", "null", "none"}
+    )
+
+
+def _has_real_bot_config(bots: Any) -> bool:
+    items = bots if isinstance(bots, list) else [bots]
+    for bot in items:
+        if not isinstance(bot, dict):
+            continue
+        values = [
+            bot.get("token"),
+            bot.get("secret"),
+            bot.get("access_token"),
+            bot.get("api_key"),
+            bot.get("password"),
+        ]
+        if any(value and not _looks_placeholder(value) for value in values):
+            return True
+    return False
 
 
 def _resolve_adapter_module(name: str):
@@ -167,9 +197,14 @@ class NoneBotBridgeAdapter(ChannelAdapter):
             return
 
         content_list = await self.build_content(event)
+        text = self.extract_text(content_list)
+
+        try:
+            channel_user_id = str(event.get_user_id())
+        except Exception:
+            channel_user_id = username
 
         # /cross 命令：直接返回 magic link，跳过 AI
-        text = self.extract_text(content_list)
         if self.is_cross_command(text):
             link = await self.generate_magic_link(username)
             reply = self.format_cross_reply(link)
@@ -177,6 +212,19 @@ class NoneBotBridgeAdapter(ChannelAdapter):
                 await bot.send(event, reply)
             except Exception as e:
                 logger.error(f"回复 /cross 失败 ({adapter_name}): {e}")
+            return
+
+        handled, cli_reply = await self.handle_cli_mode(
+            text=text,
+            channel=adapter_name,
+            user_id=channel_user_id,
+            username=username,
+        )
+        if handled:
+            try:
+                await bot.send(event, cli_reply or "")
+            except Exception as e:
+                logger.error(f"回复 /cli 失败 ({adapter_name}): {e}")
             return
 
         # 按消息真实平台动态构造 api_key（不修改 self.channel，避免并发竞争）
@@ -293,7 +341,6 @@ class NoneBotBridgeAdapter(ChannelAdapter):
         # NoneBot Config 有 extra='allow'，但 <NAME>_BOTS 等适配器专属 env 不会被自动读取
         # 需要手动从 env 读 <NAME>_BOTS（如 TELEGRAM_BOTS, QQ_BOTS）并设置到 config。
         # 带点平台（如 onebot.v11）使用 ONEBOTV11_BOTS；同时兼容旧的 ONEBOT.V11_BOTS。
-        import json
         for name in self._adapter_names:
             name_lower = name.lower().replace(' ', '')
             std_name = name_lower.replace('-', '').replace('_', '').replace('.', '')
@@ -307,6 +354,10 @@ class NoneBotBridgeAdapter(ChannelAdapter):
                 bots = json.loads(bots_json)
             except Exception as e:
                 logger.warning(f"解析 {env_key} 失败: {e}")
+                continue
+
+            if not _has_real_bot_config(bots):
+                logger.warning(f"跳过 NoneBot 适配器 {name}: {env_key} 为空或仍是模板占位值")
                 continue
 
             # 标准化字段名：telegram, qq, discord, dingtalk, onebotv11, onebotv12, ...

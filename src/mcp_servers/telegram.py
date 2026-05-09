@@ -56,7 +56,20 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 from utils.runtime_paths import DATA_DIR, USER_FILES_DIR
 
 USER_DATA_DIR = str(USER_FILES_DIR)
-WHITELIST_FILE = os.getenv("WHITELIST_FILE") or os.path.join(str(DATA_DIR), "whitelist.json")
+def _resolve_whitelist_file() -> str:
+    configured = (os.getenv("WHITELIST_FILE") or "").strip()
+    if not configured:
+        return os.path.join(str(DATA_DIR), "whitelist.json")
+    expanded = os.path.expanduser(configured)
+    if os.path.isabs(expanded):
+        return expanded
+    parts = expanded.replace("\\", "/").split("/")
+    if parts and parts[0] == "data":
+        expanded = "/".join(parts[1:]) or "whitelist.json"
+    return os.path.join(str(DATA_DIR), expanded)
+
+
+WHITELIST_FILE = _resolve_whitelist_file()
 TELEGRAM_CHANNEL = "telegram"
 
 def _get_chat_id_path(username: str) -> str:
