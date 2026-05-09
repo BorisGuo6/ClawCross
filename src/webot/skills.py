@@ -20,7 +20,7 @@ from typing import Any
 from webot.profiles import slugify
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 
 _MAX_SKILL_SIZE = 100 * 1024        # 100KB per SKILL.md
 _MAX_SUPPORT_FILE_SIZE = 1 * 1024 * 1024  # 1MB per supporting file

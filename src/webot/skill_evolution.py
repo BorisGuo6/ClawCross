@@ -31,7 +31,7 @@ from webot.skills import edit_skill, get_skill, write_skill_file
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 
 EVOLUTION_BEGIN = "<!-- clawcross:self-evolution:begin -->"
 EVOLUTION_END = "<!-- clawcross:self-evolution:end -->"

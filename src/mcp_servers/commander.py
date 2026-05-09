@@ -26,6 +26,7 @@ import time
 import uuid
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from utils.runtime_paths import ENV_FILE, USER_FILES_DIR
 
 from webot.permission_context import create_or_reuse_permission_request
 from webot.runtime_store import find_active_approval_for_action, get_tool_approval
@@ -38,10 +39,10 @@ mcp = FastMCP("Commander")
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 加载 .env 配置
-load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "config", ".env"))
+load_dotenv(dotenv_path=str(ENV_FILE))
 
 # 用户文件根目录（与 mcp_filemanager.py 共享）
-USER_FILES_BASE = os.path.join(PROJECT_ROOT, "data", "user_files")
+USER_FILES_BASE = str(USER_FILES_DIR)
 
 # 平台检测
 IS_WINDOWS = sys.platform == "win32"

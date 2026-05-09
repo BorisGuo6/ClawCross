@@ -23,6 +23,7 @@ from utils.env_settings import (
     read_env_settings,
     write_env_settings,
 )
+from utils.runtime_paths import DATA_DIR, PID_DIR
 from api.settings_models import ChatbotWhitelistUpdateRequest, SettingsUpdateRequest
 
 
@@ -58,14 +59,14 @@ class SettingsService:
         self.env_path = env_path
         self.verify_auth_or_token = verify_auth_or_token
         self.project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.restart_flag = os.path.join(self.project_root, ".restart_flag")
+        self.restart_flag = os.path.join(str(PID_DIR), "restart_flag")
 
     def _chatbot_whitelist_path(self) -> str:
         settings = read_env_settings(self.env_path, ["WHITELIST_FILE"])
         configured = (settings.get("WHITELIST_FILE") or "").strip()
-        path = configured or os.path.join("data", "whitelist.json")
+        path = configured or str(DATA_DIR / "whitelist.json")
         if not os.path.isabs(path):
-            path = os.path.join(self.project_root, path)
+            path = os.path.join(str(DATA_DIR), path)
         return os.path.abspath(os.path.expanduser(path))
 
     def _normalize_chatbot_whitelist(self, raw: dict | None) -> dict:

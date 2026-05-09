@@ -20,14 +20,13 @@ import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dotenv import load_dotenv
+from utils.runtime_paths import ENV_FILE
 
 # 初始化 MCP 服务
 mcp = FastMCP("TimeMaster")
 
 # 加载 .env 配置
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
+load_dotenv(dotenv_path=ENV_FILE)
 
 # 调度器服务端口和地址
 PORT_SCHEDULER = int(os.getenv("PORT_SCHEDULER", "51201"))

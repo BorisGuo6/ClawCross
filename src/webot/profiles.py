@@ -21,7 +21,7 @@ import uuid
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 _SESSION_RE = re.compile(r"^subagent__([a-z0-9_-]+)__([a-z0-9_-]+)$")
@@ -238,8 +238,10 @@ def get_agent_profiles_path(
 ) -> Path | None:
     if not user_id:
         return None
-    root = Path(project_root) if project_root is not None else PROJECT_ROOT
-    return root / "data" / "user_files" / user_id / DEFAULT_PROFILE_FILENAME
+    root = Path(project_root) if project_root is not None else USER_FILES_DIR
+    if project_root is not None:
+        root = root / "data" / "user_files"
+    return root / user_id / DEFAULT_PROFILE_FILENAME
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,11 @@ import time
 # 复用 configure.py 的配置写入逻辑
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
-ENV_PATH = os.path.join(PROJECT_ROOT, "config", ".env")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from src.utils.runtime_paths import ENV_FILE, ensure_runtime_dirs
+ensure_runtime_dirs()
+ENV_PATH = str(ENV_FILE)
 OPENCLAW_HOME = os.path.expanduser(os.getenv("OPENCLAW_HOME", "~/.openclaw"))
 OPENCLAW_CONFIG_PATH = os.path.join(OPENCLAW_HOME, "openclaw.json")
 OPENCLAW_AGENT_MODELS_PATH = os.path.join(

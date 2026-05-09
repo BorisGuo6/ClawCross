@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 
 
 def _team_dir(user_id: str, team: str) -> Path | None:

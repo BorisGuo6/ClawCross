@@ -24,9 +24,9 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
-_chatbot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_project_root = os.path.dirname(_chatbot_dir)
-load_dotenv(dotenv_path=os.path.join(_project_root, "config", ".env"))
+from src.utils.runtime_paths import ENV_FILE
+
+load_dotenv(dotenv_path=ENV_FILE)
 
 from .base import ChannelAdapter
 

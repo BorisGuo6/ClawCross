@@ -18,6 +18,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from utils.runtime_paths import DATA_DIR
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -25,8 +27,8 @@ class InsightsEngine:
     """Analyze session history from the LangGraph checkpoint DB."""
 
     def __init__(self, db_path: str | Path | None = None):
-        self._db_path = str(db_path or (PROJECT_ROOT / "data" / "agent_checkpoints"))
-        self._trajectory_dir = PROJECT_ROOT / "data" / "trajectories"
+        self._db_path = str(db_path or (DATA_DIR / "agent_checkpoints"))
+        self._trajectory_dir = DATA_DIR / "trajectories"
 
     def generate(self, days: int = 30, user_id: str = "") -> dict[str, Any]:
         """Generate comprehensive insights report.

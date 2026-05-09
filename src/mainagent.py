@@ -37,11 +37,13 @@ from webot.routes import create_webot_router
 from services.message_builder import build_human_message
 from utils.logging_utils import get_logger, request_id_ctx
 from utils.checkpoint_paths import DEFAULT_CHECKPOINT_DB_DIR
+from utils.runtime_paths import DATA_DIR, ENV_FILE, USERS_FILE, ensure_runtime_dirs
 
 # --- Path setup ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
 logger = get_logger("mainagent")
+ensure_runtime_dirs()
 
 
 # --- Request ID Middleware ---
@@ -58,10 +60,10 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         finally:
             request_id_ctx.reset(token)
 
-env_path = os.path.join(root_dir, "config", ".env")
+env_path = str(ENV_FILE)
 db_path = str(DEFAULT_CHECKPOINT_DB_DIR)
-group_db_path = os.path.join(root_dir, "data", "group_chat.db")
-users_path = os.path.join(root_dir, "config", "users.json")
+group_db_path = str(DATA_DIR / "group_chat.db")
+users_path = str(USERS_FILE)
 
 load_dotenv(dotenv_path=env_path)
 

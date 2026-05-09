@@ -27,7 +27,7 @@ from webot.runtime_store import create_runtime_artifact
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 
 DEFAULT_TOOL_RESULT_CHAR_BUDGET = 12000
 DEFAULT_TOOL_RESULT_ITEM_LIMIT = 1600

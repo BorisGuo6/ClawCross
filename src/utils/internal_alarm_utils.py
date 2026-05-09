@@ -6,9 +6,11 @@ from typing import Any
 
 import requests
 
+from utils.runtime_paths import DATA_DIR
+
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TASKS_FILE = os.path.join(PROJECT_ROOT, "data", "timeset", "tasks.json")
+TASKS_FILE = os.path.join(str(DATA_DIR), "timeset", "tasks.json")
 
 
 def load_alarm_tasks() -> dict[str, dict[str, Any]]:

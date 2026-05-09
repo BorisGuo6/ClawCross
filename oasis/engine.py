@@ -61,6 +61,7 @@ from langchain_core.messages import HumanMessage
 # 确保 src/ 在 import 路径中，以便导入 llm_factory
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
 from services.llm_factory import create_chat_model, extract_text
+from utils.runtime_paths import USER_FILES_DIR
 
 from oasis.forum import DiscussionForum
 from oasis.experts import ExpertAgent, SessionExpert, ExternalExpert, get_all_experts
@@ -90,11 +91,9 @@ def _load_external_agents(user_id: str, team: str = "") -> list[dict]:
     if not user_id:
         return []
     if team:
-        path = os.path.join(
-            _PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "external_agents.json"
-        )
+        path = os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "external_agents.json")
     else:
-        path = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "external_agents.json")
+        path = os.path.join(str(USER_FILES_DIR), user_id, "external_agents.json")
     if not os.path.isfile(path):
         return []
     try:
@@ -155,9 +154,9 @@ def _load_internal_agents(user_id: str, team: str = "") -> list[dict]:
     如果文件缺失或不可读，返回 []。
     """
     if team:
-        base_dir = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team)
+        base_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
     else:
-        base_dir = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id)
+        base_dir = os.path.join(str(USER_FILES_DIR), user_id)
 
     ia_path = os.path.join(base_dir, "internal_agents.json")
 
@@ -573,7 +572,7 @@ class DiscussionEngine:
 
     def _team_root(self) -> str:
         if self._user_id and self._team:
-            return os.path.join(_PROJECT_ROOT, "data", "user_files", self._user_id, "teams", self._team)
+            return os.path.join(str(USER_FILES_DIR), self._user_id, "teams", self._team)
         return _PROJECT_ROOT
 
     def _resolve_script_cwd(self, cwd: str) -> str:

@@ -4,6 +4,7 @@
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
@@ -13,6 +14,7 @@ const runScript = process.platform === "win32"
   : path.join(root, "selfskill", "scripts", "run.sh");
 
 const runCommands = new Set([
+  "dev",
   "start",
   "start-foreground",
   "start-fg",
@@ -29,6 +31,30 @@ const runCommands = new Set([
   "stop-tunnel",
   "evolve-skill",
 ]);
+
+function getClawcrossHome() {
+  return process.env.CLAWCROSS_HOME || path.join(os.homedir(), ".clawcross");
+}
+
+function isLegacyMode() {
+  const value = (process.env.CLAWCROSS_USE_LEGACY_PATHS || "").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(value);
+}
+
+function applyRuntimeEnv() {
+  const legacy = isLegacyMode();
+  const home = legacy ? root : getClawcrossHome();
+  process.env.CLAWCROSS_HOME = home;
+  process.env.CLAWCROSS_VENV_DIR = process.env.CLAWCROSS_VENV_DIR || (legacy ? path.join(root, ".venv") : path.join(home, "venv"));
+  process.env.CLAWCROSS_DATA_DIR = process.env.CLAWCROSS_DATA_DIR || (legacy ? path.join(root, "data") : path.join(home, "data"));
+  process.env.CLAWCROSS_LOG_DIR = process.env.CLAWCROSS_LOG_DIR || (legacy ? path.join(root, "logs") : path.join(home, "logs"));
+  process.env.CLAWCROSS_CONFIG_DIR = process.env.CLAWCROSS_CONFIG_DIR || (legacy ? path.join(root, "config") : path.join(home, "config"));
+  process.env.CLAWCROSS_RUN_DIR = process.env.CLAWCROSS_RUN_DIR || (legacy ? root : path.join(home, "run"));
+  process.env.CLAWCROSS_BIN_DIR = process.env.CLAWCROSS_BIN_DIR || (legacy ? path.join(root, "bin") : path.join(home, "bin"));
+  process.env.CLAWCROSS_WORKSPACE_DIR = process.env.CLAWCROSS_WORKSPACE_DIR || (legacy ? root : path.join(home, "workspace"));
+  process.env.CLAWCROSS_STATE_DIR = process.env.CLAWCROSS_STATE_DIR || home;
+  process.env.PYTHONDONTWRITEBYTECODE = process.env.PYTHONDONTWRITEBYTECODE || "1";
+}
 
 function loadDotEnv(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -90,14 +116,24 @@ function isAgentRunning(port) {
   });
 }
 
-const python = firstExisting([
-  process.platform === "win32" ? path.join(root, ".venv", "Scripts", "python.exe") : null,
-  path.join(root, ".venv", "bin", "python"),
-]) || process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
-
 async function main() {
-  const args = process.argv.slice(2);
-  const env = loadDotEnv(path.join(root, "config", ".env"));
+  let args = process.argv.slice(2);
+  if (args[0] === "dev") {
+    process.env.CLAWCROSS_HOME = path.join(root, ".clawcross-dev");
+    args = ["start", ...args.slice(1)];
+  }
+  applyRuntimeEnv();
+  const venvDir = process.env.CLAWCROSS_VENV_DIR;
+  const python = firstExisting([
+    process.platform === "win32" ? path.join(venvDir, "Scripts", "python.exe") : null,
+    path.join(venvDir, "bin", "python"),
+    process.platform === "win32" ? path.join(root, ".venv", "Scripts", "python.exe") : null,
+    path.join(root, ".venv", "bin", "python"),
+  ]) || process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
+  const env = loadDotEnv(firstExisting([
+    path.join(process.env.CLAWCROSS_CONFIG_DIR, ".env"),
+    path.join(root, "config", ".env"),
+  ]) || path.join(process.env.CLAWCROSS_CONFIG_DIR, ".env"));
   const agentPort = Number.parseInt(process.env.PORT_AGENT || env.PORT_AGENT || "51200", 10);
   const command = args[0] || (
     await isAgentRunning(agentPort) ? undefined : "start"

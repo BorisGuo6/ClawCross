@@ -52,13 +52,58 @@ function Ensure-UvInstalled {
     return $uv
 }
 
+function Initialize-ClawcrossRuntimePaths {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [switch]$Dev)
+    if ($Dev) { $env:CLAWCROSS_HOME = Join-Path $ProjectRoot ".clawcross-dev" }
+    $legacy = $env:CLAWCROSS_USE_LEGACY_PATHS -in @("1", "true", "yes", "on")
+    if ($legacy) {
+        $env:CLAWCROSS_HOME = $ProjectRoot
+        $env:CLAWCROSS_VENV_DIR = Join-Path $ProjectRoot ".venv"
+        $env:CLAWCROSS_DATA_DIR = Join-Path $ProjectRoot "data"
+        $env:CLAWCROSS_LOG_DIR = Join-Path $ProjectRoot "logs"
+        $env:CLAWCROSS_CONFIG_DIR = Join-Path $ProjectRoot "config"
+        $env:CLAWCROSS_RUN_DIR = $ProjectRoot
+        $env:CLAWCROSS_BIN_DIR = Join-Path $ProjectRoot "bin"
+        $env:CLAWCROSS_WORKSPACE_DIR = $ProjectRoot
+    } else {
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_HOME)) { $env:CLAWCROSS_HOME = Join-Path $HOME ".clawcross" }
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_VENV_DIR)) { $env:CLAWCROSS_VENV_DIR = Join-Path $env:CLAWCROSS_HOME "venv" }
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_DATA_DIR)) { $env:CLAWCROSS_DATA_DIR = Join-Path $env:CLAWCROSS_HOME "data" }
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_LOG_DIR)) { $env:CLAWCROSS_LOG_DIR = Join-Path $env:CLAWCROSS_HOME "logs" }
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_CONFIG_DIR)) { $env:CLAWCROSS_CONFIG_DIR = Join-Path $env:CLAWCROSS_HOME "config" }
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_RUN_DIR)) { $env:CLAWCROSS_RUN_DIR = Join-Path $env:CLAWCROSS_HOME "run" }
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_BIN_DIR)) { $env:CLAWCROSS_BIN_DIR = Join-Path $env:CLAWCROSS_HOME "bin" }
+        if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_WORKSPACE_DIR)) { $env:CLAWCROSS_WORKSPACE_DIR = Join-Path $env:CLAWCROSS_HOME "workspace" }
+    }
+    if ([string]::IsNullOrWhiteSpace($env:CLAWCROSS_STATE_DIR)) { $env:CLAWCROSS_STATE_DIR = $env:CLAWCROSS_HOME }
+    if ([string]::IsNullOrWhiteSpace($env:PYTHONDONTWRITEBYTECODE)) { $env:PYTHONDONTWRITEBYTECODE = "1" }
+    $venvParent = Split-Path -Parent $env:CLAWCROSS_VENV_DIR
+    foreach ($dir in @($env:CLAWCROSS_HOME, $venvParent, $env:CLAWCROSS_DATA_DIR, $env:CLAWCROSS_LOG_DIR, $env:CLAWCROSS_CONFIG_DIR, $env:CLAWCROSS_RUN_DIR, $env:CLAWCROSS_BIN_DIR, $env:CLAWCROSS_WORKSPACE_DIR, $env:CLAWCROSS_STATE_DIR)) {
+        if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    }
+}
+
+function Invoke-ClawcrossHomeMigration {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+    if ($env:CLAWCROSS_USE_LEGACY_PATHS -in @("1", "true", "yes", "on")) { return }
+    if (Test-Path (Join-Path $env:CLAWCROSS_HOME ".migration_done")) { return }
+    $legacyPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    if (Test-Path $legacyPython) {
+        & $legacyPython (Join-Path $ProjectRoot "scripts\migrate_to_user_home.py") | Out-Host
+    } else {
+        $python = Get-Command python -ErrorAction SilentlyContinue
+        if ($python) { & $python.Source (Join-Path $ProjectRoot "scripts\migrate_to_user_home.py") | Out-Host }
+    }
+}
+
 function Get-VenvPython {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ProjectRoot
     )
 
-    $pythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+    $venvDir = if ($env:CLAWCROSS_VENV_DIR) { $env:CLAWCROSS_VENV_DIR } else { Join-Path $ProjectRoot ".venv" }
+    $pythonPath = Join-Path $venvDir "Scripts\python.exe"
     if (Test-Path $pythonPath) {
         return $pythonPath
     }
@@ -251,9 +296,17 @@ function Start-BackgroundPythonProcess {
         New-Item -ItemType Directory -Path $stderrDir -Force | Out-Null
     }
 
+    $resolvedArguments = @($Arguments)
+    if ($resolvedArguments.Count -gt 0 -and -not [System.IO.Path]::IsPathRooted($resolvedArguments[0])) {
+        $candidate = Join-Path $ProjectRoot $resolvedArguments[0]
+        if (Test-Path $candidate) {
+            $resolvedArguments[0] = $candidate
+        }
+    }
+
     return Start-Process -FilePath $PythonPath `
-        -ArgumentList $Arguments `
-        -WorkingDirectory $ProjectRoot `
+        -ArgumentList $resolvedArguments `
+        -WorkingDirectory $env:CLAWCROSS_WORKSPACE_DIR `
         -WindowStyle Hidden `
         -RedirectStandardOutput $StdOutLog `
         -RedirectStandardError $StdErrLog `

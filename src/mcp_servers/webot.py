@@ -86,9 +86,10 @@ from webot.subagents import (
 from webot.voice import get_voice_state as get_voice_runtime_state
 from webot.workflow_presets import get_workflow_preset, list_workflow_presets
 from webot.workspace import describe_session_workspace
+from utils.runtime_paths import ENV_FILE, USER_FILES_DIR
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
+load_dotenv(dotenv_path=str(ENV_FILE))
 
 mcp = FastMCP("WeBotAgents")
 
@@ -103,7 +104,7 @@ _SESSION_STATUS_URL = f"http://127.0.0.1:{_AGENT_PORT}/session_status"
 
 _BACKGROUND_TASKS: dict[str, asyncio.Task] = {}
 _WORKER_ID = f"webot-mcp:{os.getpid()}:{uuid.uuid4().hex[:8]}"
-_RUNTIME_ROOT = Path(root_dir) / "data" / "user_files"
+_RUNTIME_ROOT = USER_FILES_DIR
 _DEFAULT_ULTRAREVIEW_ANGLES = [
     "security",
     "logic",

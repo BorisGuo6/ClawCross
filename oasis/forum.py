@@ -12,10 +12,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from utils.runtime_paths import DATA_DIR
+
 # 持久化存储目录（相对于项目根目录）
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 _project_root = os.path.dirname(_this_dir)
-DISCUSSIONS_DIR = os.path.join(_project_root, "data", "oasis_discussions")
+DISCUSSIONS_DIR = os.path.join(str(DATA_DIR), "oasis_discussions")
 
 
 def coerce_optional_post_id(value) -> int | None:

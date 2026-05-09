@@ -23,11 +23,11 @@ from typing import Any
 
 import aiosqlite
 
-from utils.checkpoint_paths import PROJECT_ROOT
+from utils.runtime_paths import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HISTORY_DB_DIR = PROJECT_ROOT / "data" / "external_agent_history"
+DEFAULT_HISTORY_DB_DIR = DATA_DIR / "external_agent_history"
 
 _PATH_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]+')
 

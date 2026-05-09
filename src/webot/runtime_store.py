@@ -24,9 +24,10 @@ import sqlite3
 from typing import Any
 import uuid
 
+from utils.runtime_paths import DATA_DIR
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "webot_runtime.db"
+DEFAULT_DB_PATH = DATA_DIR / "webot_runtime.db"
 
 
 class _ClosingConnection(sqlite3.Connection):

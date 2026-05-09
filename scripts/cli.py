@@ -40,11 +40,16 @@ _configure_stdio()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from src.utils.runtime_paths import DATA_DIR, ENV_FILE, LOGS_DIR, PID_DIR, USER_FILES_DIR, WORKSPACE_DIR, ensure_runtime_dirs, set_subprocess_env, venv_python
+ensure_runtime_dirs()
+WORKING_DIR = str(WORKSPACE_DIR)
 
 # ── 加载 .env 配置 ────────────────────────────────────────────────────────
 def _load_env():
     """从 config/.env 加载环境变量到 os.environ"""
-    env_path = os.path.join(PROJECT_ROOT, "config", ".env")
+    env_path = str(ENV_FILE)
     if not os.path.exists(env_path):
         return
     with open(env_path, "r", encoding="utf-8") as f:
@@ -75,14 +80,14 @@ DEFAULT_USER = os.getenv("CLI_USER", "admin")
 
 
 def _workflow_yaml_dir(user_id: str, team: str = "") -> str:
-    user_root = os.path.join(PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         return os.path.join(user_root, "teams", team, "oasis", "yaml")
     return os.path.join(user_root, "oasis", "yaml")
 
 
 def _workflow_python_dir(user_id: str, team: str = "") -> str:
-    user_root = os.path.join(PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         return os.path.join(user_root, "teams", team, "oasis", "python")
     return os.path.join(user_root, "oasis", "python")
@@ -91,7 +96,7 @@ def _workflow_python_dir(user_id: str, team: str = "") -> str:
 def _iter_yaml_workflow_dirs(user_id: str, team: str = ""):
     if not user_id:
         return []
-    user_root = os.path.join(PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         return [("team", team, _workflow_yaml_dir(user_id, team))]
     dirs = [("personal", "", _workflow_yaml_dir(user_id, ""))]
@@ -107,7 +112,7 @@ def _iter_yaml_workflow_dirs(user_id: str, team: str = ""):
 def _iter_python_workflow_dirs(user_id: str, team: str = ""):
     if not user_id:
         return []
-    user_root = os.path.join(PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         return [("team", team, _workflow_python_dir(user_id, team))]
     dirs = [("personal", "", _workflow_python_dir(user_id, ""))]
@@ -157,7 +162,7 @@ def _resolve_python_workflow_path(user_id: str, name: str, team: str = ""):
 
 
 def _python_runs_dir() -> str:
-    return os.path.join(PROJECT_ROOT, "data", "python_workflow_runs")
+    return os.path.join(str(DATA_DIR), "python_workflow_runs")
 
 
 def _spawn_standalone_python_workflow(*, user_id: str, python_file: str, question: str, team: str = ""):
@@ -167,7 +172,7 @@ def _spawn_standalone_python_workflow(*, user_id: str, python_file: str, questio
     log_path = os.path.join(runs_dir, f"{run_id}.log")
     result_path = os.path.join(runs_dir, f"{run_id}.json")
     meta_path = os.path.join(runs_dir, f"{run_id}.meta.json")
-    python_executable = os.path.join(PROJECT_ROOT, ".venv", "bin", "python")
+    python_executable = str(venv_python())
     if not os.path.isfile(python_executable):
         python_executable = sys.executable
     cmd = [
@@ -185,15 +190,15 @@ def _spawn_standalone_python_workflow(*, user_id: str, python_file: str, questio
     log_file = open(log_path, "a", encoding="utf-8")
     proc = subprocess.Popen(
         cmd,
-        cwd=PROJECT_ROOT,
-        env={
+        cwd=WORKING_DIR,
+        env=set_subprocess_env({
             **os.environ,
             "CLAWCROSS_PROJECT_ROOT": PROJECT_ROOT,
             "CLAWCROSS_PYTHONPATH": PROJECT_ROOT,
             "PYTHONPATH": PROJECT_ROOT + (
                 os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""
             ),
-        },
+        }),
         stdout=log_file,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -632,7 +637,7 @@ def cmd_restart(args):
     参数：
         args: 命令行参数对象
     """
-    flag = os.path.join(PROJECT_ROOT, ".restart_flag")
+    flag = os.path.join(str(PID_DIR), "restart_flag")
     with open(flag, "w") as f:
         f.write("restart")
     print("✅ 重启信号已发送（等待 launcher 处理）")
@@ -836,7 +841,7 @@ def cmd_profile(args):
     act = args.action
 
     # 构建用户画像文件路径
-    profile_path = os.path.join(PROJECT_ROOT, "data", "user_files", user_id, "user_profile.txt")
+    profile_path = os.path.join(str(USER_FILES_DIR), user_id, "user_profile.txt")
 
     if act == "path":
         print(f"用户画像路径: {profile_path}")
@@ -1485,7 +1490,7 @@ def cmd_tunnel(args):
     参数：
         args: 命令行参数对象
     """
-    pidfile = os.path.join(PROJECT_ROOT, ".tunnel.pid")
+    pidfile = os.path.join(str(PID_DIR), "tunnel.pid")
 
     def _is_running():
         """检查 tunnel 是否正在运行"""
@@ -1501,7 +1506,7 @@ def cmd_tunnel(args):
 
     def _get_public_domain():
         """获取公网域名"""
-        env_path = os.path.join(PROJECT_ROOT, "config", ".env")
+        env_path = str(ENV_FILE)
         if not os.path.exists(env_path):
             return None
         with open(env_path) as f:
@@ -1532,12 +1537,13 @@ def cmd_tunnel(args):
             print(f"⚠️ Tunnel 已在运行 (PID: {pid})")
             return
         print("🌐 启动 Tunnel...")
-        log = os.path.join(PROJECT_ROOT, "logs", "tunnel.log")
+        log = os.path.join(str(LOGS_DIR), "tunnel.log")
         os.makedirs(os.path.dirname(log), exist_ok=True)
         proc = subprocess.Popen(
             [sys.executable, os.path.join(PROJECT_ROOT, "scripts", "tunnel.py")],
             stdout=open(log, "w"), stderr=subprocess.STDOUT,
-            cwd=PROJECT_ROOT, start_new_session=True
+            cwd=WORKING_DIR, start_new_session=True,
+            env=set_subprocess_env(os.environ),
         )
         with open(pidfile, "w") as f:
             f.write(str(proc.pid))
@@ -2690,7 +2696,7 @@ def cmd_status(args):
     # 2. LLM API Key 状态
     print(f"\n{'─' * 50}")
     print("🔑 API Key 配置:\n")
-    env_path = os.path.join(PROJECT_ROOT, "config", ".env")
+    env_path = str(ENV_FILE)
     env_vars = {}
     if os.path.isfile(env_path):
         with open(env_path, "r", encoding="utf-8") as f:

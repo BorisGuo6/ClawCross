@@ -3,7 +3,11 @@
 # 参考腾讯内网版 OpenClaw install_prepare.sh 的组件状态跟踪模式
 
 set -e
-cd "$(dirname "$0")/.."
+export PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$PROJECT_ROOT/selfskill/scripts/_paths.sh"
+clawcross_init_paths
+clawcross_run_migration_if_needed
+cd "$CLAWCROSS_WORKSPACE_DIR"
 
 # ---------------------------------------------------------------------------
 # Color definitions (compatible with bash 3.2+)
@@ -172,15 +176,15 @@ check_venv() {
         ui_info "使用内网版 OpenClaw 安装的 Python: $("${INTERNAL_RUNTIME_BASE}/python/bin/python3" --version 2>/dev/null)"
     fi
 
-    if [ -d ".venv" ]; then
-        ui_success "虚拟环境已存在: .venv/"
+    if [ -x "$CLAWCROSS_VENV_DIR/bin/python" ]; then
+        ui_success "虚拟环境已存在: $CLAWCROSS_VENV_DIR"
     else
-        ui_info "创建虚拟环境 (.venv, Python 3.11+)..."
-        uv venv .venv --python 3.11
+        ui_info "创建虚拟环境 ($CLAWCROSS_VENV_DIR, Python 3.11+)..."
+        uv venv "$CLAWCROSS_VENV_DIR" --python 3.11
         ui_success "虚拟环境创建完成"
     fi
 
-    source .venv/bin/activate
+    source "$CLAWCROSS_VENV_DIR/bin/activate"
 
     local python_ver
     python_ver="$(python --version 2>/dev/null | awk '{print $2}' || echo "0.0.0")"
@@ -198,7 +202,7 @@ check_venv() {
 check_dependencies() {
     ui_section "● Python 依赖"
     ui_info "安装依赖 (config/requirements.txt)..."
-    uv pip install -r config/requirements.txt
+    uv pip install -r "$PROJECT_ROOT/config/requirements.txt"
     ui_success "依赖安装完成"
     return 0
 }
@@ -273,16 +277,16 @@ check_node_and_acpx() {
 check_config() {
     ui_section "● 配置文件"
 
-    if [ -f "config/.env" ]; then
-        ui_success "config/.env 已存在"
+    if [ -f "$CLAWCROSS_CONFIG_DIR/.env" ]; then
+        ui_success "$CLAWCROSS_CONFIG_DIR/.env 已存在"
     else
         ui_warn "config/.env 不存在，请创建并填入: LLM_API_KEY=your_key"
     fi
 
-    if [ -f "config/users.json" ]; then
-        ui_success "config/users.json 已存在"
+    if [ -f "$CLAWCROSS_CONFIG_DIR/users.json" ]; then
+        ui_success "$CLAWCROSS_CONFIG_DIR/users.json 已存在"
     else
-        ui_warn "config/users.json 不存在，请运行 scripts/adduser.sh 创建用户"
+        ui_warn "$CLAWCROSS_CONFIG_DIR/users.json 不存在，请运行 scripts/adduser.sh 创建用户"
     fi
     return 0
 }

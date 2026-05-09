@@ -22,10 +22,10 @@ Explicit usage (if you have helpers after `main` or want manual control):
         raise SystemExit(run(main))
 
 What this module does at import time, in order:
-  1. Re-exec into <project>/.venv/bin/python if it exists and the current
+  1. Re-exec into $CLAWCROSS_VENV_DIR/bin/python if it exists and the current
      interpreter is something else (guarded by OASIS_REEXEC=1 to avoid loops).
   2. Add <project> and <project>/src to sys.path.
-  3. Load <project>/config/.env if present.
+  3. Load $CLAWCROSS_CONFIG_DIR/.env if present.
   4. Re-export Context (= StandaloneWorkflowContext), run (= run_cli), and the
      @workflow decorator.
 
@@ -47,6 +47,12 @@ _PROJECT_ROOT = _PKG_DIR.parent
 
 
 def _find_venv_python(root: Path) -> Path | None:
+    configured = os.environ.get("CLAWCROSS_VENV_DIR")
+    if configured:
+        for rel in ("bin/python", "bin/python3", "Scripts/python.exe"):
+            candidate = Path(configured) / rel
+            if candidate.is_file():
+                return candidate
     for rel in (".venv/bin/python", ".venv/bin/python3", ".venv/Scripts/python.exe"):
         candidate = root / rel
         if candidate.is_file():
@@ -85,7 +91,13 @@ def _load_env() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    env_path = _PROJECT_ROOT / "config" / ".env"
+    try:
+        from src.utils.runtime_paths import ENV_FILE, set_subprocess_env
+    except Exception:
+        env_path = Path(os.environ.get("CLAWCROSS_CONFIG_DIR", _PROJECT_ROOT / "config")) / ".env"
+    else:
+        set_subprocess_env(os.environ)
+        env_path = ENV_FILE
     if env_path.is_file():
         load_dotenv(dotenv_path=str(env_path))
 

@@ -1,10 +1,14 @@
 #!/bin/bash
 # LLM API Key 配置脚本（支持 DeepSeek / OpenAI / Gemini / Claude / Antigravity（Google One Pro 免费） / MiniMax 等，含厂商路由与中转代理）
 
-cd "$(dirname "$0")/.."
+PROJECT_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+cd "$PROJECT_ROOT"
 
-ENV_FILE="config/.env"
-EXAMPLE_FILE="config/.env.example"
+source "$PROJECT_ROOT/selfskill/scripts/_paths.sh"
+clawcross_init_paths
+
+ENV_FILE="$CLAWCROSS_CONFIG_DIR/.env"
+EXAMPLE_FILE="$PROJECT_ROOT/config/.env.example"
 
 # 已有 .env 且 Key 已配置，询问是否重置
 if [ -f "$ENV_FILE" ]; then

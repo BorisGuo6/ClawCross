@@ -11,10 +11,17 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 . (Join-Path $projectRoot "scripts\common.ps1")
 
 Set-ClawcrossUtf8
+if ($Command -eq "dev") {
+    Initialize-ClawcrossRuntimePaths -ProjectRoot $projectRoot -Dev
+    $Command = "start"
+} else {
+    Initialize-ClawcrossRuntimePaths -ProjectRoot $projectRoot
+}
+Invoke-ClawcrossHomeMigration -ProjectRoot $projectRoot
 
-$pidFile = Join-Path $projectRoot ".clawcross.pid"
-$tunnelPidFile = Join-Path $projectRoot ".tunnel.pid"
-$envPath = Join-Path $projectRoot "config\.env"
+$pidFile = Join-Path $env:CLAWCROSS_RUN_DIR "clawcross.pid"
+$tunnelPidFile = Join-Path $env:CLAWCROSS_RUN_DIR "tunnel.pid"
+$envPath = Join-Path $env:CLAWCROSS_CONFIG_DIR ".env"
 
 function Stop-ClawcrossTunnelForFreshStart {
     $touched = $false
@@ -44,9 +51,16 @@ function Invoke-ClawcrossPython {
     )
 
     $python = Ensure-VenvPython -ProjectRoot $projectRoot
-    Push-Location $projectRoot
+    $resolvedArguments = @($Arguments)
+    if ($resolvedArguments.Count -gt 0 -and -not [System.IO.Path]::IsPathRooted($resolvedArguments[0])) {
+        $candidate = Join-Path $projectRoot $resolvedArguments[0]
+        if (Test-Path $candidate) {
+            $resolvedArguments[0] = $candidate
+        }
+    }
+    Push-Location $env:CLAWCROSS_WORKSPACE_DIR
     try {
-        & $python @Arguments
+        & $python @resolvedArguments
         return $LASTEXITCODE
     } finally {
         Pop-Location
@@ -72,9 +86,9 @@ function Write-MagicLinks {
     $mlUser = $env:CLAWCROSS_MAGIC_LINK_USER
     if ([string]::IsNullOrWhiteSpace($mlUser)) { $mlUser = "default" }
     $python = Ensure-VenvPython -ProjectRoot $projectRoot
-    Push-Location $projectRoot
+    Push-Location $env:CLAWCROSS_WORKSPACE_DIR
     try {
-        $raw = & $python "scripts\cli.py" "token" "generate" "-u" $mlUser "--valid-hours" "24" 2>&1
+        $raw = & $python (Join-Path $projectRoot "scripts\cli.py") "token" "generate" "-u" $mlUser "--valid-hours" "24" 2>&1
     } finally {
         Pop-Location
     }
@@ -522,7 +536,7 @@ function Invoke-ClawcrossSetupIfNeeded {
 }
 
 # ---- uv 环境自检 & 自动配置 ----
-Push-Location $projectRoot
+Push-Location $env:CLAWCROSS_WORKSPACE_DIR
 try {
     # 确保 uv 可用（未安装则自动安装）
     $uv = Ensure-UvInstalled
@@ -531,14 +545,14 @@ try {
     $venvPython = Get-VenvPython -ProjectRoot $projectRoot
     if (-not $venvPython) {
         Write-Host "Creating .venv with Python 3.11 ..."
-        & $uv venv .venv --python 3.11
+        & $uv venv $env:CLAWCROSS_VENV_DIR --python 3.11
         if ($LASTEXITCODE -ne 0) {
             Write-Host "uv venv failed. Trying to install Python 3.11 via uv ..."
             & $uv python install 3.11
             if ($LASTEXITCODE -ne 0) {
                 throw "uv python install failed. Verify your network connection or install Python manually."
             }
-            & $uv venv .venv --python 3.11
+            & $uv venv $env:CLAWCROSS_VENV_DIR --python 3.11
             if ($LASTEXITCODE -ne 0) {
                 throw "Failed to create .venv."
             }
@@ -551,7 +565,7 @@ try {
     $importCheck = & $venvPython -c "import fastapi" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Installing Python dependencies (config/requirements.txt) ..."
-        & $uv pip install -r config\requirements.txt --python $venvPython
+        & $uv pip install -r (Join-Path $projectRoot "config\requirements.txt") --python $venvPython
         if ($LASTEXITCODE -ne 0) {
             throw "Dependency installation failed."
         }
@@ -621,8 +635,8 @@ switch ($Command) {
         } else {
             Remove-Item Env:\CLAWCROSS_NO_OPENCLAW -ErrorAction SilentlyContinue
         }
-        $stdoutLog = Join-Path $projectRoot "logs\launcher.out.log"
-        $stderrLog = Join-Path $projectRoot "logs\launcher.err.log"
+        $stdoutLog = Join-Path $env:CLAWCROSS_LOG_DIR "launcher.out.log"
+        $stderrLog = Join-Path $env:CLAWCROSS_LOG_DIR "launcher.err.log"
         $process = Start-BackgroundPythonProcess `
             -ProjectRoot $projectRoot `
             -PythonPath $python `
@@ -668,8 +682,8 @@ switch ($Command) {
             Stop-ClawcrossTunnelForFreshStart
             Write-Host "Starting Cloudflare Tunnel for mobile remote access..."
             $python = Ensure-VenvPython -ProjectRoot $projectRoot
-            $tunnelStdoutLog = Join-Path $projectRoot "logs\tunnel.out.log"
-            $tunnelStderrLog = Join-Path $projectRoot "logs\tunnel.err.log"
+            $tunnelStdoutLog = Join-Path $env:CLAWCROSS_LOG_DIR "tunnel.out.log"
+            $tunnelStderrLog = Join-Path $env:CLAWCROSS_LOG_DIR "tunnel.err.log"
             $tunnelProcess = Start-BackgroundPythonProcess `
                 -ProjectRoot $projectRoot `
                 -PythonPath $python `
@@ -772,9 +786,9 @@ switch ($Command) {
         Write-Host "Starting Clawcross in the foreground (headless) ..."
         Write-Host "This session stays attached. Press Ctrl+C to stop all services."
 
-        Push-Location $projectRoot
+        Push-Location $env:CLAWCROSS_WORKSPACE_DIR
         try {
-            & $python "scripts\launcher.py"
+            & $python (Join-Path $projectRoot "scripts\launcher.py")
             exit $LASTEXITCODE
         } finally {
             Pop-Location
@@ -855,9 +869,9 @@ switch ($Command) {
     "logs" {
         $logName = if ($Rest.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($Rest[0])) { $Rest[0] } else { "launcher" }
         switch ($logName) {
-            { $_ -in @("launcher", "main") } { $logPath = Join-Path $projectRoot "logs\launcher.out.log"; break }
-            { $_ -in @("error", "errors") } { $logPath = Join-Path $projectRoot "logs\launcher.err.log"; break }
-            "tunnel" { $logPath = Join-Path $projectRoot "logs\tunnel.out.log"; break }
+            { $_ -in @("launcher", "main") } { $logPath = Join-Path $env:CLAWCROSS_LOG_DIR "launcher.out.log"; break }
+            { $_ -in @("error", "errors") } { $logPath = Join-Path $env:CLAWCROSS_LOG_DIR "launcher.err.log"; break }
+            "tunnel" { $logPath = Join-Path $env:CLAWCROSS_LOG_DIR "tunnel.out.log"; break }
             default {
                 Write-Host "Unknown log: $logName"
                 Write-Host "Available logs: launcher, error, tunnel"
@@ -940,9 +954,9 @@ switch ($Command) {
         $openclaw = Get-OpenClawCommand
         if ($openclaw) {
             Write-Host "OpenClaw detected at: $openclaw"
-            Push-Location $projectRoot
+            Push-Location $env:CLAWCROSS_WORKSPACE_DIR
             try {
-                & $python "selfskill\scripts\configure_openclaw.py" "--auto-detect"
+                & $python (Join-Path $projectRoot "selfskill\scripts\configure_openclaw.py") "--auto-detect"
                 $code = $LASTEXITCODE
             } finally {
                 Pop-Location
@@ -1117,8 +1131,8 @@ switch ($Command) {
         Stop-ClawcrossTunnelForFreshStart
 
         $python = Ensure-VenvPython -ProjectRoot $projectRoot
-        $stdoutLog = Join-Path $projectRoot "logs\tunnel.out.log"
-        $stderrLog = Join-Path $projectRoot "logs\tunnel.err.log"
+        $stdoutLog = Join-Path $env:CLAWCROSS_LOG_DIR "tunnel.out.log"
+        $stderrLog = Join-Path $env:CLAWCROSS_LOG_DIR "tunnel.err.log"
         $process = Start-BackgroundPythonProcess `
             -ProjectRoot $projectRoot `
             -PythonPath $python `

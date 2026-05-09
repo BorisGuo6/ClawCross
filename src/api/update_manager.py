@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from utils.runtime_paths import DATA_DIR
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 NPM_PACKAGE_NAME = "clawcross-cli"
@@ -37,10 +38,7 @@ def _deployment_mode() -> str:
 
 
 def _status_dir() -> Path:
-    if _deployment_mode() == "npm":
-        # npm install -g 会替换整个包目录，状态必须落在用户级路径
-        return Path(os.getenv("CLAWCROSS_STATE_DIR", Path.home() / ".clawcross")) / "runtime"
-    return PROJECT_ROOT / "data" / "runtime"
+    return DATA_DIR / "runtime"
 
 
 def _status_path() -> Path:

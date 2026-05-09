@@ -24,10 +24,11 @@ import aiosqlite
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from oasis.swarm_engine import build_pending_swarm
+from utils.runtime_paths import DATA_DIR
 
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
+_DATA_DIR = str(DATA_DIR)
 _DEFAULT_DB_PATH = os.path.join(_DATA_DIR, "oasis_graph_memory.db")
 
 _ALLOWED_NODE_TYPES = {"objective", "agent", "entity", "memory", "signal", "scenario"}

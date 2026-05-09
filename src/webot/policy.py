@@ -14,7 +14,7 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 DEFAULT_POLICY_FILENAME = "webot_tool_policy.json"
 DEFAULT_EVENT_LOG_PATH = "logs/webot_tool_events.jsonl"
 
@@ -52,8 +52,10 @@ def _utc_now() -> str:
 
 
 def _user_dir(user_id: str, project_root: str | Path | None = None) -> Path:
-    root = Path(project_root) if project_root is not None else PROJECT_ROOT
-    return root / "data" / "user_files" / (user_id or "anonymous")
+    root = Path(project_root) if project_root is not None else USER_FILES_DIR
+    if project_root is not None:
+        root = root / "data" / "user_files"
+    return root / (user_id or "anonymous")
 
 
 def get_tool_policy_path(

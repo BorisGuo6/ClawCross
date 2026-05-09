@@ -16,8 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from utils.runtime_paths import DATA_DIR as RUNTIME_DATA_DIR
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data" / "trajectories"
+DATA_DIR = RUNTIME_DATA_DIR / "trajectories"
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 
 _write_lock = threading.Lock()

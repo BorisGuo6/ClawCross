@@ -8,8 +8,9 @@ import contextvars
 import logging
 import os
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_LOGS_DIR = os.path.join(_PROJECT_ROOT, "logs")
+from utils.runtime_paths import LOGS_DIR
+
+_LOGS_DIR = str(LOGS_DIR)
 _ERROR_LOG_PATH = os.path.join(_LOGS_DIR, "error.log")
 
 # --- Request ID 上下文变量 ---

@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from src.utils.runtime_paths import DATA_DIR
 
 logger = logging.getLogger("chatbot.base")
 
@@ -64,7 +65,7 @@ class ChannelAdapter(ABC):
         self._internal_token = os.getenv("INTERNAL_TOKEN", "")
         self._llm_model = os.getenv("LLM_MODEL", "")
         _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self._whitelist_file = os.getenv("WHITELIST_FILE") or os.path.join(_project_root, "data", "whitelist.json")
+        self._whitelist_file = os.getenv("WHITELIST_FILE") or os.path.join(str(DATA_DIR), "whitelist.json")
 
     @abstractmethod
     async def handle_message(self, message: ChatMessage) -> str:

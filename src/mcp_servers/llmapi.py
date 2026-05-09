@@ -29,10 +29,10 @@ from urllib.parse import quote
 import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from utils.runtime_paths import ENV_FILE
 
 # 加载 .env
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
+load_dotenv(dotenv_path=ENV_FILE)
 
 mcp = FastMCP("LLM API Access")
 

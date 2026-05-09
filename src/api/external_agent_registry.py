@@ -5,6 +5,8 @@ import os
 import threading
 from typing import Any
 
+from utils.runtime_paths import USER_FILES_DIR
+
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 _CACHE_LOCK = threading.Lock()
 _OWNER_CACHE: dict[str, tuple[tuple[tuple[str, int, int], ...], dict[str, dict[str, Any]]]] = {}
@@ -20,11 +22,11 @@ def _canonical_external_platform(platform: str) -> str:
 
 
 def _public_external_agents_path(user_id: str) -> str:
-    return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "external_agents.json")
+    return os.path.join(str(USER_FILES_DIR), user_id, "external_agents.json")
 
 
 def _team_external_agents_path(user_id: str, team: str) -> str:
-    return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "external_agents.json")
+    return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "external_agents.json")
 
 
 def _collect_owner_external_agent_files(owner_uid: str) -> list[tuple[str, str]]:
@@ -36,7 +38,7 @@ def _collect_owner_external_agent_files(owner_uid: str) -> list[tuple[str, str]]
     if os.path.isfile(public_path):
         files.append((public_path, ""))
 
-    teams_dir = os.path.join(_PROJECT_ROOT, "data", "user_files", owner_uid, "teams")
+    teams_dir = os.path.join(str(USER_FILES_DIR), owner_uid, "teams")
     if not os.path.isdir(teams_dir):
         return files
 

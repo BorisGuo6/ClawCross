@@ -39,6 +39,7 @@ from webot.soul import build_soul_prompt
 from webot.workflow_prompt import build_team_workflow_prompt
 from webot.trajectory import auto_trajectory_enabled, save_trajectory
 from utils.context_references import expand_context_references
+from utils.runtime_paths import USER_FILES_DIR
 from utils.routed_checkpoint_saver import ThreadRoutedAsyncSqliteSaver
 from services.smart_routing import resolve_turn_route
 from webot.permission_context import (
@@ -709,9 +710,7 @@ class TeamAgent:
                 loaded[key] = ""
 
         # 记录 user_files 根目录路径（用户画像存在各用户目录下）
-        loaded["_user_files_dir"] = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "user_files"
-        )
+        loaded["_user_files_dir"] = str(USER_FILES_DIR)
 
         return loaded
 

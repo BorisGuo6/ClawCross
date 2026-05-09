@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from api.external_agent_registry import build_external_agents_map_for_owner
 from utils.auth_utils import extract_user_password_session, is_internal_bearer, parse_bearer_parts
 from utils.checkpoint_repository import list_thread_ids_by_prefix
+from utils.runtime_paths import LOGS_DIR, USER_FILES_DIR, WORKSPACE_DIR
 from api.group_repository import (
     add_group_member,
     clear_group_members,
@@ -168,7 +169,7 @@ def _external_platform_from_agent(agent_info: dict) -> str:
 
 
 # ── Temporary ACP lifecycle trace (群聊): logger [ACP_TRACE] + logs/acp_group_trace.jsonl
-_ACP_TRACE_PATH = os.path.join(_PROJECT_ROOT, "logs", "acp_group_trace.jsonl")
+_ACP_TRACE_PATH = os.path.join(str(LOGS_DIR), "acp_group_trace.jsonl")
 _acp_trace_file_lock = threading.Lock()
 
 
@@ -266,7 +267,7 @@ def _load_team_internal_agents(user_id: str, team: str) -> list[dict]:
     """
     if not user_id or not team:
         return []
-    path = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "internal_agents.json")
+    path = os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "internal_agents.json")
     if not os.path.isfile(path):
         return []
     try:
@@ -292,7 +293,7 @@ def _load_team_internal_agents(user_id: str, team: str) -> list[dict]:
 
 def _public_external_agents_path(user_id: str) -> str:
     """User-level external_agents.json (not tied to a team)."""
-    return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "external_agents.json")
+    return os.path.join(str(USER_FILES_DIR), user_id, "external_agents.json")
 
 
 def _parse_external_agents_file(path: str, *, owner_user_id: str = "", team: str = "") -> list[dict]:
@@ -348,7 +349,7 @@ def _load_team_external_agents(user_id: str, team: str) -> list[dict]:
     """
     if not user_id or not team:
         return []
-    path = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "external_agents.json")
+    path = os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "external_agents.json")
     return _parse_external_agents_file(path, owner_user_id=user_id, team=team)
 
 
@@ -553,7 +554,7 @@ class GroupService:
             attachment_count=len(attachments or []),
         )
         try:
-            adapter = get_acpx_adapter(cwd=_PROJECT_ROOT)
+            adapter = get_acpx_adapter(cwd=str(WORKSPACE_DIR / "acpx"))
             acpx_session = adapter.to_acpx_session_name(tool=platform, session_key=acp_session)
             acpx_attachments = None
             if attachments:
@@ -568,7 +569,7 @@ class GroupService:
                 ]
 
             options = {
-                "cwd": _PROJECT_ROOT,
+                "cwd": str(WORKSPACE_DIR / "acpx"),
                 **acpx_options_from_agent(agent_info, default_timeout_sec=180),
                 "reset_session": bool(metadata and metadata.get("resetSession")),
                 "system_prompt": _external_agent_session_prompt(

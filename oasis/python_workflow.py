@@ -13,6 +13,7 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 from integrations.agent_sender import SendToAgentResult
+from utils.runtime_paths import DATA_DIR, USER_FILES_DIR
 from oasis.agent_center import AgentCenter
 from oasis.forum import DiscussionForum
 from oasis.forum_client import conclude_topic, create_empty_topic, publish_to_topic
@@ -22,12 +23,12 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 
 def workflow_python_dir(user_id: str, team: str = "") -> str:
     if team:
-        return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "oasis", "python")
-    return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "oasis", "python")
+        return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "oasis", "python")
+    return os.path.join(str(USER_FILES_DIR), user_id, "oasis", "python")
 
 
 def python_workflow_runs_dir() -> str:
-    path = os.path.join(_PROJECT_ROOT, "data", "python_workflow_runs")
+    path = os.path.join(str(DATA_DIR), "python_workflow_runs")
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -37,7 +38,7 @@ def resolve_python_workflow_path(user_id: str, python_file: str, team: str = "")
         return None, "未提供 python workflow 文件名"
     target_name = python_file if python_file.endswith(".py") else f"{python_file}.py"
     matches: list[tuple[str, str]] = []
-    user_root = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         search_dirs = [("team", team, workflow_python_dir(user_id, team))]
     else:

@@ -22,12 +22,11 @@ import json
 import httpx
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
+from utils.runtime_paths import ENV_FILE
 
 mcp = FastMCP("TelegramPush")
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
+load_dotenv(dotenv_path=ENV_FILE)
 
 def _resolve_telegram_token() -> str:
     """读 TELEGRAM_BOT_TOKEN；为空时尝试从 TELEGRAM_BOTS JSON 取第一个 bot 的 token。
@@ -54,8 +53,10 @@ def _resolve_telegram_token() -> str:
 
 TELEGRAM_BOT_TOKEN = _resolve_telegram_token()
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-USER_DATA_DIR = os.path.join(root_dir, "data", "user_files")
-WHITELIST_FILE = os.getenv("WHITELIST_FILE") or os.path.join(root_dir, "data", "whitelist.json")
+from utils.runtime_paths import DATA_DIR, USER_FILES_DIR
+
+USER_DATA_DIR = str(USER_FILES_DIR)
+WHITELIST_FILE = os.getenv("WHITELIST_FILE") or os.path.join(str(DATA_DIR), "whitelist.json")
 TELEGRAM_CHANNEL = "telegram"
 
 def _get_chat_id_path(username: str) -> str:

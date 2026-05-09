@@ -8,7 +8,9 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "common.ps1")
 
 Set-ClawcrossUtf8
-Push-Location $projectRoot
+Initialize-ClawcrossRuntimePaths -ProjectRoot $projectRoot
+Invoke-ClawcrossHomeMigration -ProjectRoot $projectRoot
+Push-Location $env:CLAWCROSS_WORKSPACE_DIR
 
 try {
     Write-Host "=========================================="
@@ -21,8 +23,8 @@ try {
 
     $venvPython = Get-VenvPython -ProjectRoot $projectRoot
     if (-not $venvPython) {
-        Write-Host "Creating .venv with Python $PythonVersion ..."
-        & $uv venv .venv --python $PythonVersion
+        Write-Host "Creating virtual environment at $env:CLAWCROSS_VENV_DIR with Python $PythonVersion ..."
+        & $uv venv $env:CLAWCROSS_VENV_DIR --python $PythonVersion
         if ($LASTEXITCODE -ne 0) {
             Write-Host "uv venv failed on the first attempt. Trying to install Python $PythonVersion via uv ..."
             & $uv python install $PythonVersion
@@ -30,9 +32,9 @@ try {
                 throw "uv python install failed. Verify your network connection or install Python manually."
             }
 
-            & $uv venv .venv --python $PythonVersion
+            & $uv venv $env:CLAWCROSS_VENV_DIR --python $PythonVersion
             if ($LASTEXITCODE -ne 0) {
-                throw "Failed to create .venv."
+                throw "Failed to create virtual environment."
             }
         }
 
@@ -43,7 +45,7 @@ try {
     }
 
     Write-Host "Installing or updating Python dependencies ..."
-    & $uv pip install -r config\requirements.txt --python $venvPython
+    & $uv pip install -r (Join-Path $projectRoot "config\requirements.txt") --python $venvPython
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency installation failed."
     }
@@ -92,14 +94,14 @@ try {
     }
 
     Write-Host ""
-    if (Test-Path "config\.env") {
+    if (Test-Path (Join-Path $env:CLAWCROSS_CONFIG_DIR ".env")) {
         Write-Host "config/.env already exists"
     } else {
         Write-Host "config/.env is missing. Initialize it with:"
         Write-Host "  powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 configure --init"
     }
 
-    if (Test-Path "config\users.json") {
+    if (Test-Path (Join-Path $env:CLAWCROSS_CONFIG_DIR "users.json")) {
         Write-Host "config/users.json already exists"
     } else {
         Write-Host "config/users.json is missing. If you need password login, run:"

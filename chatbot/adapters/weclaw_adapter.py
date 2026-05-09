@@ -46,9 +46,10 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
-_chatbot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_project_root = os.path.dirname(_chatbot_dir)
-load_dotenv(dotenv_path=os.path.join(_project_root, "config", ".env"))
+from src.utils.runtime_paths import DATA_DIR, ENV_FILE, PROJECT_ROOT, WORKSPACE_DIR, ensure_runtime_dirs
+
+load_dotenv(dotenv_path=ENV_FILE)
+ensure_runtime_dirs()
 
 from .base import ChannelAdapter, MagicLink
 
@@ -56,7 +57,6 @@ logger = logging.getLogger("chatbot.weclaw")
 
 # QR ASCII 块字符（unicode 半/全块、白/黑、阴影）
 _QR_CHARS = set("█▀▄▌▐░▒▓ ▉▊▋▍▎▏▔▕")
-_QR_FILE_RELPATH = "data/weclaw_qr.txt"
 _INSTALL_SCRIPT_RELPATH = "scripts/weclaw_install.sh"
 
 
@@ -105,7 +105,7 @@ class WeClawAdapter(ChannelAdapter):
         self._proc: subprocess.Popen | None = None
         self._http_server: ThreadingHTTPServer | None = None
         self._qr_buffer: list[str] = []
-        self._qr_path = os.path.join(_project_root, _QR_FILE_RELPATH)
+        self._qr_path = str(DATA_DIR / "weclaw_qr.txt")
 
     # ── 抽象方法（weclaw 自己处理协议层）─────────────────────────────
 
@@ -132,7 +132,7 @@ class WeClawAdapter(ChannelAdapter):
         """缺二进制时跑 scripts/weclaw_install.sh；返回安装后的路径或 None。"""
         if not self._auto_install:
             return None
-        script = os.path.join(_project_root, _INSTALL_SCRIPT_RELPATH)
+        script = os.path.join(str(PROJECT_ROOT), _INSTALL_SCRIPT_RELPATH)
         if not os.path.exists(script):
             logger.error(f"找不到安装脚本 {script}")
             return None
@@ -140,7 +140,7 @@ class WeClawAdapter(ChannelAdapter):
         try:
             result = subprocess.run(
                 ["bash", script],
-                cwd=_project_root,
+                cwd=str(WORKSPACE_DIR),
                 timeout=300,
                 capture_output=True,
                 text=True,
@@ -398,7 +398,7 @@ class WeClawAdapter(ChannelAdapter):
             self._qr_buffer = []
             return
 
-        rel = os.path.relpath(self._qr_path, _project_root)
+        rel = os.path.relpath(self._qr_path, str(PROJECT_ROOT))
         banner = (
             "\n"
             + "=" * 60 + "\n"

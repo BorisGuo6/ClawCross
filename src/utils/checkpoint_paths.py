@@ -11,9 +11,10 @@ import os
 from pathlib import Path
 import re
 
+from utils.runtime_paths import DATA_DIR
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CHECKPOINT_DB_DIR = PROJECT_ROOT / "data" / "agent_checkpoints"
+DEFAULT_CHECKPOINT_DB_DIR = DATA_DIR / "agent_checkpoints"
 
 _PATH_UNSAFE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]+')
 _LEGACY_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")

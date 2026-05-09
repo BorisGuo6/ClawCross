@@ -19,6 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from utils.auth_utils import extract_user_password_session, is_internal_bearer, parse_bearer_parts
 from utils.effort_controller import resolve_default_chat_max_output_tokens
 from utils.logging_utils import get_logger
+from utils.runtime_paths import USER_FILES_DIR
 from api.openai_models import ChatCompletionRequest, ChatMessage, OpenAIExecutionContext
 from api.openai_protocol import OpenAIProtocolHelper
 
@@ -27,10 +28,7 @@ _GRAPH_RECURSION_LIMIT = 100
 _DEFAULT_WEBOT_CHAT_MAX_TOKENS = resolve_default_chat_max_output_tokens()
 
 # --- Agent tool whitelist ---
-_USER_FILES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "data", "user_files",
-)
+_USER_FILES_DIR = str(USER_FILES_DIR)
 
 
 def _iter_user_internal_agent_files(user_id: str) -> list[str]:

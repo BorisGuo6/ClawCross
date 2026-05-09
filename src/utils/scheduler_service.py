@@ -37,11 +37,12 @@ from integrations.acpx_cli_tools import acpx_agent_tags_with_legacy
 from integrations.agent_sender import SendToAgentRequest, send_to_agent
 from integrations.external_persona import build_external_persona_prompt
 from utils.external_agent_history import attach_history_context
+from utils.runtime_paths import DATA_DIR, ENV_FILE, WORKSPACE_DIR
 
-TASKS_FILE = os.path.join(root_dir, "data", "timeset", "tasks.json")
+TASKS_FILE = os.path.join(str(DATA_DIR), "timeset", "tasks.json")
 
 # 加载 .env 配置
-load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
+load_dotenv(dotenv_path=str(ENV_FILE))
 
 
 def _server_host() -> str:
@@ -284,7 +285,7 @@ async def trigger_external_agent(info: dict):
             session=session_key,
             options=attach_history_context(
                 {
-                    "cwd": root_dir,
+                    "cwd": str(WORKSPACE_DIR / "acpx"),
                     **acpx_options_from_agent(agent_info, default_timeout_sec=180),
                     "system_prompt": _external_system_prompt(agent_info),
                     "return_trace": True,

@@ -58,6 +58,7 @@ def _acp_oasis_trace(event: str, **fields: Any) -> None:
 _data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 _prompts_dir = os.path.join(_data_dir, "prompts")
 _agency_prompts_dir = os.path.join(_prompts_dir, "agency_agents")
+from utils.runtime_paths import DATA_DIR, USER_FILES_DIR
 
 
 def _load_prompt_file(prompt_file: str) -> str:
@@ -166,7 +167,7 @@ except FileNotFoundError:
 # ======================================================================
 # Per-user custom expert storage (persona definitions)
 # ======================================================================
-_USER_EXPERTS_DIR = os.path.join(_data_dir, "oasis_user_experts")
+_USER_EXPERTS_DIR = os.path.join(str(DATA_DIR), "oasis_user_experts")
 os.makedirs(_USER_EXPERTS_DIR, exist_ok=True)
 
 
@@ -265,7 +266,7 @@ def load_team_experts(user_id: str, team: str) -> list[dict]:
     """
     if not user_id or not team:
         return []
-    path = os.path.join(_data_dir, "user_files", user_id, "teams", team, "oasis_experts.json")
+    path = os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "oasis_experts.json")
     if not os.path.isfile(path):
         return []
     try:
@@ -278,7 +279,7 @@ def load_team_experts(user_id: str, team: str) -> list[dict]:
 
 def _save_team_experts(user_id: str, team: str, experts: list[dict]) -> None:
     """Save team-specific custom experts to {user}/teams/{team}/oasis_experts.json."""
-    dir_path = os.path.join(_data_dir, "user_files", user_id, "teams", team)
+    dir_path = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
     os.makedirs(dir_path, exist_ok=True)
     path = os.path.join(dir_path, "oasis_experts.json")
     with open(path, "w", encoding="utf-8") as f:

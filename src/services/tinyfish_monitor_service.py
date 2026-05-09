@@ -27,9 +27,11 @@ from typing import Any, Iterable, Iterator
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ENV_PATH = PROJECT_ROOT / "config" / ".env"
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "tinyfish_monitor.db"
-DEFAULT_TARGETS_PATH = PROJECT_ROOT / "config" / "tinyfish_targets.json"
+from utils.runtime_paths import CONFIG_DIR, DATA_DIR, ENV_FILE
+
+DEFAULT_ENV_PATH = ENV_FILE
+DEFAULT_DB_PATH = DATA_DIR / "tinyfish_monitor.db"
+DEFAULT_TARGETS_PATH = CONFIG_DIR / "tinyfish_targets.json"
 EXAMPLE_TARGETS_PATH = PROJECT_ROOT / "config" / "tinyfish_targets.example.json"
 
 DEFAULT_BASE_URL = "https://agent.tinyfish.ai"

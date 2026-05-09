@@ -23,6 +23,7 @@ from api.group_repository import (
 from api.group_service import _load_public_external_agents, build_external_agents_map_for_owner
 from services.llm_factory import get_provider_audio_defaults, infer_provider
 from utils.logging_utils import get_logger
+from utils.runtime_paths import USER_FILES_DIR, WORKSPACE_DIR
 from api.ops_models import ACPControlRequest, ACPStatusRequest, CancelRequest, LoginRequest, TTSRequest, UpdateCheckRequest, UpdateStartRequest, UpdateStatusRequest
 
 logger = get_logger("ops_service")
@@ -63,7 +64,7 @@ def _load_team_external_agents(user_id: str, team: str) -> list[dict]:
     team = (team or "").strip()
     if not user_id or not team:
         return []
-    path = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "external_agents.json")
+    path = os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "external_agents.json")
     if not os.path.isfile(path):
         return []
     try:
@@ -114,7 +115,7 @@ def _find_external_agent_across_teams(user_id: str, agent_key: str) -> dict | No
     """Search all team folders when the primary team hint misses the agent."""
     if not user_id or not agent_key:
         return None
-    team_base = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams")
+    team_base = os.path.join(str(USER_FILES_DIR), user_id, "teams")
     if not os.path.isdir(team_base):
         return None
     for entry in sorted(os.listdir(team_base)):
@@ -347,7 +348,7 @@ class OpsService:
             raise HTTPException(status_code=500, detail="acpx 未安装或不在 PATH")
 
         try:
-            adapter = get_acpx_adapter(cwd=_PROJECT_ROOT)
+            adapter = get_acpx_adapter(cwd=str(WORKSPACE_DIR / "acpx"))
         except AcpxError as e:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -487,7 +488,7 @@ class OpsService:
                 agents.extend(_load_team_external_agents(req.user_id, team_hint))
             else:
                 agents.extend(_load_public_external_agents(req.user_id))
-                team_base = os.path.join(_PROJECT_ROOT, "data", "user_files", req.user_id, "teams")
+                team_base = os.path.join(str(USER_FILES_DIR), req.user_id, "teams")
                 if os.path.isdir(team_base):
                     seen: set[str] = set()
                     for entry in sorted(os.listdir(team_base)):

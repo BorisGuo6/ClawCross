@@ -8,6 +8,8 @@ import utils.scheduler_service
 from pathlib import Path
 from typing import Any
 
+from utils.runtime_paths import USER_FILES_DIR
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRESET_ROOT = PROJECT_ROOT / "data" / "team_presets"
@@ -95,8 +97,12 @@ def install_team_preset(
     if bundle is None:
         raise FileNotFoundError(f"Unknown team preset: {preset_id}")
 
-    effective_root = project_root or PROJECT_ROOT
-    team_dir = effective_root / "data" / "user_files" / user_id / "teams" / team_name
+    effective_root = project_root or USER_FILES_DIR
+    team_dir = (
+        effective_root / "data" / "user_files" / user_id / "teams" / team_name
+        if project_root is not None
+        else effective_root / user_id / "teams" / team_name
+    )
     team_dir.mkdir(parents=True, exist_ok=True)
     (team_dir / "oasis" / "yaml").mkdir(parents=True, exist_ok=True)
     (team_dir / "oasis" / "python").mkdir(parents=True, exist_ok=True)

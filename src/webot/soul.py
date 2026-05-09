@@ -17,7 +17,7 @@ from typing import Any
 from webot.memory_guard import scan_memory_content
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 
 # Default personality (used when no SOUL.md exists)
 DEFAULT_PERSONALITY = ""

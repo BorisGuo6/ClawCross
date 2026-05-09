@@ -24,7 +24,7 @@ from webot.workspace import resolve_session_workspace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-USER_FILES_DIR = PROJECT_ROOT / "data" / "user_files"
+from utils.runtime_paths import USER_FILES_DIR
 _MAX_INDEX_LINES = 200
 _MAX_INDEX_BYTES = 25_000
 

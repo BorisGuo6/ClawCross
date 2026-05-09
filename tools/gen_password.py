@@ -9,12 +9,10 @@ import json
 import os
 import getpass
 
+from src.utils.runtime_paths import USERS_FILE, ensure_runtime_dirs
+
 # 用户配置文件路径
-CONFIG_FILE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "config",
-    "users.json"
-)
+CONFIG_FILE_PATH = str(USERS_FILE)
 
 
 def hash_password(password: str) -> str:
@@ -23,6 +21,7 @@ def hash_password(password: str) -> str:
 
 
 def main():
+    ensure_runtime_dirs()
     # 加载已有用户
     users_database = {}
     if os.path.exists(CONFIG_FILE_PATH):

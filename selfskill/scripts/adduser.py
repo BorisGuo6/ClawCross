@@ -14,8 +14,12 @@ import sys
 
 # 项目根目录路径
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from src.utils.runtime_paths import USERS_FILE, ensure_runtime_dirs
 # 用户配置文件路径
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "config", "users.json")
+ensure_runtime_dirs()
+CONFIG_PATH = str(USERS_FILE)
 
 
 def hash_password(password: str) -> str:

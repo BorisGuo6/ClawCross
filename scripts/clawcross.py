@@ -30,7 +30,10 @@ except ImportError:  # pragma: no cover - Windows fallback uses regular input().
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-STATE_DIR = Path(os.getenv("CLAWCROSS_STATE_DIR", Path.home() / ".clawcross"))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from src.utils.runtime_paths import ENV_FILE, STATE_DIR, ensure_runtime_dirs
+ensure_runtime_dirs()
 STATE_PATH = STATE_DIR / "state.json"
 STATE_VERSION = 1
 APP_NAME = "ClawCross Code"
@@ -52,7 +55,7 @@ def _configure_stdio() -> None:
 
 
 def _load_env() -> None:
-    env_path = PROJECT_ROOT / "config" / ".env"
+    env_path = ENV_FILE
     if not env_path.exists():
         return
     for line in env_path.read_text(encoding="utf-8").splitlines():

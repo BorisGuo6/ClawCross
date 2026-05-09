@@ -39,12 +39,13 @@ if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
 
 from utils.checkpoint_paths import DEFAULT_CHECKPOINT_DB_DIR, checkpoint_store_exists
+from utils.runtime_paths import ENV_FILE, PID_DIR, USER_FILES_DIR
 from utils.checkpoint_repository import (
     fetch_latest_checkpoint_blob,
     list_thread_ids_like,
 )
 
-env_path = os.path.join(_project_root, "config", ".env")
+env_path = str(ENV_FILE)
 
 
 def _resolve_openclaw_bin():
@@ -988,8 +989,8 @@ class WorkflowSaveRequest(BaseModel):
 def _workflow_yaml_dir(user_id: str, team: str = "") -> str:
     """Return the YAML workflow directory path (team-scoped when team is provided)."""
     if team:
-        return os.path.join(_project_root, "data", "user_files", user_id, "teams", team, "oasis", "yaml")
-    return os.path.join(_project_root, "data", "user_files", user_id, "oasis", "yaml")
+        return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "oasis", "yaml")
+    return os.path.join(str(USER_FILES_DIR), user_id, "oasis", "yaml")
 
 
 @app.post("/workflows")
@@ -1152,7 +1153,7 @@ app.include_router(init_openclaw_routes(
 
 # --- System Info ---
 
-_TUNNEL_PIDFILE = os.path.join(_project_root, ".tunnel.pid")
+_TUNNEL_PIDFILE = os.path.join(str(PID_DIR), "tunnel.pid")
 _IS_WINDOWS = platform.system().lower() == "windows"
 
 

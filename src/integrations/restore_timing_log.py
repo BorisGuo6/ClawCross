@@ -15,13 +15,11 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
+from utils.runtime_paths import LOGS_DIR
 
 
 def default_restore_timing_path() -> str:
-    log_dir = _repo_root() / "logs"
+    log_dir = LOGS_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
     return str(log_dir / "restore_timing.jsonl")
 

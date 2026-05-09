@@ -10,6 +10,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from utils.runtime_paths import DATA_DIR
+
 
 class _ClosingConnection(sqlite3.Connection):
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -20,7 +22,7 @@ class _ClosingConnection(sqlite3.Connection):
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "webot_subagents.db"
+DEFAULT_DB_PATH = DATA_DIR / "webot_subagents.db"
 
 
 def utc_now() -> str:

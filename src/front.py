@@ -25,6 +25,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 from dotenv import load_dotenv
 from utils.env_settings import read_env_all, write_env_settings
+from utils.runtime_paths import DATA_DIR, ENV_FILE, LOGS_DIR, PID_DIR, USER_FILES_DIR, USERS_FILE, WORKSPACE_DIR, set_subprocess_env, venv_python
 from utils.external_agent_history import attach_history_context, get_store as get_history_store
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from utils.internal_alarm_utils import export_team_alarms, restore_team_alarms
@@ -78,11 +79,15 @@ from services.team_snapshot_skills import (
 # 加载 .env 配置
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
-load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"))
-WORKFLOW_PYTHON = os.path.join(root_dir, ".venv", "bin", "python")
+load_dotenv(dotenv_path=str(ENV_FILE))
+runtime_working_dir = str(WORKSPACE_DIR)
+os.makedirs(runtime_working_dir, exist_ok=True)
+WORKFLOW_PYTHON = str(venv_python())
 if not os.path.isfile(WORKFLOW_PYTHON):
     WORKFLOW_PYTHON = _sys.executable
 WORKFLOW_IMPORT_PATHS = os.pathsep.join([root_dir, os.path.join(root_dir, "src")])
+ACPX_WORKING_DIR = os.path.join(runtime_working_dir, "acpx")
+os.makedirs(ACPX_WORKING_DIR, exist_ok=True)
 
 app = Flask(__name__,
             template_folder=os.path.join(root_dir, 'frontend', 'templates'),
@@ -248,7 +253,7 @@ register_webot_routes(
 )
 
 # --- users.json 检查（密码登录时验证用户是否存在）---
-USERS_PATH = os.path.join(root_dir, "config", "users.json")
+USERS_PATH = str(USERS_FILE)
 
 def _load_users_json() -> dict[str, str]:
     if not os.path.exists(USERS_PATH):
@@ -406,7 +411,7 @@ def setup_status():
         pass
 
     # Check if any password users exist
-    users_json_path = os.path.join(root_dir, "config", "users.json")
+    users_json_path = str(USERS_FILE)
     password_set = False
     if os.path.isfile(users_json_path):
         try:
@@ -468,7 +473,7 @@ def import_openclaw_config():
 
 
 def _read_saved_clawcross_llm_config():
-    settings = read_env_all(os.path.join(root_dir, "config", ".env"))
+    settings = read_env_all(str(ENV_FILE))
     return {
         "api_key": (settings.get("LLM_API_KEY") or "").strip(),
         "base_url": (settings.get("LLM_BASE_URL") or "").strip(),
@@ -506,7 +511,7 @@ def _llm_config_complete(config: dict[str, str]) -> bool:
 
 
 def _read_saved_openclaw_runtime_config():
-    settings = read_env_all(os.path.join(root_dir, "config", ".env"))
+    settings = read_env_all(str(ENV_FILE))
     gateway_token = (settings.get("OPENCLAW_GATEWAY_TOKEN") or os.getenv("OPENCLAW_GATEWAY_TOKEN") or "").strip()
     api_key = (settings.get("OPENCLAW_API_KEY") or os.getenv("OPENCLAW_API_KEY") or "").strip()
     return {
@@ -662,7 +667,7 @@ def discover_models():
 
 
 def _read_saved_tinyfish_settings() -> dict[str, str]:
-    settings = read_env_all(os.path.join(root_dir, "config", ".env"))
+    settings = read_env_all(str(ENV_FILE))
     return {
         "TINYFISH_API_KEY": (settings.get("TINYFISH_API_KEY") or "").strip(),
         "TINYFISH_BASE_URL": (settings.get("TINYFISH_BASE_URL") or "").strip(),
@@ -731,8 +736,8 @@ def tinyfish_configure():
         status = 502 if "Failed to reach TinyFish" in message else 400
         return jsonify({"ok": False, "error": message}), status
 
-    write_env_settings(os.path.join(root_dir, "config", ".env"), resolved)
-    load_dotenv(dotenv_path=os.path.join(root_dir, "config", ".env"), override=True)
+    write_env_settings(str(ENV_FILE), resolved)
+    load_dotenv(dotenv_path=str(ENV_FILE), override=True)
     for key, value in resolved.items():
         os.environ[key] = value
 
@@ -2611,13 +2616,13 @@ def proxy_update_chatbot_whitelist():
 @app.route("/proxy_weclaw_qr", methods=["GET"])
 def proxy_get_weclaw_qr():
     """读取 WeClaw 扫码登录二维码（ASCII）。"""
-    qr_path = os.path.join(root_dir, "data", "weclaw_qr.txt")
+    qr_path = os.path.join(str(DATA_DIR), "weclaw_qr.txt")
     try:
         if not os.path.exists(qr_path):
             return jsonify({
                 "status": "pending",
                 "qr": "",
-                "path": "data/weclaw_qr.txt",
+                "path": qr_path,
                 "message": "尚未发现新的扫码二维码。如果 WeClaw 已加载已有账号会话，则无需扫码；否则请等待 weclaw 输出二维码后刷新。",
             })
         with open(qr_path, "r", encoding="utf-8") as f:
@@ -2625,7 +2630,7 @@ def proxy_get_weclaw_qr():
         return jsonify({
             "status": "success" if qr.strip() else "pending",
             "qr": qr,
-            "path": "data/weclaw_qr.txt",
+            "path": qr_path,
             "message": "请用微信扫描下方二维码登录。",
         })
     except Exception as e:
@@ -2637,7 +2642,7 @@ def proxy_restart_services():
     """直接写重启信号文件，不经过 mainagent（避免响应返回前进程被杀）"""
     user_id = session.get("user_id", "")
     try:
-        restart_flag = os.path.join(root_dir, ".restart_flag")
+        restart_flag = os.path.join(str(PID_DIR), "restart_flag")
         with open(restart_flag, "w") as f:
             f.write("restart")
         return jsonify({"status": "success", "message": "重启信号已发送"})
@@ -2698,7 +2703,7 @@ def proxy_user_profile():
     user_id = session.get("user_id", "")
     if not user_id:
         return jsonify({"error": "not logged in"}), 401
-    profile_path = os.path.join(root_dir, "data", "user_files", user_id, "user_profile.txt")
+    profile_path = os.path.join(str(USER_FILES_DIR), user_id, "user_profile.txt")
     profile_text = ""
     try:
         if os.path.isfile(profile_path):
@@ -2717,7 +2722,7 @@ def proxy_save_user_profile():
         return jsonify({"error": "not logged in"}), 401
     data = request.get_json() or {}
     profile_text = data.get("profile", "")
-    profile_dir = os.path.join(root_dir, "data", "user_files", user_id)
+    profile_dir = os.path.join(str(USER_FILES_DIR), user_id)
     profile_path = os.path.join(profile_dir, "user_profile.txt")
     try:
         os.makedirs(profile_dir, exist_ok=True)
@@ -3336,7 +3341,7 @@ def proxy_acpx_sessions():
     except ImportError as e:
         return jsonify({"ok": False, "error": str(e), "sessions": []}), 500
 
-    adapter = get_acpx_adapter(cwd=root_dir)
+    adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
 
     async def _list() -> list[dict]:
         return await adapter.list_sessions(tool=tool)
@@ -3366,7 +3371,7 @@ def proxy_acpx_sessions_all():
     except ImportError as e:
         return jsonify({"ok": False, "error": str(e), "sessions": []}), 500
 
-    adapter = get_acpx_adapter(cwd=root_dir)
+    adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
     supported_tools = sorted(acpx_agent_command_names())
 
     async def _list_all() -> list[dict]:
@@ -3415,7 +3420,7 @@ def proxy_acpx_session_delete():
     except ImportError as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    adapter = get_acpx_adapter(cwd=root_dir)
+    adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
 
     async def _resolve_tool() -> tuple[str, str]:
         """Returns (tool, actual_session_name) tuple."""
@@ -3472,7 +3477,7 @@ def proxy_acpx_session_show():
     except ImportError as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    adapter = get_acpx_adapter(cwd=root_dir)
+    adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
     try:
         session = asyncio.run(adapter.show_session(tool=tool, name=name))
     except AcpxError as e:
@@ -3504,7 +3509,7 @@ def proxy_acpx_session_history():
     except ImportError as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    adapter = get_acpx_adapter(cwd=root_dir)
+    adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
     try:
         history = asyncio.run(adapter.session_history(tool=tool, name=name, limit=limit))
     except AcpxError as e:
@@ -3539,7 +3544,7 @@ def proxy_acpx_session_read():
     except ImportError as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    adapter = get_acpx_adapter(cwd=root_dir)
+    adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
     try:
         session = asyncio.run(adapter.read_session(tool=tool, name=name, tail=tail))
     except AcpxError as e:
@@ -3616,7 +3621,7 @@ def proxy_acpx_chat():
 
     request_options = attach_history_context(
         {
-            "cwd": root_dir,
+            "cwd": ACPX_WORKING_DIR,
             "system_prompt": front_external_system_prompt,
             "attachments": acpx_attachments or None,
             "timeout_sec": int(body.get("timeout_sec") or 600),
@@ -3676,7 +3681,7 @@ def proxy_acpx_chat():
             temp_path = prepared_stream.temp_path
             proc = subprocess.Popen(
                 prepared_stream.cmd,
-                cwd=root_dir,
+                cwd=runtime_working_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -3923,7 +3928,7 @@ def proxy_acpx_session_ensure():
     except ImportError as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-    adapter = get_acpx_adapter(cwd=root_dir)
+    adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
 
     async def _ensure() -> None:
         await adapter.ensure_session(
@@ -4115,7 +4120,7 @@ def proxy_external_history_purge():
 
 def _team_openclaw_agents_path(user_id: str, team: str) -> str:
     """Return the path to the team's external_agents.json file."""
-    return os.path.join(root_dir, "data", "user_files", user_id, "teams", team, "external_agents.json")
+    return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "external_agents.json")
 
 
 def _team_openclaw_agents_load(user_id: str, team: str) -> list:
@@ -4222,7 +4227,7 @@ def team_alarms(team_name):
     user_id = session.get("user_id", "")
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -4395,7 +4400,7 @@ def team_openclaw_snapshot_sync_all():
     if not team:
         return jsonify({"ok": False, "error": "team is required"}), 400
 
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
     if not os.path.exists(team_dir):
         return jsonify({"ok": False, "error": "Team not found"}), 404
 
@@ -4742,15 +4747,15 @@ def _extract_yaml_explain_from_response(text: str) -> str:
 def _yaml_dir(user_id: str, team: str = "") -> str:
     """Return the YAML workflow directory path for a user (team-scoped when team is provided)."""
     if team:
-        return os.path.join(root_dir, "data", "user_files", user_id, "teams", team, "oasis", "yaml")
-    return os.path.join(root_dir, "data", "user_files", user_id, "oasis", "yaml")
+        return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "oasis", "yaml")
+    return os.path.join(str(USER_FILES_DIR), user_id, "oasis", "yaml")
 
 
 def _python_dir(user_id: str, team: str = "") -> str:
     """Return the workflowpy directory path for a user (team-scoped when team is provided)."""
     if team:
-        return os.path.join(root_dir, "data", "user_files", user_id, "teams", team, "oasis", "python")
-    return os.path.join(root_dir, "data", "user_files", user_id, "oasis", "python")
+        return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "oasis", "python")
+    return os.path.join(str(USER_FILES_DIR), user_id, "oasis", "python")
 
 
 def _workflow_mode() -> str:
@@ -4776,7 +4781,7 @@ def _spawn_standalone_python_workflow(
     question: str,
     team: str = "",
 ) -> dict[str, str | int]:
-    runs_dir = os.path.join(root_dir, "data", "python_workflow_runs")
+    runs_dir = os.path.join(str(DATA_DIR), "python_workflow_runs")
     os.makedirs(runs_dir, exist_ok=True)
     run_id = uuid.uuid4().hex[:12]
     log_path = os.path.join(runs_dir, f"{run_id}.log")
@@ -4797,15 +4802,15 @@ def _spawn_standalone_python_workflow(
     log_file = open(log_path, "a", encoding="utf-8")
     proc = subprocess.Popen(
         cmd,
-        cwd=root_dir,
-        env={
+        cwd=runtime_working_dir,
+        env=set_subprocess_env({
             **os.environ,
             "CLAWCROSS_PROJECT_ROOT": root_dir,
             "CLAWCROSS_PYTHONPATH": WORKFLOW_IMPORT_PATHS,
             "PYTHONPATH": WORKFLOW_IMPORT_PATHS + (
                 os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""
             ),
-        },
+        }),
         stdout=log_file,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -5302,7 +5307,7 @@ import signal as _signal
 import platform as _platform
 
 _IS_WINDOWS = _platform.system().lower() == "windows"
-_TUNNEL_PIDFILE = os.path.join(root_dir, ".tunnel.pid")
+_TUNNEL_PIDFILE = os.path.join(str(PID_DIR), "tunnel.pid")
 _TUNNEL_SCRIPT = os.path.join(root_dir, "scripts", "tunnel.py")
 
 
@@ -5337,7 +5342,7 @@ def _tunnel_running() -> tuple[bool, int | None]:
 def _get_public_domain() -> str:
     """Read PUBLIC_DOMAIN from .env."""
     from dotenv import dotenv_values
-    vals = dotenv_values(os.path.join(root_dir, "config", ".env"))
+    vals = dotenv_values(str(ENV_FILE))
     domain = vals.get("PUBLIC_DOMAIN", "")
     if domain == "wait to set":
         return ""
@@ -5363,7 +5368,7 @@ def proxy_tunnel_start():
         return jsonify({"status": "already_running", "pid": pid, "public_domain": domain})
 
     # Start tunnel.py in background
-    log_dir = os.path.join(root_dir, "logs")
+    log_dir = str(LOGS_DIR)
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "tunnel.log")
 
@@ -5373,7 +5378,8 @@ def proxy_tunnel_start():
         popen_kwargs = dict(
             stdout=log_fh,
             stderr=_subprocess.STDOUT,
-            cwd=root_dir,
+            cwd=runtime_working_dir,
+            env=set_subprocess_env(os.environ),
         )
         if _IS_WINDOWS:
             popen_kwargs["creationflags"] = (
@@ -5442,7 +5448,7 @@ def proxy_tunnel_stop():
 
 def _clear_public_domain():
     """Clear PUBLIC_DOMAIN in config/.env after tunnel stops."""
-    env_file = os.path.join(root_dir, "config", ".env")
+    env_file = str(ENV_FILE)
     if not os.path.exists(env_file):
         return
     try:
@@ -5476,8 +5482,8 @@ def _clear_public_domain():
 def _ia_dir(user_id: str, team: str = "") -> str:
     """Return the directory path for internal agent files."""
     if team:
-        return os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
-    return os.path.join(root_dir, "data", "user_files", user_id)
+        return os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
+    return os.path.join(str(USER_FILES_DIR), user_id)
 
 
 def _ia_path(user_id: str, team: str = "") -> str:
@@ -5562,7 +5568,7 @@ def ia_list():
         other_sources.append("")
 
     # Include all teams (skipping the current team if one is selected)
-    teams_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams")
+    teams_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams")
     if os.path.isdir(teams_dir):
         try:
             other_sources.extend(
@@ -5671,7 +5677,7 @@ def ia_delete(sid):
 def list_teams():
     """List all team names for the current user."""
     user_id = session.get("user_id", "")
-    teams_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams")
+    teams_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams")
     teams = []
     if os.path.isdir(teams_dir):
         try:
@@ -5697,7 +5703,7 @@ def create_team():
     if "/" in team or "\\" in team or team.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
     
     if os.path.exists(team_dir):
         return jsonify({"error": "Team already exists"}), 400
@@ -5761,7 +5767,7 @@ def rename_team(team_name):
     if not team_name or "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
 
-    teams_root = os.path.join(root_dir, "data", "user_files", user_id, "teams")
+    teams_root = os.path.join(str(USER_FILES_DIR), user_id, "teams")
     old_path = os.path.join(teams_root, team_name)
     new_path = os.path.join(teams_root, new_name)
 
@@ -5792,7 +5798,7 @@ def delete_team(team_name):
     if not team_name or "/" in team_name or "\\" in team_name:
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -5845,7 +5851,7 @@ def get_team_members(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -5899,7 +5905,7 @@ def add_external_member(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -5963,7 +5969,7 @@ def delete_external_member(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -6020,7 +6026,7 @@ def update_external_member(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
 
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
 
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -6088,7 +6094,7 @@ def update_external_member(team_name):
 # ------------------------------------------------------------------
 
 def _team_settings_path(user_id: str, team_name: str) -> str:
-    return os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name, "team_settings.json")
+    return os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name, "team_settings.json")
 
 
 def _team_settings_load(user_id: str, team_name: str) -> dict:
@@ -6105,7 +6111,7 @@ def _team_settings_load(user_id: str, team_name: str) -> dict:
 
 def _team_settings_save(user_id: str, team_name: str, settings: dict) -> None:
     """Save team settings."""
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     os.makedirs(team_dir, exist_ok=True)
     path = _team_settings_path(user_id, team_name)
     with open(path, "w", encoding="utf-8") as f:
@@ -6120,7 +6126,7 @@ def get_team_settings(team_name):
         return jsonify({"error": "Unauthorized"}), 401
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
     settings = _team_settings_load(user_id, team_name)
@@ -6135,7 +6141,7 @@ def update_team_settings(team_name):
         return jsonify({"error": "Unauthorized"}), 401
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
     body = request.get_json(force=True) or {}
@@ -6157,7 +6163,7 @@ def get_team_skills(team_name):
         return jsonify({"error": "Unauthorized"}), 401
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6354,7 +6360,7 @@ def import_team_skill_zip(team_name):
         return jsonify({"error": "Unauthorized"}), 401
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6406,7 +6412,7 @@ def get_team_skill_detail(team_name, skill_name):
         return jsonify({"error": "Unauthorized"}), 401
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6431,7 +6437,7 @@ def update_team_skill_detail(team_name, skill_name):
         return jsonify({"error": "Unauthorized"}), 401
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6462,7 +6468,7 @@ def delete_team_skill_detail(team_name, skill_name):
         return jsonify({"error": "Unauthorized"}), 401
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6485,7 +6491,7 @@ def delete_team_skill_detail(team_name, skill_name):
 # ------------------------------------------------------------------
 
 def _public_external_agents_user_path(user_id: str) -> str:
-    return os.path.join(root_dir, "data", "user_files", user_id, "external_agents.json")
+    return os.path.join(str(USER_FILES_DIR), user_id, "external_agents.json")
 
 
 def _public_agents_load_raw(user_id: str) -> list:
@@ -6649,7 +6655,7 @@ def mobile_alarms():
             return jsonify({"error": f"Scheduler unavailable: {e}"}), 502
 
         if team != "__public__":
-            team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
+            team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
             if not os.path.exists(team_dir):
                 return jsonify({"error": "Team not found"}), 404
             internal_session_to_name, external_global_to_name = _team_alarm_export_maps(user_id, team)
@@ -6710,7 +6716,7 @@ def mobile_alarms():
         return jsonify({"error": "target_name, schedule and text are required"}), 400
 
     if team != "__public__":
-        team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
+        team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
         if not os.path.exists(team_dir):
             return jsonify({"error": "Team not found"}), 404
         internal_name_to_session, external_name_to_global = _team_alarm_restore_maps(user_id, team)
@@ -6798,7 +6804,7 @@ def delete_mobile_alarm(task_id):
 
 def _team_experts_path(user_id: str, team_name: str) -> str:
     """Return the oasis_experts.json path for a team."""
-    return os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name, "oasis_experts.json")
+    return os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name, "oasis_experts.json")
 
 
 def _team_experts_load(user_id: str, team_name: str) -> list:
@@ -6828,7 +6834,7 @@ def get_team_experts(team_name):
     user_id = session.get("user_id", "")
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
     experts = _team_experts_load(user_id, team_name)
@@ -6841,7 +6847,7 @@ def add_team_expert(team_name):
     user_id = session.get("user_id", "")
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6877,7 +6883,7 @@ def update_team_expert(team_name, tag):
     user_id = session.get("user_id", "")
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6911,7 +6917,7 @@ def delete_team_expert(team_name, tag):
     user_id = session.get("user_id", "")
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6962,7 +6968,7 @@ def generate_team_from_workflow(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
 
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team_name)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
 
     body = request.get_json(force=True)
     nodes = body.get("nodes", [])
@@ -7110,7 +7116,7 @@ def preview_team_snapshot():
     if not team:
         return jsonify({"error": "team is required"}), 400
 
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
 
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -7360,7 +7366,7 @@ def download_team_snapshot():
                 return skill_name in scope_val
         return True
 
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -7588,7 +7594,7 @@ def upload_team_snapshot():
     if not file.filename.endswith('.zip'):
         return jsonify({"error": "File must be a .zip file"}), 400
     
-    team_dir = os.path.join(root_dir, "data", "user_files", user_id, "teams", team)
+    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
     
     # Create team directory if it doesn't exist
     os.makedirs(team_dir, exist_ok=True)

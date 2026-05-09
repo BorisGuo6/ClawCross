@@ -19,6 +19,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 from utils.checkpoint_paths import iter_checkpoint_db_paths
+from utils.runtime_paths import DATA_DIR
 
 
 def session_search(
@@ -42,7 +43,7 @@ def session_search(
         Dict with matches: list of session summaries
     """
     if not db_path:
-        db_path = str(PROJECT_ROOT / "data" / "agent_checkpoints")
+        db_path = str(DATA_DIR / "agent_checkpoints")
 
     # Also search trajectory data for richer context
     trajectory_matches = _search_trajectories(

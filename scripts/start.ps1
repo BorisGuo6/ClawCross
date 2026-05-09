@@ -6,8 +6,9 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "common.ps1")
 
 Set-ClawcrossUtf8
+Initialize-ClawcrossRuntimePaths -ProjectRoot $projectRoot
 $python = Ensure-VenvPython -ProjectRoot $projectRoot
-$envPath = Join-Path $projectRoot "config\.env"
+$envPath = Join-Path $env:CLAWCROSS_CONFIG_DIR ".env"
 $env:WEBOT_HEADLESS = "1"
 
 if (-not (Test-Path $envPath)) {
@@ -31,9 +32,9 @@ if ($resolution.AutoUpdated) {
     throw "Update the custom PORT_* values in config/.env and try again."
 }
 
-Push-Location $projectRoot
+Push-Location $env:CLAWCROSS_WORKSPACE_DIR
 try {
-    & $python "scripts\launcher.py"
+    & $python (Join-Path $projectRoot "scripts\launcher.py")
     exit $LASTEXITCODE
 } finally {
     Pop-Location

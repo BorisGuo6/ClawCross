@@ -11,6 +11,7 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 from integrations.acpx_cli_tools import acpx_agent_tags_with_legacy
+from utils.runtime_paths import USER_FILES_DIR
 from oasis.experts import get_all_experts
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -39,8 +40,8 @@ def _load_json_list(path: str) -> list[dict]:
 
 def _team_base(user_id: str, team: str = "") -> str:
     if team:
-        return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team)
-    return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id)
+        return os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
+    return os.path.join(str(USER_FILES_DIR), user_id)
 
 
 def _load_internal_agents(user_id: str, team: str = "") -> list[dict]:

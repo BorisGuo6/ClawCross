@@ -28,18 +28,22 @@ IS_WINDOWS = platform.system().lower() == "windows"
 
 # ── 项目路径配置 ──────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-os.chdir(PROJECT_ROOT)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from src.utils.runtime_paths import BIN_DIR as RUNTIME_BIN_DIR, ENV_FILE, PID_DIR, WORKSPACE_DIR, cloudflared_path, ensure_runtime_dirs
 
-BIN_DIR = os.path.join(PROJECT_ROOT, "bin")
+BIN_DIR = str(RUNTIME_BIN_DIR)
+ensure_runtime_dirs()
+WORKING_DIR = str(WORKSPACE_DIR)
 # 注意：不在模块级别创建 bin/，仅在实际需要下载二进制文件时才创建（见 _download_cloudflared）
 
 # cloudflared 可执行文件路径
-CLOUDFLARED_PATH = os.path.join(BIN_DIR, "cloudflared.exe" if IS_WINDOWS else "cloudflared")
-ENV_FILE_PATH = os.path.join(PROJECT_ROOT, "config", ".env")
-PID_FILE_PATH = os.path.join(PROJECT_ROOT, ".tunnel.pid")
+CLOUDFLARED_PATH = str(cloudflared_path())
+ENV_FILE_PATH = str(ENV_FILE)
+PID_FILE_PATH = os.path.join(str(PID_DIR), "tunnel.pid")
 
 # ── 加载环境配置 ──────────────────────────────────────────────
-load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "config", ".env"))
+load_dotenv(dotenv_path=ENV_FILE_PATH)
 PORT_FRONTEND = os.getenv("PORT_FRONTEND", "51209")
 
 # ── 全局状态 ──────────────────────────────────────────────────
@@ -340,6 +344,7 @@ def run_tunnel(cf_bin: str, tunnel_name: str, local_port: str, env_key: str):
 
     proc = subprocess.Popen(
         [cf_bin, "tunnel", "--url", f"http://127.0.0.1:{local_port}"],
+        cwd=WORKING_DIR,
         **popen_kwargs,
     )
     tunnel_procs.append(proc)

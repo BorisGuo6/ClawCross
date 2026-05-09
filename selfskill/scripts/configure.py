@@ -34,8 +34,12 @@ for stream_name in ("stdout", "stderr"):
             pass
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ENV_PATH = os.path.join(PROJECT_ROOT, "config", ".env")
-ENV_EXAMPLE = os.path.join(PROJECT_ROOT, "config", ".env.example")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from src.utils.runtime_paths import ENV_FILE, env_template_path, ensure_runtime_dirs
+ensure_runtime_dirs()
+ENV_PATH = str(ENV_FILE)
+ENV_EXAMPLE = str(env_template_path())
 
 SENSITIVE_KEYS = {"LLM_API_KEY", "INTERNAL_TOKEN", "TELEGRAM_BOT_TOKEN", "QQ_BOT_SECRET"}
 

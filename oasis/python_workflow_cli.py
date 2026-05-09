@@ -15,7 +15,9 @@ if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
-load_dotenv(dotenv_path=os.path.join(_PROJECT_ROOT, "config", ".env"))
+from utils.runtime_paths import ENV_FILE
+
+load_dotenv(dotenv_path=ENV_FILE)
 
 from integrations.agent_sender import SendToAgentResult
 from oasis.agent_center import AgentCenter

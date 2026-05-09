@@ -39,11 +39,12 @@ from services.tinyfish_monitor_service import (
     iter_sse_json_events,
     DEFAULT_REQUEST_TIMEOUT,
 )
+from utils.runtime_paths import DATA_DIR as RUNTIME_DATA_DIR
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 PROMPTS_DIR = DATA_DIR / "prompts"
-DEFAULT_JOBS_DB_PATH = DATA_DIR / "team_creator_jobs.db"
+DEFAULT_JOBS_DB_PATH = RUNTIME_DATA_DIR / "team_creator_jobs.db"
 
 
 def get_jobs_db_path(db_path: str | Path | None = None) -> Path:

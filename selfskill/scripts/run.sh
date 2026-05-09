@@ -33,7 +33,16 @@ set -e
 # 定位项目根目录（skill/scripts/run.sh → 上两级）
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 export PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$PROJECT_ROOT"
+
+source "$PROJECT_ROOT/selfskill/scripts/_paths.sh"
+if [ "${1:-help}" = "dev" ]; then
+    export CLAWCROSS_HOME="$PROJECT_ROOT/.clawcross-dev"
+    shift
+    set -- start "$@"
+fi
+clawcross_init_paths
+clawcross_run_migration_if_needed
+cd "$CLAWCROSS_WORKSPACE_DIR"
 
 # ---- uv 环境自检 & 自动配置 ----
 # 确保 uv 可用
@@ -54,28 +63,29 @@ if ! command -v uv &>/dev/null; then
     fi
 fi
 
-# 确保虚拟环境存在
-if [ ! -d ".venv" ]; then
-    echo "🔧 创建虚拟环境 (.venv, Python 3.11+)..."
-    uv venv .venv --python 3.11
+# 确保虚拟环境存在且可执行；目录可能由旧版本或路径初始化提前创建为空目录。
+if [ ! -x "$CLAWCROSS_VENV_DIR/bin/python" ]; then
+    echo "🔧 创建虚拟环境 ($CLAWCROSS_VENV_DIR, Python 3.11+)..."
+    uv venv "$CLAWCROSS_VENV_DIR" --python 3.11
     echo "✅ 虚拟环境创建完成"
 fi
 
 # 激活虚拟环境
-if [ -f .venv/bin/activate ]; then
-    source .venv/bin/activate
+if [ -f "$CLAWCROSS_VENV_DIR/bin/activate" ]; then
+    source "$CLAWCROSS_VENV_DIR/bin/activate"
 else
-    echo "❌ 虚拟环境 .venv 不存在，请运行: bash selfskill/scripts/run.sh start（或 setup）" >&2
+    echo "❌ 虚拟环境不可用: $CLAWCROSS_VENV_DIR" >&2
+    echo "   请运行: bash selfskill/scripts/run.sh start（或 setup）" >&2
     exit 1
 fi
 
 # 始终优先使用当前项目的 venv python，避免 activate 路径缓存/迁移导致 python 丢失
-VENV_PY="$PROJECT_ROOT/.venv/bin/python"
+VENV_PY="$CLAWCROSS_VENV_DIR/bin/python"
 if [ -x "$VENV_PY" ]; then
-    export PATH="$PROJECT_ROOT/.venv/bin:$PATH"
+    export PATH="$CLAWCROSS_VENV_DIR/bin:$PATH"
 else
     echo "❌ 未找到可执行的 venv python: $VENV_PY" >&2
-    echo "   请重建虚拟环境: rm -rf .venv && bash selfskill/scripts/run.sh start" >&2
+    echo "   请重建虚拟环境: rm -rf \"$CLAWCROSS_VENV_DIR\" && bash selfskill/scripts/run.sh start" >&2
     exit 1
 fi
 
@@ -85,18 +95,18 @@ _PY_MAJOR=$(echo "$_PY_VER" | cut -d. -f1)
 if [ "$_PY_MAJOR" -lt 3 ]; then
     echo "❌ 虚拟环境中的 python 版本异常: Python $_PY_VER ($VENV_PY)" >&2
     echo "   本项目需要 Python 3.11+。请删除 .venv 并重新创建:" >&2
-    echo "   rm -rf .venv && bash selfskill/scripts/run.sh start" >&2
+    echo "   rm -rf \"$CLAWCROSS_VENV_DIR\" && bash selfskill/scripts/run.sh start" >&2
     exit 1
 fi
 
 # 确保依赖已安装（通过检查关键包是否可导入来决定是否需要安装）
 if ! "$VENV_PY" -c "import fastapi" &>/dev/null; then
     echo "📦 安装依赖 (config/requirements.txt)..."
-    uv pip install -r config/requirements.txt --python "$VENV_PY"
+    uv pip install -r "$PROJECT_ROOT/config/requirements.txt" --python "$VENV_PY"
     echo "✅ 依赖安装完成"
 fi
 
-PIDFILE="$PROJECT_ROOT/.clawcross.pid"
+PIDFILE="$CLAWCROSS_RUN_DIR/clawcross.pid"
 CLAWCROSS_SERVICE_PATTERNS=(
     "scripts/launcher.py"
     "src/utils/scheduler_service.py"
@@ -131,7 +141,7 @@ print_wsl_access_hint() {
 
 # 若已有 .tunnel.pid（进程活或仅陈旧文件），先停进程、删 pid、清空 PUBLIC_DOMAIN=，再交给调用方重新 nohup tunnel.py
 _stop_tracked_tunnel_if_running() {
-    local pf="$PROJECT_ROOT/.tunnel.pid"
+    local pf="$CLAWCROSS_RUN_DIR/tunnel.pid"
     [ -f "$pf" ] || return 0
     local apid
     apid=$(tr -d ' \r\n' < "$pf")
@@ -151,8 +161,8 @@ _stop_tracked_tunnel_if_running() {
         echo "🧹 清理失效或残留的 .tunnel.pid"
     fi
     rm -f "$pf"
-    if [ -f "$PROJECT_ROOT/config/.env" ] && grep -q "^PUBLIC_DOMAIN=" "$PROJECT_ROOT/config/.env"; then
-        sed -i 's|^PUBLIC_DOMAIN=.*|PUBLIC_DOMAIN=|' "$PROJECT_ROOT/config/.env"
+    if [ -f "$CLAWCROSS_CONFIG_DIR/.env" ] && grep -q "^PUBLIC_DOMAIN=" "$CLAWCROSS_CONFIG_DIR/.env"; then
+        sed -i 's|^PUBLIC_DOMAIN=.*|PUBLIC_DOMAIN=|' "$CLAWCROSS_CONFIG_DIR/.env"
         echo "🧹 已清空 PUBLIC_DOMAIN（避免沿用过期公网地址）"
     fi
 }
@@ -165,7 +175,7 @@ _magic_token_from_cli_output() {
 # 打印本机 +（若已就绪）远程 Magic Link；启动/Tunnel 就绪后必须调用，便于手机 HTTPS 免密登录
 # 登录用户 id 默认 default，可用环境变量 CLAWCROSS_MAGIC_LINK_USER 覆盖（执行前 export）
 print_magic_links() {
-    source config/.env 2>/dev/null || true
+    source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
     local ml_user="${CLAWCROSS_MAGIC_LINK_USER:-default}"
     local port="${PORT_FRONTEND:-51209}"
     local cli_output token pub
@@ -375,14 +385,14 @@ for agent in agents:
 # 与 `run.sh setup` 实质相同：缺 venv/依赖或未装 acpx（且本机有 npm）时运行 scripts/setup_env.sh
 run_clawcross_setup_if_needed() {
     local need=false
-    if [ ! -d ".venv" ]; then need=true; fi
+    if [ ! -d "$CLAWCROSS_VENV_DIR" ]; then need=true; fi
     if [ "$need" = false ] && ! "$VENV_PY" -c "import fastapi" 2>/dev/null; then need=true; fi
     if [ "$need" = false ] && command -v npm &>/dev/null && ! command -v acpx &>/dev/null; then need=true; fi
     if [ "$need" = true ]; then
         echo "📋 首次运行或环境未齐全，正在执行 scripts/setup_env.sh …"
         bash scripts/setup_env.sh
-        if [ -f .venv/bin/activate ]; then
-            source .venv/bin/activate
+        if [ -f "$CLAWCROSS_VENV_DIR/bin/activate" ]; then
+            source "$CLAWCROSS_VENV_DIR/bin/activate"
         fi
         if ! "$VENV_PY" -c "import fastapi" 2>/dev/null; then
             echo "❌ setup_env.sh 完成后仍无法 import fastapi" >&2
@@ -413,7 +423,7 @@ ensure_llm_model_configured() {
         return 0
     fi
 
-    source config/.env 2>/dev/null || true
+    source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
     local llm_model="${LLM_MODEL:-}"
     if [ -n "$llm_model" ] && [ "$llm_model" != "wait to set" ]; then
         return 0
@@ -433,20 +443,20 @@ case "${1:-help}" in
         _clawcross_parse_start_flags "$@"
         run_clawcross_setup_if_needed
         # Auto-create .env if missing
-        if [ ! -f config/.env ]; then
+        if [ ! -f "$CLAWCROSS_CONFIG_DIR/.env" ]; then
             echo "📋 config/.env 不存在，自动从模板初始化..."
             python selfskill/scripts/configure.py --init
         fi
 
         # 可选：若尚未配置 LLM，尝试从本机 OpenClaw 写入 Clawcross .env（失败不影响启动）。
         # 不强制在启动阶段设置 LLM；用户可用 Magic link 进站后，在向导里填 Key 或一键导入 OpenClaw。
-        source config/.env 2>/dev/null || true
+        source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
         if [ "${NO_OPENCLAW:-0}" != 1 ]; then
             if [ -z "${LLM_API_KEY:-}" ] || [ "${LLM_API_KEY:-}" = "your_api_key_here" ]; then
                 echo ""
                 echo "🔄 LLM_API_KEY 仍为占位/空：尝试从 OpenClaw 同步到 Clawcross .env（可忽略失败）..."
                 python selfskill/scripts/configure_openclaw.py --import-clawcross-llm-from-openclaw || true
-                source config/.env 2>/dev/null || true
+                source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
             fi
         else
             echo ""
@@ -473,16 +483,16 @@ case "${1:-help}" in
         else
             unset CLAWCROSS_NO_CHANNEL
         fi
-        mkdir -p "$PROJECT_ROOT/logs"
-        nohup python scripts/launcher.py > "$PROJECT_ROOT/logs/launcher.log" 2>&1 &
+        mkdir -p "$CLAWCROSS_LOG_DIR"
+        nohup python scripts/launcher.py > "$CLAWCROSS_LOG_DIR/launcher.log" 2>&1 &
         LAUNCHER_PID=$!
         echo "$LAUNCHER_PID" > "$PIDFILE"
         echo "✅ WeBot 已在后台启动 (PID: $LAUNCHER_PID)"
-        echo "   日志: $PROJECT_ROOT/logs/launcher.log"
+        echo "   日志: $CLAWCROSS_LOG_DIR/launcher.log"
         echo "   如果当前终端 / CI / agent runner 会在命令返回后清理子进程，请改用: bash selfskill/scripts/run.sh start-foreground"
 
         # 等待服务就绪
-        source config/.env 2>/dev/null || true
+        source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
         AGENT_PORT=${PORT_AGENT:-51200}
         OASIS_PORT=${PORT_OASIS:-51202}
         FRONTEND_PORT=${PORT_FRONTEND:-51209}
@@ -510,20 +520,20 @@ case "${1:-help}" in
         echo ""
 
         # 自动启动公网隧道（可用 --no-tunnel 跳过）
-        TUNNEL_PIDFILE="$PROJECT_ROOT/.tunnel.pid"
+        TUNNEL_PIDFILE="$CLAWCROSS_RUN_DIR/tunnel.pid"
         if [ "${NO_TUNNEL:-0}" = 1 ]; then
             echo ""
             echo "⏭️  已指定 --no-tunnel：不启动 Cloudflare Tunnel（仅本机访问）。"
         else
             _stop_tracked_tunnel_if_running
             echo "🌐 正在启动 Cloudflare Tunnel（手机远程访问）..."
-            mkdir -p "$PROJECT_ROOT/logs"
-            nohup python scripts/tunnel.py > "$PROJECT_ROOT/logs/tunnel.log" 2>&1 &
+            mkdir -p "$CLAWCROSS_LOG_DIR"
+            nohup python scripts/tunnel.py > "$CLAWCROSS_LOG_DIR/tunnel.log" 2>&1 &
             TUNNEL_PID=$!
             echo "$TUNNEL_PID" > "$TUNNEL_PIDFILE"
             echo -n "   等待公网地址"
             for i in $(seq 1 40); do
-                source config/.env 2>/dev/null || true
+                source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
                 if [ -n "$PUBLIC_DOMAIN" ] && [ "$PUBLIC_DOMAIN" != "wait to set" ] && echo "$PUBLIC_DOMAIN" | grep -q "trycloudflare.com"; then
                     echo " ✅"
                     echo "📱 手机访问地址: ${PUBLIC_DOMAIN}/mobile_group_chat"
@@ -532,7 +542,7 @@ case "${1:-help}" in
                 echo -n "."
                 sleep 1
             done
-            source config/.env 2>/dev/null || true
+            source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
             if [ -z "$PUBLIC_DOMAIN" ] || [ "$PUBLIC_DOMAIN" = "wait to set" ]; then
                 echo ""
                 echo "⏳ Tunnel 仍在启动中，稍后可执行: bash selfskill/scripts/run.sh tunnel-status"
@@ -555,18 +565,18 @@ case "${1:-help}" in
         _clawcross_parse_start_flags "$@"
         run_clawcross_setup_if_needed
         # Auto-create .env if missing
-        if [ ! -f config/.env ]; then
+        if [ ! -f "$CLAWCROSS_CONFIG_DIR/.env" ]; then
             echo "📋 config/.env 不存在，自动从模板初始化..."
             python selfskill/scripts/configure.py --init
         fi
 
-        source config/.env 2>/dev/null || true
+        source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
         if [ "${NO_OPENCLAW:-0}" != 1 ]; then
             if [ -z "${LLM_API_KEY:-}" ] || [ "${LLM_API_KEY:-}" = "your_api_key_here" ]; then
                 echo ""
                 echo "🔄 LLM_API_KEY 仍为占位/空：尝试从 OpenClaw 同步到 Clawcross .env（可忽略失败）..."
                 python selfskill/scripts/configure_openclaw.py --import-clawcross-llm-from-openclaw || true
-                source config/.env 2>/dev/null || true
+                source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
             fi
         else
             echo ""
@@ -611,7 +621,7 @@ case "${1:-help}" in
         ;;
 
     status)
-        source config/.env 2>/dev/null || true
+        source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
 
         TRACKED_PID=""
         if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
@@ -663,13 +673,13 @@ case "${1:-help}" in
         LOG_NAME="${2:-launcher}"
         case "$LOG_NAME" in
             launcher|main)
-                LOG_FILE="$PROJECT_ROOT/logs/launcher.log"
+                LOG_FILE="$CLAWCROSS_LOG_DIR/launcher.log"
                 ;;
             error|errors)
-                LOG_FILE="$PROJECT_ROOT/logs/error.log"
+                LOG_FILE="$CLAWCROSS_LOG_DIR/error.log"
                 ;;
             tunnel)
-                LOG_FILE="$PROJECT_ROOT/logs/tunnel.log"
+                LOG_FILE="$CLAWCROSS_LOG_DIR/tunnel.log"
                 ;;
             *)
                 echo "未知日志: $LOG_NAME" >&2
@@ -983,19 +993,19 @@ case "${1:-help}" in
 
     start-tunnel)
         # 启动 Cloudflare Tunnel（自动下载 cloudflared + 暴露前端到公网）
-        TUNNEL_PIDFILE="$PROJECT_ROOT/.tunnel.pid"
+        TUNNEL_PIDFILE="$CLAWCROSS_RUN_DIR/tunnel.pid"
         _stop_tracked_tunnel_if_running
 
         echo "🌐 正在启动 Cloudflare Tunnel..."
-        mkdir -p "$PROJECT_ROOT/logs"
-        nohup python scripts/tunnel.py > "$PROJECT_ROOT/logs/tunnel.log" 2>&1 &
+        mkdir -p "$CLAWCROSS_LOG_DIR"
+        nohup python scripts/tunnel.py > "$CLAWCROSS_LOG_DIR/tunnel.log" 2>&1 &
         TUNNEL_PID=$!
         echo "$TUNNEL_PID" > "$TUNNEL_PIDFILE"
 
         # 等待公网地址就绪（最多 60 秒）
         echo -n "   等待公网地址"
         for i in $(seq 1 30); do
-            source config/.env 2>/dev/null || true
+            source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
             if [ -n "$PUBLIC_DOMAIN" ] && [ "$PUBLIC_DOMAIN" != "wait to set" ] && echo "$PUBLIC_DOMAIN" | grep -q "trycloudflare.com"; then
                 echo " ✅"
                 echo "🌍 公网地址: $PUBLIC_DOMAIN"
@@ -1006,13 +1016,13 @@ case "${1:-help}" in
             sleep 2
         done
         echo ""
-        echo "⚠️  Tunnel 可能仍在启动中，请查看日志: $PROJECT_ROOT/logs/tunnel.log"
+        echo "⚠️  Tunnel 可能仍在启动中，请查看日志: $CLAWCROSS_LOG_DIR/tunnel.log"
         print_magic_links
         exit 0
         ;;
 
     stop-tunnel)
-        TUNNEL_PIDFILE="$PROJECT_ROOT/.tunnel.pid"
+        TUNNEL_PIDFILE="$CLAWCROSS_RUN_DIR/tunnel.pid"
         if [ -f "$TUNNEL_PIDFILE" ]; then
             PID=$(cat "$TUNNEL_PIDFILE")
             if kill -0 "$PID" 2>/dev/null; then
@@ -1036,9 +1046,9 @@ case "${1:-help}" in
             echo "Tunnel 未运行"
         fi
         # Clear PUBLIC_DOMAIN in .env to avoid stale URLs
-        if [ -f "config/.env" ]; then
-            if grep -q "^PUBLIC_DOMAIN=" config/.env; then
-                sed -i 's|^PUBLIC_DOMAIN=.*|PUBLIC_DOMAIN=|' config/.env
+        if [ -f "$CLAWCROSS_CONFIG_DIR/.env" ]; then
+            if grep -q "^PUBLIC_DOMAIN=" "$CLAWCROSS_CONFIG_DIR/.env"; then
+                sed -i 's|^PUBLIC_DOMAIN=.*|PUBLIC_DOMAIN=|' "$CLAWCROSS_CONFIG_DIR/.env"
                 echo "🧹 已清理 PUBLIC_DOMAIN"
             fi
         fi
@@ -1046,10 +1056,10 @@ case "${1:-help}" in
         ;;
 
     tunnel-status)
-        TUNNEL_PIDFILE="$PROJECT_ROOT/.tunnel.pid"
+        TUNNEL_PIDFILE="$CLAWCROSS_RUN_DIR/tunnel.pid"
         if [ -f "$TUNNEL_PIDFILE" ] && kill -0 "$(cat "$TUNNEL_PIDFILE")" 2>/dev/null; then
             echo "✅ Tunnel 正在运行 (PID: $(cat "$TUNNEL_PIDFILE"))"
-            source config/.env 2>/dev/null || true
+            source "$CLAWCROSS_CONFIG_DIR/.env" 2>/dev/null || true
             if [ -n "$PUBLIC_DOMAIN" ] && [ "$PUBLIC_DOMAIN" != "wait to set" ]; then
                 echo "🌍 公网地址: $PUBLIC_DOMAIN"
             else

@@ -2,9 +2,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-Set-Location $ProjectRoot
 
-$EnvFile = Join-Path $ProjectRoot "config/.env"
+$CommonScript = Join-Path $PSScriptRoot "common.ps1"
+. $CommonScript
+Initialize-ClawcrossRuntimePaths -ProjectRoot $ProjectRoot
+Set-Location $env:CLAWCROSS_WORKSPACE_DIR
+
+$EnvFile = Join-Path $env:CLAWCROSS_CONFIG_DIR ".env"
 $ExampleFile = Join-Path $ProjectRoot "config/.env.example"
 
 function Get-DotEnvValue {

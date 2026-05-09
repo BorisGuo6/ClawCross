@@ -53,21 +53,24 @@ for stream_name in ("stdout", "stderr"):
         except Exception:
             pass
 
-# 切换到项目根目录
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-os.chdir(PROJECT_ROOT)
-ENV_FILE_PATH = os.path.join(PROJECT_ROOT, "config", ".env")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+from src.utils.runtime_paths import ENV_FILE, PID_DIR, WORKSPACE_DIR, ensure_runtime_dirs, set_subprocess_env
+ENV_FILE_PATH = str(ENV_FILE)
+ensure_runtime_dirs()
+WORKING_DIR = str(WORKSPACE_DIR)
 PLACEHOLDER = "wait to set"
 
 # 检查 .env 配置文件是否存在（推荐用 run.sh/run.ps1 start，会自动 configure --init）
-if not os.path.exists("config/.env"):
-    print("❌ 未找到 config/.env。")
+if not os.path.exists(ENV_FILE_PATH):
+    print(f"❌ 未找到 {ENV_FILE_PATH}。")
     print("   请执行: bash selfskill/scripts/run.sh start（或 Windows: selfskill\\scripts\\run.ps1 start）")
     print("   会先按模板生成 .env；不必事先填写 LLM Key，可用 Magic link 登录后在网页向导配置或从 OpenClaw 导入。")
     sys.exit(1)
 
 # 加载 .env 配置
-load_dotenv(dotenv_path=os.path.join(PROJECT_ROOT, "config", ".env"))
+load_dotenv(dotenv_path=ENV_FILE_PATH)
 
 _allow_empty_llm_model = (os.getenv("CLAWCROSS_ALLOW_EMPTY_LLM_MODEL") or "").strip().lower()
 if _allow_empty_llm_model not in ("1", "true", "yes", "on"):
@@ -381,8 +384,9 @@ def wait_for_service_ready(
 def start_service(service):
     print(service["message"])
     proc = subprocess.Popen(
-        [venv_python, service["script"]],
-        cwd=PROJECT_ROOT,
+        [venv_python, os.path.join(PROJECT_ROOT, service["script"])],
+        cwd=WORKING_DIR,
+        env=set_subprocess_env(os.environ),
         stdin=subprocess.DEVNULL,
         stdout=None,
         stderr=None,
@@ -619,7 +623,8 @@ if should_start_chatbot:
     print(f"💬 [4/5] 启动社交媒体机器人 ({len(chatbot_platforms)} 个平台: {', '.join(chatbot_platforms)})...")
     chatbot_proc = subprocess.Popen(
         [venv_python, chatbot_main],
-        cwd=PROJECT_ROOT,
+        cwd=WORKING_DIR,
+        env=set_subprocess_env(os.environ),
         stdin=subprocess.DEVNULL,
         stdout=None,
         stderr=None,
@@ -682,7 +687,7 @@ def _open_browser():
 threading.Thread(target=_open_browser, daemon=True).start()
 
 # 重启信号文件路径
-RESTART_FLAG = os.path.join(PROJECT_ROOT, ".restart_flag")
+RESTART_FLAG = os.path.join(str(PID_DIR), "restart_flag")
 # 启动时清理残留的重启信号
 if os.path.isfile(RESTART_FLAG):
     os.remove(RESTART_FLAG)

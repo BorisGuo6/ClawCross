@@ -30,15 +30,18 @@ import httpx
 import yaml as _yaml
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from utils.runtime_paths import DATA_DIR, ENV_FILE, USER_FILES_DIR, WORKSPACE_DIR, ensure_runtime_dirs, set_subprocess_env, venv_python
 
 mcp = FastMCP("OASIS Forum")
 
-load_dotenv(dotenv_path=_os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), "config", ".env"))
+load_dotenv(dotenv_path=str(ENV_FILE))
 
 OASIS_BASE_URL = os.getenv("OASIS_BASE_URL", "http://127.0.0.1:51202")
 _FALLBACK_USER = os.getenv("MCP_OASIS_USER", "agent_user")
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_WORKFLOW_PYTHON = os.path.join(_PROJECT_ROOT, ".venv", "bin", "python")
+ensure_runtime_dirs()
+_WORKING_DIR = str(WORKSPACE_DIR)
+_WORKFLOW_PYTHON = str(venv_python())
 if not os.path.isfile(_WORKFLOW_PYTHON):
     _WORKFLOW_PYTHON = _sys.executable
 _WORKFLOW_IMPORT_PATHS = os.pathsep.join([_PROJECT_ROOT, os.path.join(_PROJECT_ROOT, "src")])
@@ -57,7 +60,7 @@ def _resolve_effective_user(username: str = "") -> str:
     if explicit:
         return explicit
 
-    users_root = os.path.join(_PROJECT_ROOT, "data", "user_files")
+    users_root = os.path.join(str(USER_FILES_DIR))
     candidates: list[str] = []
     if os.path.isdir(users_root):
         for entry in sorted(os.listdir(users_root)):
@@ -76,12 +79,12 @@ def _resolve_effective_user(username: str = "") -> str:
 
 def _workflow_python_dir(user_id: str, team: str = "") -> str:
     if team:
-        return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "teams", team, "oasis", "python")
-    return os.path.join(_PROJECT_ROOT, "data", "user_files", user_id, "oasis", "python")
+        return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "oasis", "python")
+    return os.path.join(str(USER_FILES_DIR), user_id, "oasis", "python")
 
 
 def _python_runs_dir() -> str:
-    return os.path.join(_PROJECT_ROOT, "data", "python_workflow_runs")
+    return os.path.join(str(DATA_DIR), "python_workflow_runs")
 
 
 def resolve_python_workflow_path(user_id: str, python_file: str, team: str = "") -> tuple[str | None, str | None]:
@@ -89,7 +92,7 @@ def resolve_python_workflow_path(user_id: str, python_file: str, team: str = "")
         return None, "未提供 python workflow 文件名"
     target_name = python_file if python_file.endswith(".py") else f"{python_file}.py"
     matches: list[tuple[str, str]] = []
-    user_root = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         search_dirs = [("team", team, _workflow_python_dir(user_id, team))]
     else:
@@ -120,7 +123,7 @@ def _spawn_standalone_python_workflow(
     question: str,
     team: str = "",
 ) -> dict[str, str | int]:
-    runs_dir = os.path.join(_PROJECT_ROOT, "data", "python_workflow_runs")
+    runs_dir = os.path.join(str(DATA_DIR), "python_workflow_runs")
     os.makedirs(runs_dir, exist_ok=True)
     run_id = uuid.uuid4().hex[:12]
     log_path = os.path.join(runs_dir, f"{run_id}.log")
@@ -142,15 +145,15 @@ def _spawn_standalone_python_workflow(
     log_file = open(log_path, "a", encoding="utf-8")
     proc = subprocess.Popen(
         cmd,
-        cwd=_PROJECT_ROOT,
-        env={
+        cwd=_WORKING_DIR,
+        env=set_subprocess_env({
             **os.environ,
             "CLAWCROSS_PROJECT_ROOT": _PROJECT_ROOT,
             "CLAWCROSS_PYTHONPATH": _WORKFLOW_IMPORT_PATHS,
             "PYTHONPATH": _WORKFLOW_IMPORT_PATHS + (
                 os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""
             ),
-        },
+        }),
         stdout=log_file,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -184,7 +187,7 @@ def _iter_python_workflow_dirs(user_id: str, team: str = "") -> list[tuple[str, 
     if not user_id:
         return []
 
-    user_root = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         return [("team", team, os.path.join(user_root, "teams", team, "oasis", "python"))]
 
@@ -885,7 +888,7 @@ def _iter_workflow_dirs(user_id: str, team: str = "") -> list[tuple[str, str, st
     if not user_id:
         return []
 
-    user_root = os.path.join(_PROJECT_ROOT, "data", "user_files", user_id)
+    user_root = os.path.join(str(USER_FILES_DIR), user_id)
     if team:
         return [("team", team, os.path.join(user_root, "teams", team, "oasis", "yaml"))]
 

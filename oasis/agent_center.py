@@ -9,6 +9,7 @@ _SRC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+from utils.runtime_paths import DATA_DIR
 
 from integrations.agent_sender import (
     ResetAgentRequest,
@@ -167,7 +168,7 @@ class AgentCenter:
         effective_session = session if session is not None else agent.get("session")
 
         merged_options.setdefault("cwd", _PROJECT_ROOT)
-        merged_options.setdefault("group_db_path", os.path.join(_PROJECT_ROOT, "data", "group_chat.db"))
+        merged_options.setdefault("group_db_path", os.path.join(str(DATA_DIR), "group_chat.db"))
         if effective_platform == "internal":
             merged_options.setdefault("user_id", self.user_id)
             merged_options.setdefault("internal_token", os.getenv("INTERNAL_TOKEN", ""))
