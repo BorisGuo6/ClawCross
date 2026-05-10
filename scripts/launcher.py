@@ -427,6 +427,24 @@ def launch_services(services):
     wait_for_started_services(services)
 
 
+def start_chatbot_if_configured(platforms):
+    if not platforms:
+        return None
+    print(f"💬 启动社交媒体机器人 ({len(platforms)} 个平台: {', '.join(platforms)})...")
+    proc = subprocess.Popen(
+        [venv_python, chatbot_main],
+        cwd=WORKING_DIR,
+        env=set_subprocess_env(os.environ),
+        stdin=subprocess.DEVNULL,
+        stdout=None,
+        stderr=None,
+    )
+    proc._cc_optional = True
+    child_procs.append(proc)
+    print(f"   ✅ 社交媒体机器人已启动 (PID: {proc.pid})")
+    return proc
+
+
 # 注册退出清理函数
 atexit.register(cleanup)
 
@@ -703,18 +721,6 @@ if should_start_chatbot:
         should_start_chatbot = False
 
 if should_start_chatbot:
-    print(f"💬 [4/5] 启动社交媒体机器人 ({len(chatbot_platforms)} 个平台: {', '.join(chatbot_platforms)})...")
-    chatbot_proc = subprocess.Popen(
-        [venv_python, chatbot_main],
-        cwd=WORKING_DIR,
-        env=set_subprocess_env(os.environ),
-        stdin=subprocess.DEVNULL,
-        stdout=None,
-        stderr=None,
-    )
-    chatbot_proc._cc_optional = True  # 标记：异常退出不拖垮 launcher
-    child_procs.append(chatbot_proc)
-    print(f"   ✅ 社交媒体机器人已启动 (PID: {chatbot_proc.pid})")
     services.append(
         {
             "message": f"🌐 [5/5] 启动前端 Web UI (port {PORT_FRONTEND})...",
@@ -741,6 +747,8 @@ else:
 
 # 启动所有服务
 launch_services(services)
+if should_start_chatbot:
+    start_chatbot_if_configured(chatbot_platforms)
 
 print()
 print("============================================")
@@ -828,23 +836,9 @@ try:
                 if restart_nonebot_names and not _ensure_nonebot_deps(restart_nonebot_names):
                     print("💬 [skip] NoneBot 依赖未就绪，跳过 chatbot（不影响其他服务）")
                     restart_should_start_chatbot = False
-            if restart_should_start_chatbot:
-                print(
-                    f"💬 [restart] 启动社交媒体机器人 "
-                    f"({len(restart_chatbot_platforms)} 个平台: {', '.join(restart_chatbot_platforms)})..."
-                )
-                chatbot_proc = subprocess.Popen(
-                    [venv_python, chatbot_main],
-                    cwd=WORKING_DIR,
-                    env=set_subprocess_env(os.environ),
-                    stdin=subprocess.DEVNULL,
-                    stdout=None,
-                    stderr=None,
-                )
-                chatbot_proc._cc_optional = True
-                child_procs.append(chatbot_proc)
-                print(f"   ✅ 社交媒体机器人已启动 (PID: {chatbot_proc.pid})")
             launch_services(services)
+            if restart_should_start_chatbot:
+                start_chatbot_if_configured(restart_chatbot_platforms)
             print()
             print("✅ 所有服务已重启！")
             print()
