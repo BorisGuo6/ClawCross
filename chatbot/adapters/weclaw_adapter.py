@@ -7,7 +7,7 @@ WeClaw（github.com/fastclaw-ai/weclaw）是一个 Go 写的微信 bot 桥，
 
   WeChat ──> weclaw 子进程 ──HTTP──> 本地 proxy(51298) ──HTTP──> /v1/chat/completions
                                           │
-                                          └─ 拦截 "/cross" 命令 → 返回前端 magic link
+                                          └─ 拦截 "/front" 命令 → 返回前端 magic link
 
   1. 启动时自动检测 weclaw 二进制；缺失则跑 scripts/weclaw_install.sh 自动安装。
   2. 写 ~/.weclaw/config.json：把 proxy URL 注册为 default HTTP agent。
@@ -15,7 +15,7 @@ WeClaw（github.com/fastclaw-ai/weclaw）是一个 Go 写的微信 bot 桥，
      - 检测 ASCII QR 块，独立保存到 data/weclaw_qr.txt 并打印 banner
      - 其余日志按行 forward 到 logger
   4. proxy 解析每条 chat completion 请求：
-     - "/cross" 开头 → 调 frontend /generate_login_link，把 magic link 当 assistant 回复返回
+     - "/front" 开头 → 调 frontend /generate_login_link，把 magic link 当 assistant 回复返回
      - 其他 → 透传到真正的 agent endpoint（含流式）
 
 环境变量：
@@ -192,7 +192,7 @@ class WeClawAdapter(ChannelAdapter):
             json.dump(existing, f, indent=2, ensure_ascii=False)
         logger.info(f"已写入 weclaw 配置: {self._config_path} (agent endpoint=proxy@{self._proxy_port})")
 
-    # ── proxy: 拦截 /cross，其余透传 ──────────────────────────────────
+    # ── proxy: 拦截 /front，其余透传 ─────────────────────────────────
 
     def _gen_magic_link_sync(self, user_id: str) -> MagicLink | None:
         url = f"http://127.0.0.1:{self._frontend_port}/generate_login_link"
@@ -258,7 +258,7 @@ class WeClawAdapter(ChannelAdapter):
 
                 text = _last_user_text(data)
                 user_id = adapter_self._username_from_auth(self.headers.get("Authorization", ""))
-                if adapter_self.is_cross_command(text):
+                if adapter_self.is_front_command(text):
                     link = adapter_self._gen_magic_link_sync(user_id)
                     content = adapter_self.format_cross_reply(link)
                     self._send_json(200, {
@@ -273,7 +273,7 @@ class WeClawAdapter(ChannelAdapter):
                         }],
                         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                     })
-                    logger.info(f"/cross 命令处理完成 (user={user_id})")
+                    logger.info(f"/front 命令处理完成 (user={user_id})")
                     return
 
                 try:
@@ -284,8 +284,8 @@ class WeClawAdapter(ChannelAdapter):
                         username=user_id,
                     ))
                 except Exception as e:
-                    logger.error(f"/cli 命令处理失败: {e}")
-                    handled, cli_reply = True, f"CLI 错误: {e}"
+                    logger.error(f"/cross 命令处理失败: {e}")
+                    handled, cli_reply = True, f"Cross shell 错误: {e}"
                 if handled:
                     self._send_json(200, {
                         "id": "weclaw-cli",
@@ -299,7 +299,7 @@ class WeClawAdapter(ChannelAdapter):
                         }],
                         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                     })
-                    logger.info(f"/cli 模式消息处理完成 (user={user_id})")
+                    logger.info(f"/cross 模式消息处理完成 (user={user_id})")
                     return
 
                 # 透传到真正的 agent endpoint（含流式）

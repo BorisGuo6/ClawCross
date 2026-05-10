@@ -173,7 +173,8 @@ CHAT_SLASH_COMMANDS = [
     ("/mode <mode>", "set execute/plan/review"),
     ("/state", "show current shell state"),
     ("/cancel", "cancel internal generation"),
-    ("/exit", "leave /cli mode"),
+    ("/front", "get a public magic link"),
+    ("/exit", "leave /cross mode"),
 ]
 
 
@@ -325,16 +326,16 @@ def _fit(text: str, width: int) -> str:
 
 def _claw_logo() -> list[str]:
     return [
-        "       ████      ████",
-        "    ████████████████        ○",
-        "  █████  ██  ██  █████     ╱",
-        "  █████    ▄     █████   □",
-        "    ████████████████    ╱",
-        "       ████      ████  ○",
+        "     ████    ████",
+        "   ██████████████",
+        "  ████ ██ ██ ████",
+        "  ████   ▄   ████",
+        "   ██████████████",
+        "     ████    ████",
         "",
-        "         ○──□──○──□──○",
+        "      ○──□──○──□",
         "",
-        "            ClawCross",
+        "        ClawCross",
     ]
 
 
@@ -709,10 +710,15 @@ def run_prompt(prompt: str, state: dict, *, model: str = "default") -> int:
 
 def cmd_platforms(_args, state: dict) -> int:
     current = _current(state)
-    print("Available platforms:")
-    for name, description in KNOWN_PLATFORMS.items():
-        marker = "*" if name == current.get("platform") else " "
-        print(f" {marker} {name:<16} {description} [{_platform_status_line(name)}]")
+    names = list(KNOWN_PLATFORMS)
+    name_width = max(_display_width(name) for name in names)
+    name_col_width = min(max(name_width, 12), 18)
+    print("Available platforms")
+    print("┌───┬" + "─" * (name_col_width + 2) + "┐")
+    for name in KNOWN_PLATFORMS:
+        marker = "•" if name == current.get("platform") else " "
+        print("│ " + marker + " │ " + _pad_display(name, name_col_width) + " │")
+    print("└───┴" + "─" * (name_col_width + 2) + "┘")
     return 0
 
 
@@ -1034,10 +1040,8 @@ def _choose_session(state: dict) -> bool:
 def _choose_platform(state: dict) -> bool:
     current_platform = _current(state).get("platform", "internal")
     rows = []
-    for name, description in KNOWN_PLATFORMS.items():
-        status = _platform_status_line(name)
-        detail = description if status in description.lower() else f"{description} ({status})"
-        rows.append((name, detail))
+    for name in KNOWN_PLATFORMS:
+        rows.append((name, ""))
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         cmd_platforms(None, state)
         return True
@@ -1280,8 +1284,10 @@ def chat_help_text() -> str:
 
 def chat_welcome_text(state: dict, magic_link: str | None = None) -> str:
     lines = [
+        *_claw_logo(),
+        "",
         f"{APP_NAME} v{_package_version()}",
-        "Chat shell is on.",
+        "Cross shell is on.",
         "",
         *_chat_state_lines(state),
         "",
@@ -1289,7 +1295,7 @@ def chat_welcome_text(state: dict, magic_link: str | None = None) -> str:
         "Try /use claude or /use gemini.",
         "Send a message to run it.",
         "Send /help for commands.",
-        "Send /cross for a public magic link.",
+        "Send /front for a public magic link.",
         "Send /exit to leave.",
     ]
     if magic_link:
@@ -1318,7 +1324,8 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
         if len(parts) < 2 or not parts[1].strip():
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
                 cmd_platforms(None, state)
-            return True, _strip_ansi(out.getvalue()).strip()
+            table = _strip_ansi(out.getvalue()).strip()
+            return True, f"```\n{table}\n```"
         platform = parts[1].strip().split()[0]
         _set_chat_platform(state, platform)
         current = _current(state)

@@ -204,14 +204,14 @@ class NoneBotBridgeAdapter(ChannelAdapter):
         except Exception:
             channel_user_id = username
 
-        # /cross 命令：直接返回 magic link，跳过 AI
-        if self.is_cross_command(text):
+        # /front 命令：直接返回 magic link，跳过 AI
+        if self.is_front_command(text):
             link = await self.generate_magic_link(username)
             reply = self.format_cross_reply(link)
             try:
                 await bot.send(event, reply)
             except Exception as e:
-                logger.error(f"回复 /cross 失败 ({adapter_name}): {e}")
+                logger.error(f"回复 /front 失败 ({adapter_name}): {e}")
             return
 
         handled, cli_reply = await self.handle_cli_mode(
@@ -224,7 +224,7 @@ class NoneBotBridgeAdapter(ChannelAdapter):
             try:
                 await bot.send(event, cli_reply or "")
             except Exception as e:
-                logger.error(f"回复 /cli 失败 ({adapter_name}): {e}")
+                logger.error(f"回复 /cross 失败 ({adapter_name}): {e}")
             return
 
         # 按消息真实平台动态构造 api_key（不修改 self.channel，避免并发竞争）

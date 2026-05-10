@@ -28,8 +28,9 @@ from src.utils.runtime_paths import DATA_DIR
 
 logger = logging.getLogger("chatbot.base")
 
+FRONT_COMMAND = "/front"
 CROSS_COMMAND = "/cross"
-CLI_COMMAND = "/cli"
+LEGACY_CLI_COMMAND = "/cli"
 
 
 def resolve_chatbot_data_path(value: str | None, default_name: str) -> str:
@@ -172,7 +173,14 @@ class ChannelAdapter(ABC):
         """构建 API 认证 key"""
         return f"{self._internal_token}:{username}:{self.channel.upper()}"
 
-    # ── /cross 命令：所有 adapter 共用 ─────────────────────────────────
+    # ── /front + /cross 命令：所有 adapter 共用 ───────────────────────
+
+    @staticmethod
+    def is_front_command(text: str) -> bool:
+        if not text:
+            return False
+        parts = text.strip().split(maxsplit=1)
+        return bool(parts) and parts[0].lower() == FRONT_COMMAND
 
     @staticmethod
     def is_cross_command(text: str) -> bool:
@@ -186,7 +194,7 @@ class ChannelAdapter(ABC):
         if not text:
             return False
         parts = text.strip().split(maxsplit=1)
-        return bool(parts) and parts[0].lower() == CLI_COMMAND
+        return bool(parts) and parts[0].lower() in {CROSS_COMMAND, LEGACY_CLI_COMMAND}
 
     def _cli_key(self, channel: str, user_id: str) -> str:
         return f"{channel or self.channel}:{user_id or 'anonymous'}"
@@ -199,7 +207,7 @@ class ChannelAdapter(ABC):
         user_id: str,
         username: str | None,
     ) -> tuple[bool, str | None]:
-        """Handle /cli social shell mode.
+        """Handle /cross social shell mode.
 
         Returns (handled, reply). When handled is False, callers should continue
         with their normal AI flow.
@@ -211,14 +219,15 @@ class ChannelAdapter(ABC):
             arg = stripped.split(maxsplit=1)[1].strip().lower() if len(stripped.split(maxsplit=1)) > 1 else ""
             if arg in {"off", "exit", "quit", "stop"}:
                 self._cli_enabled.discard(key)
-                return True, "ClawCross CLI mode closed."
+                return True, "ClawCross cross shell closed."
             self._cli_enabled.add(key)
             from scripts.clawcross import chat_welcome_text, load_chatbot_state
             state = load_chatbot_state(channel, user_id, username)
-            return True, chat_welcome_text(state)
+            link = await self.generate_magic_link(username or user_id)
+            return True, chat_welcome_text(state, link.link if link else None)
         if lower in {"/exit", "/quit", "/q"} and key in self._cli_enabled:
             self._cli_enabled.discard(key)
-            return True, "ClawCross CLI mode closed."
+            return True, "ClawCross cross shell closed."
         if key not in self._cli_enabled:
             return False, None
 
@@ -228,7 +237,7 @@ class ChannelAdapter(ABC):
             active, reply = handle_chatbot_input(stripped, state)
         if not active:
             self._cli_enabled.discard(key)
-            return True, "ClawCross CLI mode closed."
+            return True, "ClawCross cross shell closed."
         return True, reply or "(no output)"
 
     @staticmethod
@@ -244,14 +253,14 @@ class ChannelAdapter(ABC):
         if not link:
             return "❌ 生成登录链接失败，请检查前端服务（PORT_FRONTEND）是否就绪"
         if isinstance(link, MagicLink):
-            lines = ["🔗 ClawCross 前端登录链接（已生成新的有效链接）：", link.link]
+            lines = ["🔗 ClawCross Front / Magic link（已生成新的有效链接）：", link.link]
             if link.expires_at:
                 expires = datetime.fromtimestamp(link.expires_at).strftime("%Y-%m-%d %H:%M:%S")
                 lines.append(f"有效至：{expires}")
             elif link.valid_hours:
                 lines.append(f"有效期：{link.valid_hours} 小时")
             return "\n".join(lines)
-        return f"🔗 ClawCross 前端登录链接（已生成新的有效链接）：\n{link}"
+        return f"🔗 ClawCross Front / Magic link（已生成新的有效链接）：\n{link}"
 
     async def generate_magic_link(self, user_id: str) -> MagicLink | None:
         port = os.getenv("PORT_FRONTEND", "51209")

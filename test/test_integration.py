@@ -42,12 +42,24 @@ class EnvSettingsTests(unittest.TestCase):
 
 
 class ChatbotCommandTests(unittest.TestCase):
+    def test_front_command_matches_exact_command_or_arguments_only(self):
+        self.assertTrue(ChannelAdapter.is_front_command("/front"))
+        self.assertTrue(ChannelAdapter.is_front_command("  /Front   "))
+        self.assertTrue(ChannelAdapter.is_front_command("/front login"))
+        self.assertFalse(ChannelAdapter.is_front_command("/frontend"))
+        self.assertFalse(ChannelAdapter.is_front_command("please /front"))
+
     def test_cross_command_matches_exact_command_or_arguments_only(self):
         self.assertTrue(ChannelAdapter.is_cross_command("/cross"))
         self.assertTrue(ChannelAdapter.is_cross_command("  /Cross   "))
         self.assertTrue(ChannelAdapter.is_cross_command("/cross login"))
         self.assertFalse(ChannelAdapter.is_cross_command("/crossword"))
         self.assertFalse(ChannelAdapter.is_cross_command("please /cross"))
+
+    def test_cli_command_keeps_legacy_alias(self):
+        self.assertTrue(ChannelAdapter.is_cli_command("/cross"))
+        self.assertTrue(ChannelAdapter.is_cli_command("/cli"))
+        self.assertFalse(ChannelAdapter.is_cli_command("/front"))
 
     def test_cross_reply_includes_expiry_when_available(self):
         reply = ChannelAdapter.format_cross_reply(

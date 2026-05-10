@@ -2541,7 +2541,7 @@ def generate_login_link():
     if not user_id:
         return jsonify({"error": "user_id is required"}), 400
     
-    # Generate a fresh token for each request so /cross never reuses an expired link.
+    # Generate a fresh token for each request so /front never reuses an expired link.
     valid_hours = 24
     generated_ts = int(time.time())
     token = generate_login_token(user_id, valid_hours=valid_hours)
