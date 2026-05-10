@@ -9868,11 +9868,11 @@ function renderMobileWeClawLoginPanel(channel) {
   }
   panel.style.display = 'block';
   panel.innerHTML = `<div class="weclaw-qr-box">
-    <div class="chatbot-config-help">微信登录状态保存在 WECLAW_CONFIG。普通重启会复用旧会话；需要换号或重新扫码时，先清除登录状态再刷新二维码。</div>
+    <div class="chatbot-config-help">需要换号或重新扫码时，使用 WeClaw 内置 login 流程刷新二维码。扫码完成后再保存并重启微信渠道。</div>
     <div class="chatbot-config-actions" style="margin-top:8px;">
       <button type="button" onclick="loadMobileWeClawQr()">刷新二维码</button>
       <button type="button" onclick="saveMobileWeClawAndRestart()">保存微信设置并重启</button>
-      <button type="button" onclick="resetMobileWeClawLogin()">清除登录并刷新</button>
+      <button type="button" onclick="resetMobileWeClawLogin()">重新扫码登录</button>
     </div>
     <div id="mobile-weclaw-qr-status" class="chatbot-config-help" style="margin-top:8px;"></div>
     <pre id="mobile-weclaw-qr-pre" class="weclaw-qr-pre" style="display:none;"></pre>
@@ -10070,7 +10070,7 @@ async function saveMobileWeClawAndRestart() {
 }
 
 async function resetMobileWeClawLogin() {
-  if (!confirm('清除当前 WeClaw 微信登录状态并重启？这会要求重新扫码登录。')) return;
+  if (!confirm('启动 WeClaw 内置 login 重新扫码？扫码完成后需要再重启微信渠道。')) return;
   collectMobileChatbotConfigFromDom();
   MOBILE_CHATBOT_WECLAW_KEYS.forEach(key => {
     if (!mobileChatbotSettings[key]) mobileChatbotSettings[key] = MOBILE_CHATBOT_DEFAULTS[key] || '';
@@ -10079,7 +10079,7 @@ async function resetMobileWeClawLogin() {
   renderMobileChatbotConfig();
   const ok = await saveMobileChatbotConfig();
   if (!ok) return;
-  mobileChatbotStatus('正在清除 WeClaw 登录状态...');
+  mobileChatbotStatus('正在启动 WeClaw 内置 login...');
   try {
     const resp = await fetch('/proxy_weclaw_reset', {
       method: 'POST',
@@ -10088,10 +10088,9 @@ async function resetMobileWeClawLogin() {
     let data = {};
     try { data = await resp.json(); } catch (_) {}
     if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-    const removed = Array.isArray(data.removed) ? data.removed.length : 0;
-    mobileChatbotStatus(`已清除登录状态（${removed} 个文件），正在等待新二维码...`);
+    mobileChatbotStatus(data.message || '已启动 WeClaw login，正在等待新二维码...');
   } catch (e) {
-    mobileChatbotStatus('清除登录状态失败: ' + e.message, true);
+    mobileChatbotStatus('启动 WeClaw login 失败: ' + e.message, true);
     return;
   }
   if (mobileWeClawQrRetryTimer) clearTimeout(mobileWeClawQrRetryTimer);

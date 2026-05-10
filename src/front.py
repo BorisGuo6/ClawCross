@@ -105,6 +105,9 @@ _token = os.getenv("INTERNAL_TOKEN", "")
 app.secret_key = hashlib.sha256(f"clawcross-session-{_token}".encode()).digest() if _token else os.urandom(24)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB for image uploads
 
+_weclaw_login_proc: subprocess.Popen | None = None
+_weclaw_login_lock = threading.Lock()
+
 # --- 配置区 ---
 from datetime import datetime, timedelta
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
@@ -2619,12 +2622,14 @@ def proxy_get_weclaw_qr():
     """读取 WeClaw 扫码登录二维码（ASCII）。"""
     qr_path = os.path.join(str(DATA_DIR), "weclaw_qr.txt")
     try:
+        login_running = _weclaw_login_proc is not None and _weclaw_login_proc.poll() is None
         if not os.path.exists(qr_path):
             return jsonify({
                 "status": "pending",
                 "qr": "",
                 "path": qr_path,
-                "message": "尚未发现新的扫码二维码。如果 WeClaw 已加载已有账号会话，则无需扫码；否则请等待 weclaw 输出二维码后刷新。",
+                "login_running": login_running,
+                "message": "尚未发现新的扫码二维码。请点击“重新扫码登录”启动 WeClaw 内置 login；若已启动，请稍等几秒后刷新。",
             })
         with open(qr_path, "r", encoding="utf-8") as f:
             qr = f.read()
@@ -2632,51 +2637,93 @@ def proxy_get_weclaw_qr():
             "status": "success" if qr.strip() else "pending",
             "qr": qr,
             "path": qr_path,
+            "login_running": login_running,
             "message": "请用微信扫描下方二维码登录。",
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
+def _capture_weclaw_login_output(proc: subprocess.Popen, qr_path: str) -> None:
+    try:
+        with open(qr_path, "w", encoding="utf-8") as f:
+            if proc.stdout is not None:
+                for line in proc.stdout:
+                    f.write(line)
+                    f.flush()
+            rc = proc.wait()
+            f.write(f"\n[weclaw login exited: {rc}]\n")
+            f.flush()
+    except Exception as e:
+        try:
+            with open(qr_path, "a", encoding="utf-8") as f:
+                f.write(f"\n[failed to capture weclaw login output: {e}]\n")
+        except Exception:
+            pass
+
+
 @app.route("/proxy_weclaw_reset", methods=["POST"])
 def proxy_reset_weclaw_login():
-    """清除 WeClaw 持久登录状态并请求重启，用于刷新微信扫码登录。"""
+    """使用 WeClaw 内置 login 流程刷新微信扫码登录。"""
+    global _weclaw_login_proc
     user_id = session.get("user_id", "")
     if not user_id:
         return jsonify({"error": "not logged in"}), 401
     try:
         settings = read_env_all(str(ENV_FILE))
-        config_path = os.path.expanduser(
-            settings.get("WECLAW_CONFIG")
-            or os.getenv("WECLAW_CONFIG")
-            or "~/.weclaw/config.json"
-        )
+        weclaw_bin = settings.get("WECLAW_BIN") or os.getenv("WECLAW_BIN") or "weclaw"
+        resolved_bin = shutil.which(weclaw_bin) or weclaw_bin
+        if not shutil.which(weclaw_bin) and not (os.path.isfile(resolved_bin) and os.access(resolved_bin, os.X_OK)):
+            return jsonify({"error": f"找不到 weclaw 二进制: {weclaw_bin}"}), 400
+
         qr_path = os.path.join(str(DATA_DIR), "weclaw_qr.txt")
-        removed = []
-        missing = []
+        os.makedirs(os.path.dirname(qr_path), exist_ok=True)
 
-        for path, label in ((config_path, "config"), (qr_path, "qr")):
-            if os.path.isfile(path) or os.path.islink(path):
-                os.unlink(path)
-                removed.append({"type": label, "path": path})
-            elif os.path.exists(path):
+        with _weclaw_login_lock:
+            if _weclaw_login_proc is not None and _weclaw_login_proc.poll() is None:
                 return jsonify({
-                    "error": f"WeClaw {label} path is not a file: {path}",
-                    "path": path,
-                }), 400
-            else:
-                missing.append({"type": label, "path": path})
+                    "status": "running",
+                    "message": "WeClaw 登录流程已在运行，请刷新二维码。",
+                    "path": qr_path,
+                    "pid": _weclaw_login_proc.pid,
+                })
 
-        restart_flag = os.path.join(str(PID_DIR), "restart_flag")
-        with open(restart_flag, "w") as f:
-            f.write("restart")
+            if os.path.isfile(qr_path) or os.path.islink(qr_path):
+                os.unlink(qr_path)
 
-        return jsonify({
-            "status": "success",
-            "message": "已清除 WeClaw 登录状态并发送重启信号。请等待新二维码生成。",
-            "removed": removed,
-            "missing": missing,
-        })
+            subprocess.run(
+                [resolved_bin, "stop"],
+                cwd=str(WORKSPACE_DIR),
+                env=set_subprocess_env(os.environ),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            )
+
+            _weclaw_login_proc = subprocess.Popen(
+                [resolved_bin, "login"],
+                cwd=str(WORKSPACE_DIR),
+                env=set_subprocess_env(os.environ),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            threading.Thread(
+                target=_capture_weclaw_login_output,
+                args=(_weclaw_login_proc, qr_path),
+                daemon=True,
+                name="weclaw-login-capture",
+            ).start()
+
+            return jsonify({
+                "status": "success",
+                "message": "已启动 WeClaw 内置 login。请等待二维码出现并扫码；扫码完成后再重启微信渠道。",
+                "path": qr_path,
+                "pid": _weclaw_login_proc.pid,
+            })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
