@@ -9871,7 +9871,7 @@ function renderMobileWeClawLoginPanel(channel) {
   }
   panel.style.display = 'block';
   panel.innerHTML = `<div class="weclaw-qr-box">
-    <div class="chatbot-config-help">微信渠道使用 WeClaw 内置登录。未登录时新登录；已有登录时可重新登录。终止只停止 WeClaw 微信连接。</div>
+    <div class="chatbot-config-help">微信渠道使用 WeClaw 内置登录。扫码成功后会自动重启微信连接；已有登录时可重新登录。</div>
     <div class="chatbot-config-actions" style="margin-top:8px;">
       <button type="button" id="mobile-weclaw-login-btn" onclick="startMobileWeClawLogin()">登录</button>
       <button type="button" onclick="stopMobileWeClaw()">终止</button>
@@ -9899,7 +9899,9 @@ async function loadMobileWeClawStatus() {
     const loginText = data.has_login ? `已有 ${accountCount} 个微信登录记录` : '未发现微信登录记录';
     const runningText = data.login_running
       ? '正在显示扫码登录'
-      : (data.bridge_running ? '微信连接进程运行中' : '微信连接未运行');
+      : (data.session_expired
+        ? '微信会话已过期，需要重新登录'
+        : (data.bridge_running ? '微信连接进程运行中' : '微信连接未运行'));
     const proxyText = data.proxy_running ? `proxy ${data.proxy || ''} 可用` : 'proxy 未运行';
     status.textContent = `${loginText}。${runningText}`;
     if (data.has_login && data.bridge_running) {

@@ -242,6 +242,12 @@ class WeClawAdapter(ChannelAdapter):
                 self.wfile.write(body)
 
             def do_POST(self):
+                if self.path == "/_weclaw/stop":
+                    self._send_json(200, {"status": "success", "message": "stopping weclaw"})
+                    threading.Thread(target=adapter_self._terminate, daemon=True, name="weclaw-control-stop").start()
+                    logger.info("收到 WeClaw 内部停止指令")
+                    return
+
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length > 0 else b""
                 try:

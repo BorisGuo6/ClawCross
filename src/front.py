@@ -148,6 +148,34 @@ def _is_tcp_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     except OSError:
         return False
 
+
+def _weclaw_session_expired_from_log() -> bool:
+    log_path = LOGS_DIR / "launcher.log"
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 200_000), os.SEEK_SET)
+            text = f.read().decode("utf-8", errors="ignore")
+        return "WeChat session expired and cannot be auto-recovered" in text
+    except Exception:
+        return False
+
+
+def _stop_managed_weclaw_proxy(settings: dict[str, str]) -> None:
+    proxy_host = settings.get("WECLAW_PROXY_HOST") or os.getenv("WECLAW_PROXY_HOST") or "127.0.0.1"
+    proxy_port = int(settings.get("WECLAW_PROXY_PORT") or os.getenv("WECLAW_PROXY_PORT") or "51298")
+    if not _is_tcp_port_open(proxy_host, proxy_port):
+        return
+    try:
+        requests.post(
+            f"http://{proxy_host}:{proxy_port}/_weclaw/stop",
+            json={},
+            timeout=2,
+        )
+    except Exception:
+        pass
+
 # --- 配置区 ---
 from datetime import datetime, timedelta
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
@@ -2697,6 +2725,7 @@ def proxy_weclaw_status():
         proxy_port = int(settings.get("WECLAW_PROXY_PORT") or os.getenv("WECLAW_PROXY_PORT") or "51298")
         proxy_running = _is_tcp_port_open(proxy_host, proxy_port)
         bridge_running = _is_tcp_port_open("127.0.0.1", 18011)
+        session_expired = _weclaw_session_expired_from_log()
         status_output = ""
         if not bin_error:
             try:
@@ -2723,6 +2752,7 @@ def proxy_weclaw_status():
             "login_running": login_running,
             "proxy_running": proxy_running,
             "bridge_running": bridge_running,
+            "session_expired": session_expired,
             "proxy": f"{proxy_host}:{proxy_port}",
             "weclaw_status": status_output,
         })
@@ -2739,6 +2769,11 @@ def _capture_weclaw_login_output(proc: subprocess.Popen, qr_path: str) -> None:
                     f.flush()
             rc = proc.wait()
             f.write(f"\n[weclaw login exited: {rc}]\n")
+            if rc == 0:
+                restart_flag = os.path.join(str(PID_DIR), "restart_flag")
+                with open(restart_flag, "w", encoding="utf-8") as rf:
+                    rf.write("restart")
+                f.write("[clawcross restart requested]\n")
             f.flush()
     except Exception as e:
         try:
@@ -2757,6 +2792,7 @@ def proxy_start_weclaw_login():
     if not user_id:
         return jsonify({"error": "not logged in"}), 401
     try:
+        settings = read_env_all(str(ENV_FILE))
         resolved_bin, _config_path, _accounts_dir = _weclaw_settings()
         bin_error = _check_weclaw_bin(resolved_bin)
         if bin_error:
@@ -2776,6 +2812,9 @@ def proxy_start_weclaw_login():
 
             if os.path.isfile(qr_path) or os.path.islink(qr_path):
                 os.unlink(qr_path)
+
+            _stop_managed_weclaw_proxy(settings)
+            time.sleep(1)
 
             _weclaw_login_proc = subprocess.Popen(
                 [resolved_bin, "login"],
@@ -2812,6 +2851,7 @@ def proxy_stop_weclaw():
     if not user_id:
         return jsonify({"error": "not logged in"}), 401
     try:
+        settings = read_env_all(str(ENV_FILE))
         resolved_bin, _config_path, _accounts_dir = _weclaw_settings()
         bin_error = _check_weclaw_bin(resolved_bin)
         if bin_error:
@@ -2824,6 +2864,7 @@ def proxy_stop_weclaw():
                 except subprocess.TimeoutExpired:
                     _weclaw_login_proc.kill()
             _weclaw_login_proc = None
+        _stop_managed_weclaw_proxy(settings)
         result = subprocess.run(
             [resolved_bin, "stop"],
             cwd=str(WORKSPACE_DIR),
