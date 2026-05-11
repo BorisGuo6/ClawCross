@@ -16,9 +16,9 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Callable
 
 from clawcross_cli import models_store
+from clawcross_cli.picker import curses_radiolist, prompt_text
 from clawcross_cli.providers import (
     ENV_API_KEY,
     ENV_BASE_URL_KEY,
@@ -127,45 +127,57 @@ def current_base_url() -> str:
 # Interactive selection (console-based)
 # ---------------------------------------------------------------------------
 
-def _pick_from(items: list[str], prompt: str, prompt_fn: Callable[[], str] | None = None) -> str | None:
-    """Simple numbered picker. Returns selected item or None if cancelled."""
-    if not items:
-        return None
-    for i, name in enumerate(items, 1):
-        print(f"  {i:>2}) {name}")
-    sel = (prompt_fn and prompt_fn()) or input(prompt).strip()
-    if not sel:
-        return None
-    try:
-        idx = int(sel) - 1
-        if 0 <= idx < len(items):
-            return items[idx]
-    except ValueError:
-        if sel in items:
-            return sel
-    return None
+def select_provider(title: str = "Select provider:") -> ProviderInfo | None:
+    """Interactive provider picker using a curses radio list.
 
-
-def select_provider(prompt_text: str = "Select provider number (or name): ") -> ProviderInfo | None:
-    """Interactive provider picker. Prints a menu and returns the selection."""
+    Appends two synthetic entries — "Custom endpoint" (prompts for a URL) and
+    "Leave unchanged" (returns None).  Returns the chosen ProviderInfo, an
+    ad-hoc ProviderInfo for custom URLs, or None when the user keeps current.
+    """
     providers = list_providers()
     if not providers:
         print("No providers configured.", file=sys.stderr)
         return None
-    print("\nProviders:")
-    labels = [f"{p.slug:<14} {p.label}  — {p.description}" for p in providers]
-    pick = _pick_from(labels, "\n" + prompt_text)
-    if pick is None:
+
+    labels = [f"{p.label}  — {p.description}" for p in providers]
+    labels.append("Custom endpoint (enter URL manually)")
+    labels.append("Leave unchanged")
+
+    idx = curses_radiolist(title, labels, selected=0, cancel_returns=len(labels) - 1)
+
+    # Leave unchanged
+    if idx == len(labels) - 1:
         return None
-    slug = pick.split()[0]
-    return resolve_provider(slug)
+
+    # Custom endpoint
+    if idx == len(labels) - 2:
+        url = prompt_text("Custom base URL: ")
+        if not url:
+            return None
+        slug = prompt_text("Provider slug (any name): ", default="custom") or "custom"
+        return ProviderInfo(
+            slug=slug,
+            label="Custom",
+            default_base_url=url,
+            models=[],
+            description="user-defined",
+            api_mode="chat",
+        )
+
+    return providers[idx]
 
 
 def select_model(
     provider_slug: str | None = None,
-    prompt_text: str = "Select model number (or name): ",
+    title: str = "Select model:",
 ) -> str | None:
-    """Interactive model picker for a given provider (or all providers if None)."""
+    """Interactive model picker.
+
+    If *provider_slug* is given, only that provider's models are shown.
+    Otherwise the catalog is flattened across all providers (one row per
+    model, suffixed with [provider_slug]).  Appends "Custom model name"
+    (prompts for a free-form name) and "Leave unchanged" (returns None).
+    """
     if provider_slug is not None:
         info = resolve_provider(provider_slug)
         if info is None:
@@ -175,24 +187,37 @@ def select_model(
     else:
         providers = list_providers()
 
-    if not any(p.models for p in providers):
-        print("No models available for the selected provider(s).", file=sys.stderr)
-        return None
-
     labels: list[str] = []
-    model_map: dict[str, tuple[str, str]] = {}  # label -> (provider_slug, model_name)
+    model_map: list[str] = []  # parallel array of model names
     for provider in providers:
         for m in provider.models:
-            l = f"{m:<36} [{provider.slug}]"
-            labels.append(l)
-            model_map[l] = (provider.slug, m)
+            if provider_slug is not None:
+                labels.append(m)
+            else:
+                labels.append(f"{m}  [{provider.slug}]")
+            model_map.append(m)
 
-    print("\nModels:")
-    pick = _pick_from(labels, "\n" + prompt_text)
-    if pick is None:
+    labels.append("Custom model name (type)")
+    labels.append("Leave unchanged")
+
+    if len(labels) <= 2:
+        # Only the two synthetic entries — provider has no curated catalog.
+        # Fall straight to a free-form prompt.
+        name = prompt_text("Model name: ")
+        return name or None
+
+    idx = curses_radiolist(title, labels, selected=0, cancel_returns=len(labels) - 1)
+
+    # Leave unchanged
+    if idx == len(labels) - 1:
         return None
-    _provider, model = model_map[pick]
-    return model
+
+    # Custom model name
+    if idx == len(labels) - 2:
+        name = prompt_text("Model name: ")
+        return name or None
+
+    return model_map[idx]
 
 
 def apply_model_interactive(model: str | None = None) -> str:
@@ -237,7 +262,7 @@ def apply_provider_interactive(provider_slug: str | None = None, base_url: str |
         return current_provider()
 
     print(f"\nDefault base URL: {chosen.default_base_url}")
-    custom = input("Base URL (enter to use default): ").strip()
+    custom = prompt_text("Base URL (enter to use default): ", default="")
     url = custom if custom else chosen.default_base_url
 
     set_provider(chosen.slug, url)
@@ -276,6 +301,18 @@ def cmd_list() -> str:
     lines = ["Profiles:"]
     for p in profiles:
         lines.append(_format_profile_row(p, active=(p.name == store.active)))
+    return "\n".join(lines)
+
+
+def cmd_catalog() -> str:
+    """List the curated model catalog grouped by provider."""
+    lines = ["Available models (use `/cross model <name>` to set):"]
+    for provider in list_providers():
+        if not provider.models:
+            continue
+        lines.append(f"\n[{provider.slug}] {provider.label}")
+        for m in provider.models:
+            lines.append(f"  {m}")
     return "\n".join(lines)
 
 
@@ -349,25 +386,25 @@ def cmd_migrate() -> str:
 def cmd_add_interactive(name: str | None = None) -> str:
     """Interactive profile creation. Prompts for provider, model, api_key."""
     if not name:
-        name = input("Profile name: ").strip()
+        name = prompt_text("Profile name: ")
     if not name:
         return "Cancelled: empty profile name."
     if not re.fullmatch(r"[A-Za-z0-9_\-.]+", name):
         return f"Invalid profile name: {name!r} (alnum, _-. only)"
 
-    provider_info = select_provider("Select provider: ")
+    provider_info = select_provider("Select provider:")
     if provider_info is None:
         return "Cancelled at provider selection."
 
-    chosen_model = select_model(provider_info.slug, "Select model (or enter custom name): ")
+    chosen_model = select_model(provider_info.slug, "Select model:")
     if chosen_model is None:
-        chosen_model = input("Model name: ").strip()
+        chosen_model = prompt_text("Model name: ")
     if not chosen_model:
         return "Cancelled: empty model name."
 
     print(f"\nDefault base URL: {provider_info.default_base_url}")
-    base_url = input("Base URL (enter for default): ").strip() or provider_info.default_base_url
-    api_key = input("API key (input hidden in your terminal? — paste): ").strip()
+    base_url = prompt_text("Base URL (enter for default): ", default="") or provider_info.default_base_url
+    api_key = prompt_text("API key (paste): ")
 
     profile = models_store.upsert_profile(
         name=name,
@@ -406,12 +443,13 @@ def handle_model_command(args: list[str], *, interactive: bool = False) -> str:
     stdin for sub-prompts, so the dispatcher returns a usage hint instead.
     """
     if not args:
-        if not models_store.store_exists() or not list(models_store.load().profiles):
-            if interactive:
-                apply_model_interactive()
-                return ""
-            return "No profiles configured. Use `/cross model migrate` or `clawcross model add <name>`."
-        return cmd_list() + "\n\n" + _model_help()
+        store = models_store.load()
+        sections = []
+        if store.profiles:
+            sections.append(cmd_list())
+        sections.append(cmd_catalog())
+        sections.append(_model_help())
+        return "\n\n".join(sections)
 
     sub = args[0].lower()
 
@@ -467,15 +505,16 @@ def handle_provider_command(args: list[str], *, interactive: bool = False) -> st
     active = models_store.get_active()
 
     if not args:
-        if active is None:
-            if interactive:
-                apply_provider_interactive()
-                return ""
-            return f"Usage: /cross provider <slug> [base_url]. Available: {', '.join(PROVIDERS)}"
-        return (
-            f"Active profile {active.name!r} uses provider={active.provider}, "
-            f"base_url={active.base_url or '(default)'}."
-        )
+        lines = []
+        if active is not None:
+            lines.append(
+                f"Active profile {active.name!r}: provider={active.provider}, "
+                f"base_url={active.base_url or '(default)'}"
+            )
+        lines.append("\nAvailable providers (use `/cross provider <slug> [base_url]`):")
+        for p in list_providers():
+            lines.append(f"  {p.slug:<14} {p.label:<18} default_base_url={p.default_base_url}")
+        return "\n".join(lines)
 
     slug = args[0].lower()
     url = args[1] if len(args) > 1 else None
