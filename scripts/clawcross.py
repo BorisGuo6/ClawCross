@@ -171,7 +171,7 @@ SLASH_MENU = [
     ("/provider", "pick LLM provider (curses TUI)", "/provider", True),
     ("/team [<name>]", "list teams or show one team", "/team", True),
     ("/workflow", "list / show / run workflows", "/workflow", True),
-    ("/skill [<agent>]", "list skills", "/skill", True),
+    ("/skill [<team>]", "list managed skills", "/skill", True),
     ("/cron [<team>]", "list cron alarms", "/cron", True),
     ("/exit", "quit", "/exit", True),
 ]

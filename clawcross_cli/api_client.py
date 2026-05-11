@@ -315,10 +315,19 @@ def read_workflow_file(path: str) -> tuple[str | None, str | None]:
         return None, f"failed to read {path}: {e}"
 
 
-def list_skills(agent: str = "") -> tuple[Any, str | None]:
-    url = f"{OASIS_BASE}/sessions/openclaw/skills"
-    params = {"name": agent} if agent else None
-    code, body = _req("GET", url, params=params, timeout=20)
+def list_skills(team: str = "", user: str | None = None) -> tuple[Any, str | None]:
+    """List user-level managed skills.
+
+    Without *team*, returns the user's personal skills via ``GET /skills``.
+    With *team*, returns ``{"team": [...], "personal": [...]}`` via
+    ``GET /teams/<team>/skills``. The response is a dict
+    ``{"skills": {"personal": [...], "team": [...]?}}``.
+    """
+    if team:
+        url = f"{FRONT_BASE}/teams/{urllib.parse.quote(team, safe='')}/skills"
+    else:
+        url = f"{FRONT_BASE}/skills"
+    code, body = _req("GET", url, headers=_front_headers(user), timeout=20)
     if code == 200:
         return body, None
     return None, friendly_error(url, code, body)

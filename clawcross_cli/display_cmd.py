@@ -250,72 +250,67 @@ def handle_workflow_command(args: list[str], *, interactive: bool = False, user:
 
 # ── skill ───────────────────────────────────────────────────────────────────
 
-def _format_skills_payload(body: Any, agent_filter: str = "") -> str:
+def _render_skill_row(sk: Any) -> str:
+    """Format one skill entry from /skills or /teams/<t>/skills."""
+    if not isinstance(sk, dict):
+        return f"  - {sk}"
+    name = sk.get("name") or "?"
+    desc = (sk.get("description") or "").strip()
+    cat = (sk.get("category") or "").strip()
+    cat_part = f" [{cat}]" if cat else ""
+    desc_part = f" — {desc}" if desc else ""
+    return f"  - {name}{cat_part}{desc_part}"
+
+
+def _format_skills_payload(body: Any, team_filter: str = "") -> str:
+    """Render the response from /skills or /teams/<t>/skills.
+
+    Expected shape: ``{"ok": True, "skills": {"personal": [...], "team": [...]?}}``.
+    Each skill entry is a dict with ``name``, ``description``, ``category``,
+    ``scope``, ``team``, ``modified``.
+    """
     if body is None:
         return "No skills available."
-    # The endpoint may return either {"skills": [...]} or {"agents": [...]} or
-    # a flat list — be permissive.
-    if isinstance(body, dict):
-        # case A: {"agents": [{"name":..., "skills":[...]}, ...]}
-        agents = body.get("agents")
-        if isinstance(agents, list) and agents:
-            lines = []
-            total = 0
-            for agent in agents:
-                if not isinstance(agent, dict):
-                    continue
-                name = str(agent.get("name") or agent.get("agent") or "?")
-                if agent_filter and name != agent_filter:
-                    continue
-                skills = agent.get("skills") or []
-                lines.append(f"Agent: {name} ({len(skills)} skills)")
-                for sk in skills:
-                    if isinstance(sk, dict):
-                        sname = sk.get("name") or sk.get("title") or "?"
-                        desc = (sk.get("description") or sk.get("summary") or "").strip()
-                        suffix = f" — {desc}" if desc else ""
-                        lines.append(f"  - {sname}{suffix}")
-                    else:
-                        lines.append(f"  - {sk}")
-                total += len(skills)
-            if not lines:
-                return f"No skills found{(' for ' + agent_filter) if agent_filter else ''}."
-            return _format_lines([f"Skills ({total} total):"] + lines)
-        skills = body.get("skills")
-        if isinstance(skills, list):
-            lines = [f"Skills ({len(skills)}):"]
-            for sk in skills:
-                if isinstance(sk, dict):
-                    sname = sk.get("name") or sk.get("title") or "?"
-                    desc = (sk.get("description") or sk.get("summary") or "").strip()
-                    suffix = f" — {desc}" if desc else ""
-                    lines.append(f"  - {sname}{suffix}")
-                else:
-                    lines.append(f"  - {sk}")
-            return _format_lines(lines)
-        # Fallback: dump JSON
-        return json.dumps(body, ensure_ascii=False, indent=2)
-    if isinstance(body, list):
-        lines = [f"Skills ({len(body)}):"]
-        for sk in body:
-            if isinstance(sk, dict):
-                sname = sk.get("name") or sk.get("title") or "?"
-                desc = (sk.get("description") or sk.get("summary") or "").strip()
-                suffix = f" — {desc}" if desc else ""
-                lines.append(f"  - {sname}{suffix}")
-            else:
-                lines.append(f"  - {sk}")
-        return _format_lines(lines)
-    return str(body)
+    if not isinstance(body, dict):
+        return str(body)
+
+    skills_obj = body.get("skills")
+    if isinstance(skills_obj, dict):
+        team_list = skills_obj.get("team") or []
+        personal_list = skills_obj.get("personal") or []
+    elif isinstance(skills_obj, list):
+        team_list, personal_list = [], skills_obj
+    else:
+        return "No skills available."
+
+    sections: list[str] = []
+    if team_filter and team_list:
+        sections.append(f"Team skills — {team_filter} ({len(team_list)}):")
+        sections.extend(_render_skill_row(s) for s in team_list)
+    if personal_list:
+        if sections:
+            sections.append("")
+        sections.append(f"Personal skills ({len(personal_list)}):")
+        sections.extend(_render_skill_row(s) for s in personal_list)
+
+    if not sections:
+        scope = f" for team {team_filter}" if team_filter else ""
+        return f"No skills{scope}."
+    return _format_lines(sections)
 
 
 def handle_skill_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
+    """``/cross skill [<team>]`` — list managed skills.
+
+    Without args: shows the current user's personal skills.
+    With *team*: shows both team-scoped and personal skills.
+    """
     args = list(args or [])
-    agent = args[0] if args else ""
-    body, err = api_client.list_skills(agent=agent)
+    team = args[0] if args else ""
+    body, err = api_client.list_skills(team=team, user=user)
     if err:
         return err
-    return _format_skills_payload(body, agent_filter=agent)
+    return _format_skills_payload(body, team_filter=team)
 
 
 # ── cron ────────────────────────────────────────────────────────────────────

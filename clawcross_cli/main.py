@@ -38,7 +38,7 @@ def usage() -> None:
     print("  workflow show <name>        show workflow YAML/py content")
     print("  workflow run <name> team <T> question <Q>")
     print("                              launch a YAML workflow")
-    print("  skill [<agent>]             list skills (optionally filtered by agent)")
+    print("  skill [<team>]              list managed skills (personal, or team+personal)")
     print("  cron [<team>]               list cron alarms (optionally for one team)")
     sys.exit(2)
 
