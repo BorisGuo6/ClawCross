@@ -1,0 +1,348 @@
+"""Display commands for ClawCross: team, workflow, skill, cron.
+
+Both the CLI (``clawcross team``) and the chatbot (``/cross team``) call into
+these handlers. When ``interactive=True`` and a TTY is available, list views
+offer a curses picker to drill into a specific item; otherwise plain text is
+returned. None of the handlers ever call ``input()`` when ``interactive`` is
+``False`` — chatbot transport has no stdin.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from typing import Any, Iterable
+
+from clawcross_cli import api_client
+from clawcross_cli.picker import curses_radiolist
+
+
+# ── shared helpers ──────────────────────────────────────────────────────────
+
+def _is_tty() -> bool:
+    try:
+        return bool(sys.stdin.isatty() and sys.stdout.isatty())
+    except Exception:
+        return False
+
+
+def _format_lines(lines: Iterable[str]) -> str:
+    return "\n".join(line for line in lines if line is not None)
+
+
+def _pick(title: str, labels: list[str]) -> int | None:
+    if not labels or not _is_tty():
+        return None
+    try:
+        idx = curses_radiolist(title, labels, selected=0, cancel_returns=-1)
+    except Exception:
+        return None
+    if idx is None or idx < 0:
+        return None
+    return idx
+
+
+# ── team ────────────────────────────────────────────────────────────────────
+
+def _format_team_list(teams: list[Any]) -> str:
+    if not teams:
+        return "No teams found."
+    lines = [f"Teams ({len(teams)}):"]
+    for team in teams:
+        if isinstance(team, dict):
+            name = str(team.get("name") or team.get("team") or team.get("id") or "?")
+            extras = []
+            for key in ("member_count", "members", "size"):
+                value = team.get(key)
+                if isinstance(value, int):
+                    extras.append(f"{value} members")
+                    break
+            suffix = f"  ({', '.join(extras)})" if extras else ""
+        else:
+            name = str(team)
+            suffix = ""
+        lines.append(f"  - {name}{suffix}")
+    return _format_lines(lines)
+
+
+def _team_label(team: Any) -> str:
+    if isinstance(team, dict):
+        return str(team.get("name") or team.get("team") or team.get("id") or "?")
+    return str(team)
+
+
+def _format_team_detail(name: str, members_body: dict | None, alarms: list[dict]) -> str:
+    lines = [f"Team: {name}"]
+    if not members_body:
+        lines.append("  members: (unavailable)")
+    else:
+        members = members_body.get("members") or []
+        internal = [m for m in members if isinstance(m, dict) and m.get("type") == "oasis"]
+        external = [m for m in members if isinstance(m, dict) and m.get("type") != "oasis"]
+        lines.append(f"  members: {len(members)}")
+        if internal:
+            lines.append(f"  internal agents ({len(internal)}):")
+            for m in internal:
+                tag = m.get("tag") or ""
+                tag_part = f" [{tag}]" if tag else ""
+                lines.append(f"    - {m.get('name', '?')}{tag_part}")
+        if external:
+            lines.append(f"  external agents ({len(external)}):")
+            for m in external:
+                tag = m.get("tag") or ""
+                tag_part = f" [{tag}]" if tag else ""
+                lines.append(f"    - {m.get('name', '?')}{tag_part}")
+        if not members:
+            lines.append("    (empty)")
+    if alarms:
+        lines.append(f"  alarms ({len(alarms)}):")
+        for a in alarms[:10]:
+            target = a.get("target_name") or "?"
+            sched = a.get("cron") or a.get("run_at") or ""
+            text = (a.get("text") or "").splitlines()[0][:60]
+            lines.append(f"    - {target}  {sched}  {text}")
+    else:
+        lines.append("  alarms: 0")
+    return _format_lines(lines)
+
+
+def handle_team_command(args: list[str], *, interactive: bool = False) -> str:
+    args = list(args or [])
+    if args:
+        name = args[0]
+        members, err = api_client.team_members(name)
+        if err and members is None:
+            return err
+        alarms, _ = api_client.list_crons(team=name)
+        return _format_team_detail(name, members, alarms)
+
+    teams, err = api_client.list_teams()
+    if err:
+        return err
+    listing = _format_team_list(teams)
+    if not interactive or not teams or not _is_tty():
+        return listing
+    labels = [_team_label(t) for t in teams]
+    idx = _pick("Teams — pick one for details", labels)
+    if idx is None:
+        return listing
+    chosen = labels[idx]
+    members, err = api_client.team_members(chosen)
+    if err and members is None:
+        return f"{listing}\n\n{err}"
+    alarms, _ = api_client.list_crons(team=chosen)
+    return f"{listing}\n\n{_format_team_detail(chosen, members, alarms)}"
+
+
+# ── workflow ────────────────────────────────────────────────────────────────
+
+def _format_workflow_list(items: list[dict]) -> str:
+    if not items:
+        return "No workflows found."
+    lines = [f"Workflows ({len(items)}):"]
+    for it in items:
+        scope = it.get("scope") or ""
+        team = it.get("team") or ""
+        location = f"[team:{team}]" if scope == "team" else "[personal]"
+        kind = it.get("kind") or "?"
+        lines.append(f"  - [{kind}] {location} {it.get('file', '?')}")
+        desc = (it.get("description") or "").strip()
+        if desc:
+            lines.append(f"      {desc}")
+    return _format_lines(lines)
+
+
+def _workflow_label(item: dict) -> str:
+    scope = item.get("scope") or ""
+    team = item.get("team") or ""
+    location = f"team:{team}" if scope == "team" else "personal"
+    kind = item.get("kind") or "?"
+    return f"[{kind}] {location} / {item.get('file', '?')}"
+
+
+def _parse_run_args(rest: list[str]) -> tuple[dict | None, str | None]:
+    """Parse ``<name> team <T> question <Q...>``. Returns (parsed, error)."""
+    if not rest:
+        return None, "usage: workflow run <name> team <team> question <question...>"
+    parsed = {"name": rest[0], "team": "", "question": ""}
+    i = 1
+    current = None
+    while i < len(rest):
+        token = rest[i]
+        lower = token.lower()
+        if lower in {"team", "question"}:
+            current = lower
+            i += 1
+            continue
+        if current is None:
+            return None, f"unexpected token: {token!r} (expected 'team' or 'question')"
+        if parsed[current]:
+            parsed[current] += " " + token
+        else:
+            parsed[current] = token
+        i += 1
+    if not parsed["question"]:
+        return None, "workflow run requires 'question <text>'"
+    return parsed, None
+
+
+def handle_workflow_command(args: list[str], *, interactive: bool = False) -> str:
+    args = list(args or [])
+    user = api_client.DEFAULT_USER
+
+    if args and args[0].lower() == "show":
+        if len(args) < 2:
+            return "usage: workflow show <name>"
+        name = args[1]
+        team = ""
+        # optional "team <T>" suffix
+        if len(args) >= 4 and args[2].lower() == "team":
+            team = args[3]
+        # Try YAML first, then python.
+        path, err = api_client.resolve_yaml_workflow_path(user, name, team)
+        if not path:
+            ppath, perr = api_client.resolve_python_workflow_path(user, name, team)
+            if not ppath:
+                return err or perr or "workflow not found"
+            path = ppath
+        content, ferr = api_client.read_workflow_file(path)
+        if ferr:
+            return ferr
+        return f"# {path}\n\n{content}"
+
+    if args and args[0].lower() == "run":
+        parsed, err = _parse_run_args(args[1:])
+        if err:
+            return err
+        body, rerr = api_client.run_workflow(
+            user=user,
+            name=parsed["name"],
+            team=parsed["team"],
+            question=parsed["question"],
+            kind="yaml",
+        )
+        if rerr:
+            return rerr
+        topic_id = body.get("topic_id") if isinstance(body, dict) else None
+        msg = body.get("message") if isinstance(body, dict) else ""
+        out_lines = ["Workflow launched."]
+        if topic_id:
+            out_lines.append(f"  topic_id: {topic_id}")
+        if msg:
+            out_lines.append(f"  message: {msg}")
+        return _format_lines(out_lines)
+
+    items = api_client.list_workflows(user, team="")
+    listing = _format_workflow_list(items)
+    if not interactive or not items or not _is_tty():
+        return listing
+    labels = [_workflow_label(it) for it in items]
+    idx = _pick("Workflows — pick one to view", labels)
+    if idx is None:
+        return listing
+    chosen = items[idx]
+    content, ferr = api_client.read_workflow_file(chosen["path"])
+    if ferr:
+        return f"{listing}\n\n{ferr}"
+    return f"{listing}\n\n# {chosen['path']}\n\n{content}"
+
+
+# ── skill ───────────────────────────────────────────────────────────────────
+
+def _format_skills_payload(body: Any, agent_filter: str = "") -> str:
+    if body is None:
+        return "No skills available."
+    # The endpoint may return either {"skills": [...]} or {"agents": [...]} or
+    # a flat list — be permissive.
+    if isinstance(body, dict):
+        # case A: {"agents": [{"name":..., "skills":[...]}, ...]}
+        agents = body.get("agents")
+        if isinstance(agents, list) and agents:
+            lines = []
+            total = 0
+            for agent in agents:
+                if not isinstance(agent, dict):
+                    continue
+                name = str(agent.get("name") or agent.get("agent") or "?")
+                if agent_filter and name != agent_filter:
+                    continue
+                skills = agent.get("skills") or []
+                lines.append(f"Agent: {name} ({len(skills)} skills)")
+                for sk in skills:
+                    if isinstance(sk, dict):
+                        sname = sk.get("name") or sk.get("title") or "?"
+                        desc = (sk.get("description") or sk.get("summary") or "").strip()
+                        suffix = f" — {desc}" if desc else ""
+                        lines.append(f"  - {sname}{suffix}")
+                    else:
+                        lines.append(f"  - {sk}")
+                total += len(skills)
+            if not lines:
+                return f"No skills found{(' for ' + agent_filter) if agent_filter else ''}."
+            return _format_lines([f"Skills ({total} total):"] + lines)
+        skills = body.get("skills")
+        if isinstance(skills, list):
+            lines = [f"Skills ({len(skills)}):"]
+            for sk in skills:
+                if isinstance(sk, dict):
+                    sname = sk.get("name") or sk.get("title") or "?"
+                    desc = (sk.get("description") or sk.get("summary") or "").strip()
+                    suffix = f" — {desc}" if desc else ""
+                    lines.append(f"  - {sname}{suffix}")
+                else:
+                    lines.append(f"  - {sk}")
+            return _format_lines(lines)
+        # Fallback: dump JSON
+        return json.dumps(body, ensure_ascii=False, indent=2)
+    if isinstance(body, list):
+        lines = [f"Skills ({len(body)}):"]
+        for sk in body:
+            if isinstance(sk, dict):
+                sname = sk.get("name") or sk.get("title") or "?"
+                desc = (sk.get("description") or sk.get("summary") or "").strip()
+                suffix = f" — {desc}" if desc else ""
+                lines.append(f"  - {sname}{suffix}")
+            else:
+                lines.append(f"  - {sk}")
+        return _format_lines(lines)
+    return str(body)
+
+
+def handle_skill_command(args: list[str], *, interactive: bool = False) -> str:
+    args = list(args or [])
+    agent = args[0] if args else ""
+    body, err = api_client.list_skills(agent=agent)
+    if err:
+        return err
+    return _format_skills_payload(body, agent_filter=agent)
+
+
+# ── cron ────────────────────────────────────────────────────────────────────
+
+def _format_cron_list(alarms: list[dict], team: str | None = None) -> str:
+    if not alarms:
+        scope = f" for team {team}" if team else ""
+        return f"No crons{scope}."
+    title = f"Crons{(' for team ' + team) if team else ''} ({len(alarms)}):"
+    lines = [title]
+    for a in alarms:
+        target = a.get("target_name") or "?"
+        ttype = a.get("target_type") or ""
+        sched = a.get("cron") or a.get("run_at") or "?"
+        text = (a.get("text") or "").splitlines()[0][:80]
+        team_name = a.get("team") or ""
+        team_part = f" [team:{team_name}]" if team_name and team_name != "__public__" else ""
+        type_part = f" ({ttype})" if ttype else ""
+        lines.append(f"  - {target}{type_part}{team_part}  {sched}")
+        if text:
+            lines.append(f"      {text}")
+    return _format_lines(lines)
+
+
+def handle_cron_command(args: list[str], *, interactive: bool = False) -> str:
+    args = list(args or [])
+    team = args[0] if args else None
+    alarms, err = api_client.list_crons(team=team)
+    if err:
+        return err
+    return _format_cron_list(alarms, team=team)

@@ -161,6 +161,10 @@ CLI_COMMANDS = [
     ("clawcross config list", "list configured values"),
     ("clawcross model [name]", "select/set LLM model"),
     ("clawcross provider [slug] [url]", "select/set LLM provider"),
+    ("clawcross team [name]", "list teams or show one team's details"),
+    ("clawcross workflow [show|run ...]", "list/show/run OASIS workflows"),
+    ("clawcross skill [agent]", "list skills (optionally filtered by agent)"),
+    ("clawcross cron [team]", "list cron alarms (optionally for one team)"),
     ("clawcross platforms", "list available platforms"),
     ("clawcross state", "print state json"),
     ("clawcross cancel", "cancel internal generation"),
@@ -178,6 +182,10 @@ CHAT_SLASH_COMMANDS = [
     ("/cross mode <mode>", "set execute/plan/review"),
     ("/cross model [name]", "select/set LLM model"),
     ("/cross provider [slug] [url]", "select/set LLM provider"),
+    ("/cross team [name]", "list teams or show one team's details"),
+    ("/cross workflow", "list workflows (or `show <name>` / `run <name> team <T> question <Q>`)"),
+    ("/cross skill [agent]", "list skills (optionally filtered by agent)"),
+    ("/cross cron [team]", "list cron alarms (optionally for one team)"),
     ("/cross state", "show current shell state"),
     ("/cross cancel", "cancel internal generation"),
     ("/cross front", "get a public magic link"),
@@ -1256,6 +1264,30 @@ def _handle_slash(command: str, state: dict) -> bool:
         if out:
             print(out)
         return True
+    if name == "/team":
+        from clawcross_cli.display_cmd import handle_team_command
+        out = handle_team_command(parts[1:], interactive=True)
+        if out:
+            print(out)
+        return True
+    if name == "/workflow":
+        from clawcross_cli.display_cmd import handle_workflow_command
+        out = handle_workflow_command(parts[1:], interactive=True)
+        if out:
+            print(out)
+        return True
+    if name == "/skill":
+        from clawcross_cli.display_cmd import handle_skill_command
+        out = handle_skill_command(parts[1:], interactive=True)
+        if out:
+            print(out)
+        return True
+    if name == "/cron":
+        from clawcross_cli.display_cmd import handle_cron_command
+        out = handle_cron_command(parts[1:], interactive=True)
+        if out:
+            print(out)
+        return True
     if name == "/help":
         print("Executable commands:")
         for command, description in SLASH_COMMANDS:
@@ -1380,7 +1412,37 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
         from clawcross_cli.model_cmd import handle_provider_command
         rest = line.split(maxsplit=1)
         args = rest[1].strip().split() if len(rest) > 1 else []
+        if args:
+            # No-arg show-only is fine in chatbot; argument forms attempt to
+            # mutate the active profile / .env which requires the terminal.
+            return True, (
+                "Provider switching from chatbot is disabled. "
+                "Run `clawcross provider <slug>` from terminal."
+            )
         return True, handle_provider_command(args) or ""
+    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/team":
+        from clawcross_cli.display_cmd import handle_team_command
+        rest = line.split(maxsplit=1)
+        args = rest[1].strip().split() if len(rest) > 1 else []
+        return True, handle_team_command(args) or ""
+    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/workflow":
+        from clawcross_cli.display_cmd import handle_workflow_command
+        rest = line.split(maxsplit=1)
+        # Preserve quoting for multi-word "question" tokens by splitting on
+        # whitespace — callers can pass `question this is a question` and the
+        # parser stitches the tail back together.
+        args = rest[1].strip().split() if len(rest) > 1 else []
+        return True, handle_workflow_command(args) or ""
+    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/skill":
+        from clawcross_cli.display_cmd import handle_skill_command
+        rest = line.split(maxsplit=1)
+        args = rest[1].strip().split() if len(rest) > 1 else []
+        return True, handle_skill_command(args) or ""
+    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/cron":
+        from clawcross_cli.display_cmd import handle_cron_command
+        rest = line.split(maxsplit=1)
+        args = rest[1].strip().split() if len(rest) > 1 else []
+        return True, handle_cron_command(args) or ""
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         if line.startswith("/"):
             active = _handle_slash(line, state)
@@ -1460,6 +1522,18 @@ def build_parser() -> argparse.ArgumentParser:
     provider = sub.add_parser("provider", help="Set provider on the active profile (or .env if none)")
     provider.add_argument("args", nargs="*", help="<slug> [base_url]")
 
+    team = sub.add_parser("team", help="List teams (or show one team's members and alarms)")
+    team.add_argument("args", nargs="*", help="<team-name>")
+
+    workflow = sub.add_parser("workflow", help="List/show/run OASIS workflows")
+    workflow.add_argument("args", nargs="*", help="[show <name> | run <name> team <T> question <Q>]")
+
+    skill = sub.add_parser("skill", help="List skills exposed by OpenClaw agents")
+    skill.add_argument("args", nargs="*", help="[<agent>]")
+
+    cron = sub.add_parser("cron", help="List cron alarms (optionally filtered by team)")
+    cron.add_argument("args", nargs="*", help="[<team>]")
+
     return parser
 
 
@@ -1515,6 +1589,30 @@ def main() -> int:
     if args.command == "provider":
         from clawcross_cli.model_cmd import handle_provider_command
         out = handle_provider_command(list(args.args or []), interactive=True)
+        if out:
+            print(out)
+        return 0
+    if args.command == "team":
+        from clawcross_cli.display_cmd import handle_team_command
+        out = handle_team_command(list(args.args or []), interactive=True)
+        if out:
+            print(out)
+        return 0
+    if args.command == "workflow":
+        from clawcross_cli.display_cmd import handle_workflow_command
+        out = handle_workflow_command(list(args.args or []), interactive=True)
+        if out:
+            print(out)
+        return 0
+    if args.command == "skill":
+        from clawcross_cli.display_cmd import handle_skill_command
+        out = handle_skill_command(list(args.args or []), interactive=True)
+        if out:
+            print(out)
+        return 0
+    if args.command == "cron":
+        from clawcross_cli.display_cmd import handle_cron_command
+        out = handle_cron_command(list(args.args or []), interactive=True)
         if out:
             print(out)
         return 0
