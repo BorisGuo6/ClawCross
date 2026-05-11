@@ -106,17 +106,18 @@ def _format_team_detail(name: str, members_body: dict | None, alarms: list[dict]
     return _format_lines(lines)
 
 
-def handle_team_command(args: list[str], *, interactive: bool = False) -> str:
+def handle_team_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
+    user = (user or api_client.DEFAULT_USER or "").strip() or api_client.DEFAULT_USER
     if args:
         name = args[0]
-        members, err = api_client.team_members(name)
+        members, err = api_client.team_members(name, user=user)
         if err and members is None:
             return err
-        alarms, _ = api_client.list_crons(team=name)
+        alarms, _ = api_client.list_crons(team=name, user=user)
         return _format_team_detail(name, members, alarms)
 
-    teams, err = api_client.list_teams()
+    teams, err = api_client.list_teams(user=user)
     if err:
         return err
     listing = _format_team_list(teams)
@@ -127,10 +128,10 @@ def handle_team_command(args: list[str], *, interactive: bool = False) -> str:
     if idx is None:
         return listing
     chosen = labels[idx]
-    members, err = api_client.team_members(chosen)
+    members, err = api_client.team_members(chosen, user=user)
     if err and members is None:
         return f"{listing}\n\n{err}"
-    alarms, _ = api_client.list_crons(team=chosen)
+    alarms, _ = api_client.list_crons(team=chosen, user=user)
     return f"{listing}\n\n{_format_team_detail(chosen, members, alarms)}"
 
 
@@ -186,9 +187,9 @@ def _parse_run_args(rest: list[str]) -> tuple[dict | None, str | None]:
     return parsed, None
 
 
-def handle_workflow_command(args: list[str], *, interactive: bool = False) -> str:
+def handle_workflow_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
-    user = api_client.DEFAULT_USER
+    user = (user or api_client.DEFAULT_USER or "").strip() or api_client.DEFAULT_USER
 
     if args and args[0].lower() == "show":
         if len(args) < 2:
@@ -308,7 +309,7 @@ def _format_skills_payload(body: Any, agent_filter: str = "") -> str:
     return str(body)
 
 
-def handle_skill_command(args: list[str], *, interactive: bool = False) -> str:
+def handle_skill_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
     agent = args[0] if args else ""
     body, err = api_client.list_skills(agent=agent)
@@ -339,10 +340,11 @@ def _format_cron_list(alarms: list[dict], team: str | None = None) -> str:
     return _format_lines(lines)
 
 
-def handle_cron_command(args: list[str], *, interactive: bool = False) -> str:
+def handle_cron_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
     team = args[0] if args else None
-    alarms, err = api_client.list_crons(team=team)
+    user = (user or api_client.DEFAULT_USER or "").strip() or api_client.DEFAULT_USER
+    alarms, err = api_client.list_crons(team=team, user=user)
     if err:
         return err
     return _format_cron_list(alarms, team=team)

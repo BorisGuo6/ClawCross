@@ -79,7 +79,24 @@ PORT_FRONTEND = int(os.getenv("PORT_FRONTEND", "51209"))
 AGENT_BASE = f"http://127.0.0.1:{PORT_AGENT}"
 FRONT_BASE = f"http://127.0.0.1:{PORT_FRONTEND}"
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
-DEFAULT_USER = os.getenv("CLAW_USER") or os.getenv("CLI_USER") or "admin"
+def _resolve_default_user() -> str:
+    """Pick the canonical CLI user from env, users.json, or 'admin' fallback."""
+    for var in ("CLAW_USER", "CLI_USER"):
+        v = (os.getenv(var) or "").strip()
+        if v:
+            return v
+    users_json = Path(os.getenv("CLAWCROSS_HOME", str(Path.home() / ".clawcross"))) / "config" / "users.json"
+    if users_json.is_file():
+        try:
+            data = json.loads(users_json.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data:
+                return next(iter(data))
+        except Exception:
+            pass
+    return "admin"
+
+
+DEFAULT_USER = _resolve_default_user()
 
 KNOWN_PLATFORMS = {
     "internal": "ClawCross internal agent",
@@ -243,6 +260,20 @@ def _load_state(path: Path | str | None = None) -> dict:
     data.setdefault("recent", [])
     for key, value in default["current"].items():
         data["current"].setdefault(key, value)
+    # Migrate legacy "admin" user to the canonical user from users.json
+    # when admin is not a registered account. Avoids the empty-result
+    # problem when state was created before users.json was provisioned.
+    cur_user = (data["current"].get("user") or "").strip()
+    canonical = _resolve_default_user()
+    if cur_user and cur_user != canonical:
+        users_json = Path(os.getenv("CLAWCROSS_HOME", str(Path.home() / ".clawcross"))) / "config" / "users.json"
+        if users_json.is_file():
+            try:
+                registered = json.loads(users_json.read_text(encoding="utf-8"))
+                if isinstance(registered, dict) and cur_user not in registered and canonical in registered:
+                    data["current"]["user"] = canonical
+            except Exception:
+                pass
     data["__state_path"] = str(state_path)
     return data
 
@@ -1270,27 +1301,28 @@ def _handle_slash(command: str, state: dict) -> bool:
         if out:
             print(out)
         return True
+    current_user = (state.get("current", {}).get("user") or "").strip() or None
     if name == "/team":
         from clawcross_cli.display_cmd import handle_team_command
-        out = handle_team_command(parts[1:], interactive=True)
+        out = handle_team_command(parts[1:], interactive=True, user=current_user)
         if out:
             print(out)
         return True
     if name == "/workflow":
         from clawcross_cli.display_cmd import handle_workflow_command
-        out = handle_workflow_command(parts[1:], interactive=True)
+        out = handle_workflow_command(parts[1:], interactive=True, user=current_user)
         if out:
             print(out)
         return True
     if name == "/skill":
         from clawcross_cli.display_cmd import handle_skill_command
-        out = handle_skill_command(parts[1:], interactive=True)
+        out = handle_skill_command(parts[1:], interactive=True, user=current_user)
         if out:
             print(out)
         return True
     if name == "/cron":
         from clawcross_cli.display_cmd import handle_cron_command
-        out = handle_cron_command(parts[1:], interactive=True)
+        out = handle_cron_command(parts[1:], interactive=True, user=current_user)
         if out:
             print(out)
         return True
@@ -1426,29 +1458,27 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
                 "Run `clawcross provider <slug>` from terminal."
             )
         return True, handle_provider_command(args) or ""
+    current_user = (state.get("current", {}).get("user") or "").strip() or None
     if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/team":
         from clawcross_cli.display_cmd import handle_team_command
         rest = line.split(maxsplit=1)
         args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_team_command(args) or ""
+        return True, handle_team_command(args, user=current_user) or ""
     if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/workflow":
         from clawcross_cli.display_cmd import handle_workflow_command
         rest = line.split(maxsplit=1)
-        # Preserve quoting for multi-word "question" tokens by splitting on
-        # whitespace — callers can pass `question this is a question` and the
-        # parser stitches the tail back together.
         args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_workflow_command(args) or ""
+        return True, handle_workflow_command(args, user=current_user) or ""
     if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/skill":
         from clawcross_cli.display_cmd import handle_skill_command
         rest = line.split(maxsplit=1)
         args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_skill_command(args) or ""
+        return True, handle_skill_command(args, user=current_user) or ""
     if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/cron":
         from clawcross_cli.display_cmd import handle_cron_command
         rest = line.split(maxsplit=1)
         args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_cron_command(args) or ""
+        return True, handle_cron_command(args, user=current_user) or ""
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         if line.startswith("/"):
             active = _handle_slash(line, state)

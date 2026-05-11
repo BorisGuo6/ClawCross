@@ -44,7 +44,34 @@ AGENT_BASE = f"http://127.0.0.1:{PORT_AGENT}"
 OASIS_BASE = f"http://127.0.0.1:{PORT_OASIS}"
 FRONT_BASE = f"http://127.0.0.1:{PORT_FRONTEND}"
 
-DEFAULT_USER = os.getenv("CLAW_USER") or os.getenv("CLI_USER") or "admin"
+def _canonical_user() -> str:
+    """Resolve the canonical CLI user.
+
+    Priority: CLAW_USER / CLI_USER env > first user in users.json > first
+    sub-directory of USER_FILES_DIR with content > "admin".
+    """
+    for var in ("CLAW_USER", "CLI_USER"):
+        v = (os.getenv(var) or "").strip()
+        if v:
+            return v
+    users_json = Path(
+        os.getenv("CLAWCROSS_HOME", str(Path.home() / ".clawcross"))
+    ) / "config" / "users.json"
+    if users_json.is_file():
+        try:
+            data = json.loads(users_json.read_text("utf-8"))
+            if isinstance(data, dict) and data:
+                return next(iter(data))
+        except Exception:
+            pass
+    if USER_FILES_DIR.is_dir():
+        for child in sorted(USER_FILES_DIR.iterdir()):
+            if child.is_dir() and any(child.iterdir()):
+                return child.name
+    return "admin"
+
+
+DEFAULT_USER = _canonical_user()
 
 
 # ── HTTP helpers (copied verbatim style from scripts/cli.py) ─────────────────
