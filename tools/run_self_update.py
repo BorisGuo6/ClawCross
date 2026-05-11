@@ -38,7 +38,7 @@ def _run_shell(command: str, *, step: str) -> None:
 
 def _default_restart_command() -> str:
     if os.name == "nt":
-        return r"powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 stop; powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 start"
+        return r'powershell -ExecutionPolicy Bypass -Command "& .\selfskill\scripts\run.ps1 stop; & .\selfskill\scripts\run.ps1 start"'
     return "bash selfskill/scripts/run.sh stop && bash selfskill/scripts/run.sh start"
 
 

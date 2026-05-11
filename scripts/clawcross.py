@@ -879,7 +879,7 @@ def cmd_cancel(args, state: dict) -> int:
 
 
 def cmd_update(args, _state: dict) -> int:
-    target = "clawcross-cli@latest" if not args.version else f"clawcross-cli@{args.version}"
+    target = "clawcross@latest" if not args.version else f"clawcross@{args.version}"
     npm_bin = "npm.cmd" if sys.platform == "win32" else "npm"
     cmd = [npm_bin, "install", "-g", target]
     print(f"Running: {' '.join(cmd)}")
@@ -1416,7 +1416,10 @@ def build_parser() -> argparse.ArgumentParser:
     cancel.add_argument("-s", "--session", help="Session id")
     cancel.add_argument("-u", "--user", help="User id")
 
-    update = sub.add_parser("update", help="Upgrade clawcross-cli via npm")
+    update = sub.add_parser(
+        "update",
+        help="Upgrade the global clawcross npm package; does not restart running services",
+    )
     update.add_argument(
         "version", nargs="?", default=None,
         help="Specific version (e.g. 0.0.2). Defaults to latest.",

@@ -15,7 +15,7 @@ from typing import Any
 from utils.runtime_paths import DATA_DIR
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-NPM_PACKAGE_NAME = "clawcross-cli"
+NPM_PACKAGE_NAME = "clawcross"
 NPM_REGISTRY_BASE = os.getenv("CLAWCROSS_NPM_REGISTRY", "https://registry.npmjs.org").rstrip("/")
 NPM_VALID_DIST_TAG_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
 

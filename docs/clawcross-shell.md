@@ -26,7 +26,7 @@ NPM entrypoints:
 ```bash
 npm run clawcross -- platforms
 npm exec -- clawcross platforms
-npm run pack:clawcross-cli
+npm run pack:clawcross
 ```
 
 Use a single prompt without entering the shell:
@@ -35,6 +35,15 @@ Use a single prompt without entering the shell:
 ./clawcross run "check the current project"
 ./clawcross run -p codex "review the current diff"
 ```
+
+Upgrade the globally installed npm package:
+
+```bash
+clawcross update
+clawcross update 0.0.5
+```
+
+`clawcross update` only runs `npm install -g clawcross@<version-or-latest>`. It does not write the Web UI self-update status, poll logs, or restart running ClawCross services. Use the Web or mobile "Complete Update" action when you want the managed self-update flow that records status and restarts the service after updating.
 
 ## State
 
@@ -112,13 +121,13 @@ ACP-backed platforms route through the local `acpx` bridge and the frontend prox
 
 ## NPM Packaging
 
-The repository is published as the `clawcross-cli` npm package. `bin/clawcross.js` is the CLI entrypoint declared in the `bin` field. The package ships the full git-tracked source tree (frontend, agents, scripts, docs) so a global install behaves like a `git clone` of the project — minus everything excluded by `.gitignore` / `.npmignore` (virtual envs, logs, runtime data, large binaries such as `bin/cloudflared`).
+The repository is published as the `clawcross` npm package. `bin/clawcross.js` is the CLI entrypoint declared in the `bin` field. The package ships the full git-tracked source tree (frontend, agents, scripts, docs) so a global install behaves like a `git clone` of the project — minus everything excluded by `.gitignore` / `.npmignore` (virtual envs, logs, runtime data, large binaries such as `bin/cloudflared`).
 
 Build a tarball from the repo root:
 
 ```bash
 npm pack
-npm install -g ./clawcross-cli-0.0.1.tgz
+npm install -g ./clawcross-0.0.5.tgz
 ```
 
 `.npmignore` mirrors `.gitignore` and additionally drops `.git/`, `.github/`, `.pytest_cache/`, the cloudflared binary, and runtime logs so they never reach the registry.
