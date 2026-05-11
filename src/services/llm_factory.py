@@ -306,6 +306,19 @@ def create_chat_model(
     explicit_model = (model or "").strip()
     explicit_provider = (provider or "").strip().lower()
 
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _project_root = str(_Path(__file__).resolve().parents[2])
+        if _project_root not in _sys.path:
+            _sys.path.insert(0, _project_root)
+        from clawcross_cli.runtime_provider import resolve_active_profile
+
+        resolve_active_profile()
+    except Exception:
+        pass
+
     env_api_key = (os.getenv("LLM_API_KEY") or "").strip()
     env_base_url = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").strip()
     env_model = (os.getenv("LLM_MODEL") or "").strip()

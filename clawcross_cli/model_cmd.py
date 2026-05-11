@@ -18,7 +18,9 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from clawcross_cli import models_store
 from clawcross_cli.providers import (
+    ENV_API_KEY,
     ENV_BASE_URL_KEY,
     ENV_MODEL_KEY,
     ENV_PROVIDER_KEY,
@@ -242,3 +244,260 @@ def apply_provider_interactive(provider_slug: str | None = None, base_url: str |
     print(f"LLM_PROVIDER={chosen.slug}")
     print(f"LLM_BASE_URL={url}")
     return chosen.slug
+
+
+# ---------------------------------------------------------------------------
+# Multi-profile subcommands (models.json)
+# ---------------------------------------------------------------------------
+
+_MODEL_SUBCMDS = {"list", "ls", "show", "use", "add", "new", "remove", "rm", "delete",
+                  "edit", "migrate", "help"}
+
+
+def _format_profile_row(p, *, active: bool) -> str:
+    marker = "*" if active else " "
+    masked = _mask_key(p.auth.api_key)
+    return f" {marker} {p.name:<24} {p.provider:<10} {p.model:<32} {masked}"
+
+
+def _mask_key(key: str) -> str:
+    if not key:
+        return "(no key)"
+    if len(key) <= 10:
+        return "***"
+    return f"{key[:4]}…{key[-4:]}"
+
+
+def cmd_list() -> str:
+    store = models_store.load()
+    profiles = list(store.profiles.values())
+    if not profiles:
+        return "No profiles configured. Use `/cross model add <name>` or `/cross model migrate`."
+    lines = ["Profiles:"]
+    for p in profiles:
+        lines.append(_format_profile_row(p, active=(p.name == store.active)))
+    return "\n".join(lines)
+
+
+def cmd_show() -> str:
+    p = models_store.get_active()
+    if p is None:
+        env_model = current_model() or "(unset)"
+        env_provider = current_provider() or "(unset)"
+        return (
+            f"No active profile. Falling back to .env:\n"
+            f"  LLM_MODEL={env_model}\n"
+            f"  LLM_PROVIDER={env_provider}"
+        )
+    return (
+        f"Active profile: {p.name}\n"
+        f"  provider : {p.provider}\n"
+        f"  model    : {p.model}\n"
+        f"  base_url : {p.base_url or '(provider default)'}\n"
+        f"  api_mode : {p.api_mode}\n"
+        f"  api_key  : {_mask_key(p.auth.api_key)}"
+    )
+
+
+def cmd_use(name: str) -> str:
+    try:
+        p = models_store.set_active(name)
+    except KeyError:
+        existing = ", ".join(models_store.load().profiles) or "(none)"
+        return f"Profile not found: {name!r}. Available: {existing}"
+    return f"Active profile -> {p.name} ({p.provider}/{p.model})"
+
+
+def cmd_remove(name: str) -> str:
+    if models_store.remove_profile(name):
+        new_active = models_store.load().active or "(none)"
+        return f"Removed profile {name!r}. Active -> {new_active}"
+    return f"Profile not found: {name!r}"
+
+
+def cmd_migrate() -> str:
+    """Import current config/.env into a new profile."""
+    env = _read_env()
+    api_key = env.get(ENV_API_KEY, "").strip()
+    model = env.get(ENV_MODEL_KEY, "").strip()
+    base_url = env.get(ENV_BASE_URL_KEY, "").strip()
+    provider_slug = env.get(ENV_PROVIDER_KEY, "").strip().lower()
+
+    if not (api_key or model):
+        return "Nothing to migrate: .env has no LLM_API_KEY or LLM_MODEL."
+
+    info = resolve_provider(provider_slug) if provider_slug else None
+    api_mode = info.api_mode if info else "chat"
+    name = f"{provider_slug or 'default'}-{model or 'unset'}".lower()
+    name = re.sub(r"[^A-Za-z0-9_\-.]", "-", name)[:48]
+
+    profile = models_store.upsert_profile(
+        name=name,
+        provider=provider_slug or (info.slug if info else ""),
+        model=model,
+        api_key=api_key,
+        base_url=base_url or (info.default_base_url if info else ""),
+        api_mode=api_mode,
+        make_active=True,
+    )
+    return (
+        f"Migrated .env into profile {profile.name!r} and marked active.\n"
+        f"  provider={profile.provider} model={profile.model}"
+    )
+
+
+def cmd_add_interactive(name: str | None = None) -> str:
+    """Interactive profile creation. Prompts for provider, model, api_key."""
+    if not name:
+        name = input("Profile name: ").strip()
+    if not name:
+        return "Cancelled: empty profile name."
+    if not re.fullmatch(r"[A-Za-z0-9_\-.]+", name):
+        return f"Invalid profile name: {name!r} (alnum, _-. only)"
+
+    provider_info = select_provider("Select provider: ")
+    if provider_info is None:
+        return "Cancelled at provider selection."
+
+    chosen_model = select_model(provider_info.slug, "Select model (or enter custom name): ")
+    if chosen_model is None:
+        chosen_model = input("Model name: ").strip()
+    if not chosen_model:
+        return "Cancelled: empty model name."
+
+    print(f"\nDefault base URL: {provider_info.default_base_url}")
+    base_url = input("Base URL (enter for default): ").strip() or provider_info.default_base_url
+    api_key = input("API key (input hidden in your terminal? — paste): ").strip()
+
+    profile = models_store.upsert_profile(
+        name=name,
+        provider=provider_info.slug,
+        model=chosen_model,
+        api_key=api_key,
+        base_url=base_url,
+        api_mode=provider_info.api_mode,
+        make_active=True,
+    )
+    return (
+        f"Added profile {profile.name!r} and marked active.\n"
+        f"  provider={profile.provider} model={profile.model}"
+    )
+
+
+def _model_help() -> str:
+    return (
+        "Usage: /cross model <subcommand>\n"
+        "  list                list all profiles\n"
+        "  show                show the active profile\n"
+        "  use <name>          switch active profile\n"
+        "  add [<name>]        add a new profile (interactive)\n"
+        "  remove <name>       delete a profile\n"
+        "  migrate             import current .env into a new profile\n"
+        "  <name>              shorthand for `use <name>` if profile exists,\n"
+        "                      else sets LLM_MODEL directly (legacy)"
+    )
+
+
+def handle_model_command(args: list[str], *, interactive: bool = False) -> str:
+    """Unified dispatcher for /cross model and `clawcross model`.
+
+    *interactive* must be True only when ``input()`` prompts are safe (true
+    CLI invocation). The chatbot REPL passes False — there is no usable
+    stdin for sub-prompts, so the dispatcher returns a usage hint instead.
+    """
+    if not args:
+        if not models_store.store_exists() or not list(models_store.load().profiles):
+            if interactive:
+                apply_model_interactive()
+                return ""
+            return "No profiles configured. Use `/cross model migrate` or `clawcross model add <name>`."
+        return cmd_list() + "\n\n" + _model_help()
+
+    sub = args[0].lower()
+
+    if sub in ("list", "ls"):
+        return cmd_list()
+    if sub == "show":
+        return cmd_show()
+    if sub in ("use",):
+        if len(args) < 2:
+            return "Usage: /cross model use <name>"
+        return cmd_use(args[1])
+    if sub in ("add", "new"):
+        if not interactive:
+            return "Interactive add not supported here — run `clawcross model add <name>` from a terminal."
+        return cmd_add_interactive(args[1] if len(args) > 1 else None)
+    if sub in ("remove", "rm", "delete"):
+        if len(args) < 2:
+            return "Usage: /cross model remove <name>"
+        return cmd_remove(args[1])
+    if sub == "migrate":
+        return cmd_migrate()
+    if sub == "help":
+        return _model_help()
+
+    name = args[0].strip()
+    if models_store.get_profile(name) is not None:
+        return cmd_use(name)
+
+    active = models_store.get_active()
+    if active is not None:
+        models_store.upsert_profile(
+            name=active.name,
+            provider=active.provider,
+            model=name,
+            api_key=active.auth.api_key,
+            base_url=active.base_url,
+            api_mode=active.api_mode,
+            make_active=True,
+        )
+        return f"Profile {active.name!r}: model -> {name}"
+
+    set_model(name)
+    return f"LLM_MODEL={name}"
+
+
+def handle_provider_command(args: list[str], *, interactive: bool = False) -> str:
+    """Unified dispatcher for /cross provider and `clawcross provider`.
+
+    With multi-profile mode active, this updates the *active profile's*
+    provider/base_url rather than the bare .env (so resolve_active_profile
+    keeps working).
+    """
+    active = models_store.get_active()
+
+    if not args:
+        if active is None:
+            if interactive:
+                apply_provider_interactive()
+                return ""
+            return f"Usage: /cross provider <slug> [base_url]. Available: {', '.join(PROVIDERS)}"
+        return (
+            f"Active profile {active.name!r} uses provider={active.provider}, "
+            f"base_url={active.base_url or '(default)'}."
+        )
+
+    slug = args[0].lower()
+    url = args[1] if len(args) > 1 else None
+    info = resolve_provider(slug)
+    if info is None:
+        valid = ", ".join(PROVIDERS)
+        return f"Unknown provider: {slug!r}. Valid: {valid}"
+
+    if active is None:
+        set_provider(slug, url)
+        return f"LLM_PROVIDER={slug}" + (f"\nLLM_BASE_URL={url}" if url else "")
+
+    models_store.upsert_profile(
+        name=active.name,
+        provider=info.slug,
+        model=active.model,
+        api_key=active.auth.api_key,
+        base_url=url or info.default_base_url,
+        api_mode=info.api_mode,
+        make_active=True,
+    )
+    return (
+        f"Profile {active.name!r} updated: provider={info.slug}, "
+        f"base_url={url or info.default_base_url}"
+    )

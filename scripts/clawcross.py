@@ -1245,20 +1245,16 @@ def _handle_slash(command: str, state: dict) -> bool:
         cmd_cancel(CancelArgs(), state)
         return True
     if name == "/model":
-        from clawcross_cli.model_cmd import apply_model_interactive
-        if len(parts) > 1:
-            apply_model_interactive(parts[1])
-        else:
-            apply_model_interactive()
+        from clawcross_cli.model_cmd import handle_model_command
+        out = handle_model_command(parts[1:], interactive=True)
+        if out:
+            print(out)
         return True
     if name == "/provider":
-        from clawcross_cli.model_cmd import apply_provider_interactive
-        if len(parts) == 1:
-            apply_provider_interactive()
-        elif len(parts) == 2:
-            apply_provider_interactive(parts[1])
-        else:
-            apply_provider_interactive(parts[1], parts[2])
+        from clawcross_cli.model_cmd import handle_provider_command
+        out = handle_provider_command(parts[1:], interactive=True)
+        if out:
+            print(out)
         return True
     if name == "/help":
         print("Executable commands:")
@@ -1376,29 +1372,15 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
         _save_state(state)
         return True, f"session: {_current(state)['session']}"
     if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/model":
-        from clawcross_cli.providers import PROVIDERS, get_provider_slugs
-        from clawcross_cli.model_cmd import set_model
-        parts = line.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            models = []
-            for s in get_provider_slugs():
-                models.extend(PROVIDERS[s].models)
-            return True, f"/cross model <name> | 可选: {', '.join(models[:20])}"
-        model_name = parts[1].strip().split()[0]
-        set_model(model_name)
-        return True, f"LLM_MODEL={model_name}"
+        from clawcross_cli.model_cmd import handle_model_command
+        rest = line.split(maxsplit=1)
+        args = rest[1].strip().split() if len(rest) > 1 else []
+        return True, handle_model_command(args) or ""
     if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/provider":
-        from clawcross_cli.providers import resolve_provider, get_provider_slugs
-        from clawcross_cli.model_cmd import set_provider
-        parts = line.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            return True, f"/cross provider <slug> [url] | 可选: {', '.join(get_provider_slugs())}"
-        provider_args = parts[1].strip().split(maxsplit=1)
-        slug = provider_args[0]
-        url = provider_args[1] if len(provider_args) > 1 else None
-        set_provider(slug, url)
-        info = resolve_provider(slug)
-        return True, f"LLM_PROVIDER={slug}" + (f"\nLLM_BASE_URL={url}" if url else "")
+        from clawcross_cli.model_cmd import handle_provider_command
+        rest = line.split(maxsplit=1)
+        args = rest[1].strip().split() if len(rest) > 1 else []
+        return True, handle_provider_command(args) or ""
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         if line.startswith("/"):
             active = _handle_slash(line, state)
@@ -1472,12 +1454,11 @@ def build_parser() -> argparse.ArgumentParser:
     config = sub.add_parser("config", help="Read or write config/.env values")
     config.add_argument("items", nargs="*", help="list | get KEY | set KEY VALUE | KEY VALUE")
 
-    model = sub.add_parser("model", help="Select LLM model interactively or set directly")
-    model.add_argument("model_name", nargs="?", default=None, help="Model name (omit for interactive)")
+    model = sub.add_parser("model", help="Manage LLM model profiles (list/show/use/add/remove/migrate)")
+    model.add_argument("args", nargs="*", help="subcommand and arguments")
 
-    provider = sub.add_parser("provider", help="Select LLM provider interactively or set directly")
-    provider.add_argument("provider_slug", nargs="?", default=None, help="Provider slug (omit for interactive)")
-    provider.add_argument("base_url", nargs="?", default=None, help="Custom base URL")
+    provider = sub.add_parser("provider", help="Set provider on the active profile (or .env if none)")
+    provider.add_argument("args", nargs="*", help="<slug> [base_url]")
 
     return parser
 
@@ -1526,12 +1507,16 @@ def main() -> int:
             args.value = []
         return cmd_config(args, state)
     if args.command == "model":
-        from clawcross_cli.model_cmd import apply_model_interactive
-        apply_model_interactive(args.model_name)
+        from clawcross_cli.model_cmd import handle_model_command
+        out = handle_model_command(list(args.args or []), interactive=True)
+        if out:
+            print(out)
         return 0
     if args.command == "provider":
-        from clawcross_cli.model_cmd import apply_provider_interactive
-        apply_provider_interactive(args.provider_slug, args.base_url)
+        from clawcross_cli.model_cmd import handle_provider_command
+        out = handle_provider_command(list(args.args or []), interactive=True)
+        if out:
+            print(out)
         return 0
     parser.print_help()
     return 0
