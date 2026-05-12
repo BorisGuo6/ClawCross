@@ -173,6 +173,7 @@ SLASH_MENU = [
     ("/workflow", "list / show / run workflows", "/workflow", True),
     ("/skill [<team>]", "list managed skills", "/skill", True),
     ("/cron [<team>]", "list cron alarms", "/cron", True),
+    ("/channel", "list / setup chatbot channels", "/channel", True),
     ("/exit", "quit", "/exit", True),
 ]
 CLI_COMMANDS = [
@@ -188,6 +189,7 @@ CLI_COMMANDS = [
     ("clawcross workflow [show|run ...]", "list/show/run OASIS workflows"),
     ("clawcross skill [agent]", "list skills (optionally filtered by agent)"),
     ("clawcross cron [team]", "list cron alarms (optionally for one team)"),
+    ("clawcross channel [list|setup ...]", "list / interactively set up chatbot channels"),
     ("clawcross platforms", "list available platforms"),
     ("clawcross state", "print state json"),
     ("clawcross cancel", "cancel internal generation"),
@@ -209,6 +211,7 @@ CHAT_SLASH_COMMANDS = [
     ("/cross workflow", "list workflows (or `show <name>` / `run <name> team <T> question <Q>`)"),
     ("/cross skill [agent]", "list skills (optionally filtered by agent)"),
     ("/cross cron [team]", "list cron alarms (optionally for one team)"),
+    ("/cross channel", "list configured chatbot channels (setup requires CLI)"),
     ("/cross state", "show current shell state"),
     ("/cross cancel", "cancel internal generation"),
     ("/cross front", "get a public magic link"),
@@ -1445,6 +1448,12 @@ def _handle_slash(command: str, state: dict) -> bool:
         if out:
             print(out)
         return True
+    if name == "/channel":
+        from clawcross_cli.channel_cmd import handle_channel_command
+        out = handle_channel_command(parts[1:], interactive=True)
+        if out:
+            print(out)
+        return True
     if name == "/help":
         print(_rich_help_text())
         return True
@@ -1522,6 +1531,12 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/cron <team>", "list one team's cron entries"),
         ("/cron new team <T> target <X> [cron <expr>|once <ISO>] text <msg...>",
          "create an alarm (cron expr or one-shot ISO time)"),
+    ]),
+    ("Chatbot channels", [
+        ("/channel", "list channels with configured/not status"),
+        ("/channel setup [<id>]", "guided setup (CLI only — opens curses picker)"),
+        ("/channel show <id>", "show JSON bot entries currently in .env"),
+        ("/channel clear <id>", "drop the env_key for a channel"),
     ]),
     ("Shell", [
         ("/state", "dump persisted state.json"),
@@ -1670,6 +1685,11 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
         rest = line.split(maxsplit=1)
         args = rest[1].strip().split() if len(rest) > 1 else []
         return True, handle_cron_command(args, user=current_user) or ""
+    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/channel":
+        from clawcross_cli.channel_cmd import handle_channel_command
+        rest = line.split(maxsplit=1)
+        args = rest[1].strip().split() if len(rest) > 1 else []
+        return True, handle_channel_command(args) or ""
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
         if line.startswith("/"):
             active = _handle_slash(line, state)
@@ -1761,6 +1781,9 @@ def build_parser() -> argparse.ArgumentParser:
     cron = sub.add_parser("cron", help="List cron alarms (optionally filtered by team)")
     cron.add_argument("args", nargs="*", help="[<team>]")
 
+    channel = sub.add_parser("channel", help="List / setup chatbot channels (Telegram, Discord, ...)")
+    channel.add_argument("args", nargs="*", help="[list|status|show <id>|setup [<id>]|clear <id>]")
+
     return parser
 
 
@@ -1840,6 +1863,12 @@ def main() -> int:
     if args.command == "cron":
         from clawcross_cli.display_cmd import handle_cron_command
         out = handle_cron_command(list(args.args or []), interactive=True)
+        if out:
+            print(out)
+        return 0
+    if args.command == "channel":
+        from clawcross_cli.channel_cmd import handle_channel_command
+        out = handle_channel_command(list(args.args or []), interactive=True)
         if out:
             print(out)
         return 0

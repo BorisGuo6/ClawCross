@@ -40,6 +40,10 @@ def usage() -> None:
     print("                              launch a YAML workflow")
     print("  skill [<team>]              list managed skills (personal, or team+personal)")
     print("  cron [<team>]               list cron alarms (optionally for one team)")
+    print("  channel                     list chatbot channels (Telegram, Discord, ...)")
+    print("  channel setup [<id>]        guided channel setup (writes <ID>_BOTS in .env)")
+    print("  channel show <id>           show channel JSON entries currently in .env")
+    print("  channel clear <id>          drop the env_key for a channel")
     sys.exit(2)
 
 
@@ -77,6 +81,11 @@ def main() -> None:
     elif cmd == "cron":
         from clawcross_cli.display_cmd import handle_cron_command
         out = handle_cron_command(rest, interactive=True)
+        if out:
+            print(out)
+    elif cmd == "channel":
+        from clawcross_cli.channel_cmd import handle_channel_command
+        out = handle_channel_command(rest, interactive=True)
         if out:
             print(out)
     else:
