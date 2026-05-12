@@ -69,12 +69,14 @@ def curses_radiolist(
 
         def _draw(stdscr):
             curses.curs_set(0)
+            stdscr.keypad(True)
             if curses.has_colors():
                 curses.start_color()
                 curses.use_default_colors()
                 curses.init_pair(1, curses.COLOR_GREEN, -1)
                 curses.init_pair(2, curses.COLOR_YELLOW, -1)
-            cursor = selected
+                curses.init_pair(3, 8, -1)  # dim gray for footer
+            cursor = max(0, min(selected, len(items) - 1))
             scroll_offset = 0
 
             while True:
@@ -91,29 +93,32 @@ def curses_radiolist(
                     stdscr.addnstr(row, 0, title, max_x - 1, hattr)
                     row += 1
 
-                    # Description lines
                     for dline in desc_lines:
-                        if row >= max_y - 1:
+                        if row >= max_y - 2:
                             break
                         stdscr.addnstr(row, 0, dline, max_x - 1, curses.A_NORMAL)
                         row += 1
 
                     stdscr.addnstr(
                         row, 0,
-                        "  ↑↓ navigate  ENTER/SPACE select  ESC cancel",
+                        "  ↑↓ move  PgUp/PgDn page  Home/End jump  ENTER select  ESC cancel",
                         max_x - 1, curses.A_DIM,
                     )
                     row += 1
                 except curses.error:
                     pass
 
-                # Scrollable item list
+                # Reserve last row for status line
                 items_start = row + 1
-                visible_rows = max_y - items_start - 1
+                visible_rows = max(1, max_y - items_start - 1)
                 if cursor < scroll_offset:
                     scroll_offset = cursor
                 elif cursor >= scroll_offset + visible_rows:
                     scroll_offset = cursor - visible_rows + 1
+                # Clamp scroll_offset so we don't show empty bottom rows
+                max_scroll = max(0, len(items) - visible_rows)
+                if scroll_offset > max_scroll:
+                    scroll_offset = max_scroll
 
                 for draw_i, i in enumerate(
                     range(scroll_offset, min(len(items), scroll_offset + visible_rows))
@@ -134,13 +139,41 @@ def curses_radiolist(
                     except curses.error:
                         pass
 
+                # Bottom status: "N/M" + scroll indicator
+                try:
+                    sattr = curses.A_DIM
+                    if curses.has_colors():
+                        sattr |= curses.color_pair(3)
+                    pos = f" {cursor + 1}/{len(items)} "
+                    if scroll_offset > 0 and (scroll_offset + visible_rows) < len(items):
+                        marker = "↕"
+                    elif scroll_offset > 0:
+                        marker = "↑"
+                    elif (scroll_offset + visible_rows) < len(items):
+                        marker = "↓"
+                    else:
+                        marker = " "
+                    status = f"{pos}{marker}"
+                    sx = max(0, max_x - len(status) - 1)
+                    stdscr.addnstr(max_y - 1, sx, status, max_x - sx - 1, sattr)
+                except curses.error:
+                    pass
+
                 stdscr.refresh()
                 key = stdscr.getch()
 
                 if key in (curses.KEY_UP, ord("k")):
-                    cursor = (cursor - 1) % len(items)
+                    cursor = max(0, cursor - 1)
                 elif key in (curses.KEY_DOWN, ord("j")):
-                    cursor = (cursor + 1) % len(items)
+                    cursor = min(len(items) - 1, cursor + 1)
+                elif key in (curses.KEY_PPAGE,):  # PgUp
+                    cursor = max(0, cursor - visible_rows)
+                elif key in (curses.KEY_NPAGE,):  # PgDn
+                    cursor = min(len(items) - 1, cursor + visible_rows)
+                elif key in (curses.KEY_HOME, ord("g")):
+                    cursor = 0
+                elif key in (curses.KEY_END, ord("G")):
+                    cursor = len(items) - 1
                 elif key in (ord(" "), curses.KEY_ENTER, 10, 13):
                     result_holder[0] = cursor
                     return

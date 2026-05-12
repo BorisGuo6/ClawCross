@@ -137,9 +137,24 @@ def handle_team_command(args: list[str], *, interactive: bool = False, user: str
 
 # ── workflow ────────────────────────────────────────────────────────────────
 
+_WORKFLOW_HELP_FOOTER = (
+    "\n"
+    "How to use:\n"
+    "  /cross workflow show <name>                    show the YAML/py content\n"
+    "  /cross workflow show <name> team <T>           disambiguate by team\n"
+    "  /cross workflow run <name> question <text...>  run a personal workflow\n"
+    "  /cross workflow run <name> team <T> question <text...>\n"
+    "                                                 run a team workflow\n"
+    "\n"
+    "<name> is the file without extension (e.g. paper_review_council),\n"
+    "or with extension to force kind (e.g. paper_survey_workflow.py).\n"
+    "<text...> can be multiple words; everything after `question` is joined."
+)
+
+
 def _format_workflow_list(items: list[dict]) -> str:
     if not items:
-        return "No workflows found."
+        return "No workflows found." + _WORKFLOW_HELP_FOOTER
     lines = [f"Workflows ({len(items)}):"]
     for it in items:
         scope = it.get("scope") or ""
@@ -150,7 +165,7 @@ def _format_workflow_list(items: list[dict]) -> str:
         desc = (it.get("description") or "").strip()
         if desc:
             lines.append(f"      {desc}")
-    return _format_lines(lines)
+    return _format_lines(lines) + _WORKFLOW_HELP_FOOTER
 
 
 def _workflow_label(item: dict) -> str:
@@ -162,9 +177,14 @@ def _workflow_label(item: dict) -> str:
 
 
 def _parse_run_args(rest: list[str]) -> tuple[dict | None, str | None]:
-    """Parse ``<name> team <T> question <Q...>``. Returns (parsed, error)."""
+    """Parse ``<name> [team <T>] question <Q...>``. Returns (parsed, error)."""
+    usage = (
+        "Usage: /cross workflow run <name> [team <T>] question <text...>\n"
+        "Example: /cross workflow run paper_review_council "
+        "team 论文审读汇报团 question 分析这篇综述的核心论点"
+    )
     if not rest:
-        return None, "usage: workflow run <name> team <team> question <question...>"
+        return None, usage
     parsed = {"name": rest[0], "team": "", "question": ""}
     i = 1
     current = None
@@ -176,14 +196,14 @@ def _parse_run_args(rest: list[str]) -> tuple[dict | None, str | None]:
             i += 1
             continue
         if current is None:
-            return None, f"unexpected token: {token!r} (expected 'team' or 'question')"
+            return None, f"unexpected token: {token!r} (expected 'team' or 'question')\n{usage}"
         if parsed[current]:
             parsed[current] += " " + token
         else:
             parsed[current] = token
         i += 1
     if not parsed["question"]:
-        return None, "workflow run requires 'question <text>'"
+        return None, f"workflow run requires 'question <text>'\n{usage}"
     return parsed, None
 
 
@@ -302,15 +322,77 @@ def _format_skills_payload(body: Any, team_filter: str = "") -> str:
 def handle_skill_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     """``/cross skill [<team>]`` — list managed skills.
 
-    Without args: shows the current user's personal skills.
-    With *team*: shows both team-scoped and personal skills.
+    Without args: aggregates the current user's personal skills *and* every
+    team's team-scoped skills (one call per team).
+    With *team*: shows just that team plus personal.
     """
     args = list(args or [])
     team = args[0] if args else ""
-    body, err = api_client.list_skills(team=team, user=user)
-    if err:
-        return err
-    return _format_skills_payload(body, team_filter=team)
+
+    if team:
+        body, err = api_client.list_skills(team=team, user=user)
+        if err:
+            return err
+        return _format_skills_payload(body, team_filter=team)
+
+    # No team: fan out across all teams + personal.
+    personal_body, perr = api_client.list_skills(team="", user=user)
+    personal_skills: list = []
+    if isinstance(personal_body, dict):
+        sk = personal_body.get("skills")
+        if isinstance(sk, dict):
+            personal_skills = sk.get("personal") or []
+        elif isinstance(sk, list):
+            personal_skills = sk
+
+    teams_list, terr = api_client.list_teams(user=user)
+    team_skills_map: dict[str, list] = {}
+    team_errors: list[str] = []
+    for entry in teams_list:
+        if isinstance(entry, dict):
+            tname = entry.get("name") or entry.get("team") or ""
+        else:
+            tname = str(entry or "")
+        tname = tname.strip()
+        if not tname:
+            continue
+        tbody, terr_one = api_client.list_skills(team=tname, user=user)
+        if terr_one or not isinstance(tbody, dict):
+            if terr_one:
+                team_errors.append(f"{tname}: {terr_one}")
+            continue
+        sk_obj = tbody.get("skills") or {}
+        if isinstance(sk_obj, dict):
+            team_skills_map[tname] = sk_obj.get("team") or []
+
+    sections: list[str] = []
+    total_team = sum(len(v) for v in team_skills_map.values())
+    if team_skills_map:
+        sections.append(f"Team skills ({total_team} across {len(team_skills_map)} teams):")
+        for tname, items in team_skills_map.items():
+            if not items:
+                continue
+            sections.append(f"  [{tname}]")
+            for sk in items:
+                sections.append("  " + _render_skill_row(sk).lstrip())
+    if personal_skills:
+        if sections:
+            sections.append("")
+        sections.append(f"Personal skills ({len(personal_skills)}):")
+        sections.extend(_render_skill_row(s) for s in personal_skills)
+
+    if not sections:
+        msg = "No skills."
+        if perr:
+            msg += f"\n  personal: {perr}"
+        if terr:
+            msg += f"\n  teams: {terr}"
+        return msg
+    if team_errors:
+        sections.append("")
+        sections.append("Some team scopes failed:")
+        sections.extend(f"  {e}" for e in team_errors)
+    return _format_lines(sections)
 
 
 # ── cron ────────────────────────────────────────────────────────────────────
