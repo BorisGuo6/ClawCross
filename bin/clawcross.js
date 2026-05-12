@@ -135,10 +135,14 @@ async function main() {
     path.join(root, "config", ".env"),
   ]) || path.join(process.env.CLAWCROSS_CONFIG_DIR, ".env"));
   const agentPort = Number.parseInt(process.env.PORT_AGENT || env.PORT_AGENT || "51200", 10);
-  const command = args[0] || (
-    await isAgentRunning(agentPort) ? undefined : "start"
-  );
-  const launcherArgs = args.length === 0 && command === "start" ? ["start"] : args;
+  // No-args behaviour: drop straight into the interactive REPL. The REPL
+  // itself works without LLM credentials — users can configure via /model
+  // before sending any prompt. The full backend (which validates
+  // LLM_MODEL) is opt-in via `clawcross start`. If the backend is
+  // already running we still go to REPL; backend startup is never
+  // forced from a bare `clawcross` invocation.
+  const command = args[0];
+  const launcherArgs = args;
   const useRunScript = runCommands.has(command);
   const launcher = useRunScript
     ? (process.platform === "win32"

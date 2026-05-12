@@ -433,6 +433,22 @@ def _recent_lines(state: dict, width: int) -> list[str]:
     return lines
 
 
+def _llm_status_hint() -> str:
+    """Single-line hint shown in the welcome banner about LLM configuration."""
+    try:
+        from clawcross_cli import models_store
+        active = models_store.get_active()
+        if active is not None:
+            return f"LLM: {active.provider}/{active.model} (profile {active.name!r})"
+    except Exception:
+        pass
+    model = os.environ.get("LLM_MODEL", "").strip()
+    if model:
+        provider = os.environ.get("LLM_PROVIDER", "").strip() or "?"
+        return f"LLM: {provider}/{model} (from .env)"
+    return "LLM: not configured — type /model to choose one."
+
+
 def _welcome_lines(state: dict) -> list[str]:
     current = _current(state)
     width = _term_width()
@@ -449,6 +465,7 @@ def _welcome_lines(state: dict) -> list[str]:
         _fit(f"CWD: {current.get('cwd', Path.cwd())}", right_width),
         "Type / as the first character to choose a command.",
         "Type /help for all commands.",
+        _fit(_llm_status_hint(), right_width),
     ]
     logo = _claw_logo()
     left_width = max(_display_width(line) for line in logo)
