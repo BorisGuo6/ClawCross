@@ -109,6 +109,22 @@ def _format_team_detail(name: str, members_body: dict | None, alarms: list[dict]
 def handle_team_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
     user = (user or api_client.DEFAULT_USER or "").strip() or api_client.DEFAULT_USER
+
+    if args and args[0].lower() in {"new", "create", "add"}:
+        if len(args) >= 2:
+            name = args[1].strip()
+        elif interactive:
+            from clawcross_cli.picker import prompt_text
+            name = prompt_text("New team name: ").strip()
+        else:
+            return "Usage: /cross team new <name>"
+        if not name:
+            return "Team name is required."
+        body, err = api_client.create_team(name, user=user)
+        if err:
+            return err
+        return f"Team {name!r} created."
+
     if args:
         name = args[0]
         members, err = api_client.team_members(name, user=user)
@@ -145,6 +161,9 @@ _WORKFLOW_HELP_FOOTER = (
     "  /cross workflow run <name> question <text...>  run a personal workflow\n"
     "  /cross workflow run <name> team <T> question <text...>\n"
     "                                                 run a team workflow\n"
+    "  /cross workflow new <name> [team <T>] [from <file>]\n"
+    "                                                 create a new YAML workflow\n"
+    "                                                 (CLI opens $EDITOR; chatbot needs `from`)\n"
     "\n"
     "<name> is the file without extension (e.g. paper_review_council),\n"
     "or with extension to force kind (e.g. paper_survey_workflow.py).\n"
@@ -231,9 +250,133 @@ def _parse_run_args(rest: list[str]) -> tuple[dict | None, str | None]:
     return parsed, None
 
 
+_WORKFLOW_YAML_TEMPLATE = """\
+# {name} — describe what this workflow does in one line.
+# Fill in the schedule below. See OASIS docs for syntax.
+
+version: 1
+discussion:
+  agents:
+    - name: example
+      role: "describe the role here"
+  rules:
+    - "say what each agent should do"
+
+# Replace the example above with real agent definitions before saving.
+"""
+
+
+def _handle_workflow_new(rest: list[str], *, interactive: bool, user: str) -> str:
+    """`/cross workflow new <name> [team <T>] [from <file>] [desc <text...>]`.
+
+    Interactive (CLI tty): if no `from`, opens $EDITOR with a template.
+    Chatbot: requires `from <path>` since there is no stdin/editor.
+    """
+    from clawcross_cli.picker import prompt_text
+
+    if not rest:
+        if not interactive:
+            return (
+                "Usage: /cross workflow new <name> [team <T>] [from <file>] [desc <text...>]\n"
+                "  team <T>     team scope (default: personal)\n"
+                "  from <file>  read YAML from a file instead of $EDITOR\n"
+                "  desc <text>  free-form description"
+            )
+        name = prompt_text("Workflow name (no extension): ").strip()
+    else:
+        name = rest[0].strip()
+    if not name:
+        return "Workflow name is required."
+
+    team = ""
+    yaml_path = ""
+    description = ""
+    i = 1 if rest else 0
+    current = None
+    while i < len(rest):
+        token = rest[i]
+        lower = token.lower()
+        if lower in {"team", "from", "desc", "description"}:
+            current = lower
+            i += 1
+            continue
+        if current == "team":
+            team = token
+            current = None
+        elif current == "from":
+            yaml_path = token
+            current = None
+        elif current in {"desc", "description"}:
+            description = (description + " " + token).strip() if description else token
+        i += 1
+
+    yaml_content: str | None = None
+    if yaml_path:
+        try:
+            with open(os.path.expanduser(yaml_path), "r", encoding="utf-8") as fh:
+                yaml_content = fh.read()
+        except OSError as e:
+            return f"Failed to read {yaml_path}: {e}"
+    elif interactive:
+        template = _WORKFLOW_YAML_TEMPLATE.format(name=name)
+        edited = _edit_in_editor(template, suffix=".yaml")
+        if edited is None:
+            return "Cancelled (editor unavailable or user aborted). Pass `from <file>` to upload an existing YAML."
+        if edited.strip() == template.strip():
+            return "No changes saved (template was not edited)."
+        yaml_content = edited
+    else:
+        return "Workflow YAML required. Use `from <file>` in chatbot or run from a terminal to edit interactively."
+
+    body, err = api_client.save_workflow(
+        user=user, name=name, yaml_content=yaml_content, team=team, description=description,
+    )
+    if err:
+        return err
+    fname = (body or {}).get("file") or f"{name}.yaml"
+    location = f"team {team!r}" if team else "personal"
+    return f"Workflow saved: {fname} ({location})"
+
+
+def _edit_in_editor(initial: str, *, suffix: str = ".yaml") -> str | None:
+    """Open $EDITOR (or vi) on a temp file pre-filled with *initial*.
+
+    Returns the edited content, or None if the user quit without saving or
+    no editor is available.
+    """
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    import shutil as _sh
+    import subprocess as _sp
+    import tempfile as _tf
+
+    bin_name = editor.split()[0]
+    if not _sh.which(bin_name):
+        return None
+    with _tf.NamedTemporaryFile("w", suffix=suffix, delete=False, encoding="utf-8") as fh:
+        fh.write(initial)
+        path = fh.name
+    try:
+        rc = _sp.run([*editor.split(), path]).returncode
+        if rc != 0:
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                return fh.read()
+        except OSError:
+            return None
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
 def handle_workflow_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
     user = (user or api_client.DEFAULT_USER or "").strip() or api_client.DEFAULT_USER
+
+    if args and args[0].lower() in {"new", "create", "add", "save"}:
+        return _handle_workflow_new(args[1:], interactive=interactive, user=user)
 
     if args and args[0].lower() == "show":
         if len(args) < 2:
@@ -343,6 +486,82 @@ def _format_skills_payload(body: Any, team_filter: str = "") -> str:
     return _format_lines(sections)
 
 
+_SKILL_TEMPLATE = """\
+---
+name: {name}
+description: One-line summary of what this skill does.
+---
+
+# {name}
+
+Procedural steps the agent should follow when invoking this skill.
+
+## Usage
+- Describe inputs the agent expects.
+- Describe outputs the agent should produce.
+
+## Notes
+- Add cautions or domain-specific tips.
+"""
+
+
+def _handle_skill_new(rest: list[str], *, interactive: bool, user: str) -> str:
+    """`/cross skill new <name> [team <T>] [from <file>]`."""
+    from clawcross_cli.picker import prompt_text
+
+    if not rest:
+        if not interactive:
+            return "Usage: /cross skill new <name> [team <T>] [from <file>]"
+        name = prompt_text("Skill name (no extension): ").strip()
+    else:
+        name = rest[0].strip()
+    if not name:
+        return "Skill name is required."
+
+    team = ""
+    md_path = ""
+    i = 1 if rest else 0
+    current = None
+    while i < len(rest):
+        token = rest[i]
+        lower = token.lower()
+        if lower in {"team", "from"}:
+            current = lower
+            i += 1
+            continue
+        if current == "team":
+            team = token
+            current = None
+        elif current == "from":
+            md_path = token
+            current = None
+        i += 1
+
+    content: str | None = None
+    if md_path:
+        try:
+            with open(os.path.expanduser(md_path), "r", encoding="utf-8") as fh:
+                content = fh.read()
+        except OSError as e:
+            return f"Failed to read {md_path}: {e}"
+    elif interactive:
+        template = _SKILL_TEMPLATE.format(name=name)
+        edited = _edit_in_editor(template, suffix=".md")
+        if edited is None:
+            return "Cancelled (editor unavailable or user aborted). Pass `from <file>` to upload an existing SKILL.md."
+        if edited.strip() == template.strip():
+            return "No changes saved (template was not edited)."
+        content = edited
+    else:
+        return "SKILL.md content required. Use `from <file>` or run from a terminal."
+
+    body, err = api_client.create_skill(name, content, team=team, user=user)
+    if err:
+        return err
+    location = f"team {team!r}" if team else "personal"
+    return f"Skill {name!r} created ({location})."
+
+
 def handle_skill_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     """``/cross skill [<team>]`` — list managed skills.
 
@@ -351,6 +570,9 @@ def handle_skill_command(args: list[str], *, interactive: bool = False, user: st
     With *team*: shows just that team plus personal.
     """
     args = list(args or [])
+    if args and args[0].lower() in {"new", "create", "add"}:
+        return _handle_skill_new(args[1:], interactive=interactive,
+                                  user=(user or api_client.DEFAULT_USER))
     team = args[0] if args else ""
 
     if team:
@@ -469,10 +691,84 @@ def _format_cron_list(alarms: list[dict], team: str | None = None) -> str:
     return _format_lines(sections)
 
 
+def _handle_cron_new(rest: list[str], *, interactive: bool, user: str) -> str:
+    """`/cross cron new team <T> target <name> [type internal|external] [cron <expr>|once <ISO>] text <message...>`."""
+    from clawcross_cli.picker import prompt_text
+
+    parsed = {
+        "team": "",
+        "target": "",
+        "type": "internal",
+        "cron": "",
+        "once": "",
+        "text": "",
+    }
+    i = 0
+    current = None
+    keywords = {"team", "target", "type", "cron", "once", "text"}
+    while i < len(rest):
+        token = rest[i]
+        lower = token.lower()
+        if lower in keywords:
+            current = lower
+            i += 1
+            continue
+        if current is None:
+            i += 1
+            continue
+        if current == "text":
+            parsed["text"] = (parsed["text"] + " " + token).strip() if parsed["text"] else token
+        else:
+            parsed[current] = token
+        i += 1
+
+    # Interactive fill-ins when running from a terminal.
+    if interactive:
+        if not parsed["team"]:
+            parsed["team"] = prompt_text("Team: ").strip()
+        if not parsed["target"]:
+            parsed["target"] = prompt_text("Target name (internal session or external alias): ").strip()
+        if not parsed["cron"] and not parsed["once"]:
+            mode = prompt_text("Schedule type (cron|once) [cron]: ").strip().lower() or "cron"
+            if mode == "once":
+                parsed["once"] = prompt_text("Run at (ISO 8601, e.g. 2026-06-01T09:00:00): ").strip()
+            else:
+                parsed["cron"] = prompt_text("Cron expression (e.g. 0 9 * * 1): ").strip()
+        if not parsed["text"]:
+            parsed["text"] = prompt_text("Message to send: ").strip()
+
+    if not parsed["team"]:
+        return "Usage: /cross cron new team <T> target <name> [cron <expr>|once <ISO>] text <message...>"
+    if not parsed["target"]:
+        return "target is required (internal session name or external alias)"
+    if not parsed["text"]:
+        return "text is required"
+    schedule_type = "once" if parsed["once"] else "cron"
+    if schedule_type == "cron" and not parsed["cron"]:
+        return "cron expression is required (or use `once <ISO>`)"
+
+    body, err = api_client.create_cron(
+        team=parsed["team"],
+        target_name=parsed["target"],
+        target_type=parsed["type"] or "internal",
+        text=parsed["text"],
+        schedule_type=schedule_type,
+        cron_expr=parsed["cron"],
+        run_at=parsed["once"],
+        user=user,
+    )
+    if err:
+        return err
+    sched = parsed["once"] or parsed["cron"]
+    return f"Cron created on team {parsed['team']!r}: target={parsed['target']} schedule={sched}"
+
+
 def handle_cron_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
-    team = args[0] if args else None
     user = (user or api_client.DEFAULT_USER or "").strip() or api_client.DEFAULT_USER
+    if args and args[0].lower() in {"new", "create", "add"}:
+        return _handle_cron_new(args[1:], interactive=interactive, user=user)
+    team = args[0] if args else None
     alarms, err = api_client.list_crons(team=team, user=user)
     if err:
         return err

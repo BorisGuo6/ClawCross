@@ -254,6 +254,83 @@ def team_members(name: str, user: str | None = None) -> tuple[dict | None, str |
     return None, friendly_error(url, code, body)
 
 
+def create_team(name: str, user: str | None = None) -> tuple[dict | None, str | None]:
+    """POST /teams to create a new team folder. Mirrors cli.py:cmd_teams[create]."""
+    url = f"{FRONT_BASE}/teams"
+    code, body = _req("POST", url, headers=_front_headers(user), data={"team": name})
+    if code == 200:
+        return body if isinstance(body, dict) else {"ok": True}, None
+    return None, friendly_error(url, code, body)
+
+
+def save_workflow(
+    user: str,
+    name: str,
+    yaml_content: str,
+    *,
+    team: str = "",
+    description: str = "",
+) -> tuple[dict | None, str | None]:
+    """POST OASIS /workflows to save a YAML workflow. Mirrors cli.py:cmd_workflows[save]."""
+    url = f"{OASIS_BASE}/workflows"
+    data = {
+        "user_id": user,
+        "name": name,
+        "schedule_yaml": yaml_content,
+        "description": description,
+        "team": team,
+    }
+    code, body = _req("POST", url, data=data)
+    if code == 200:
+        return body if isinstance(body, dict) else {"ok": True}, None
+    return None, friendly_error(url, code, body)
+
+
+def create_skill(
+    name: str,
+    content: str,
+    *,
+    team: str = "",
+    user: str | None = None,
+) -> tuple[dict | None, str | None]:
+    """PUT a SKILL.md (creates if absent). Mirrors front.py PUT /skills/<name>."""
+    if team:
+        url = f"{FRONT_BASE}/teams/{urllib.parse.quote(team, safe='')}/skills/{urllib.parse.quote(name, safe='')}"
+    else:
+        url = f"{FRONT_BASE}/skills/{urllib.parse.quote(name, safe='')}"
+    code, body = _req("PUT", url, headers=_front_headers(user), data={"content": content})
+    if code == 200:
+        return body if isinstance(body, dict) else {"ok": True}, None
+    return None, friendly_error(url, code, body)
+
+
+def create_cron(
+    team: str,
+    *,
+    target_name: str,
+    text: str,
+    schedule_type: str = "cron",
+    cron_expr: str = "",
+    run_at: str = "",
+    target_type: str = "internal",
+    user: str | None = None,
+) -> tuple[dict | None, str | None]:
+    """POST /teams/<team>/alarms — create a cron or one-shot alarm."""
+    url = f"{FRONT_BASE}/teams/{urllib.parse.quote(team, safe='')}/alarms"
+    payload = {
+        "target_type": target_type,
+        "target_name": target_name,
+        "schedule_type": schedule_type,
+        "cron": cron_expr,
+        "run_at": run_at,
+        "text": text,
+    }
+    code, body = _req("POST", url, headers=_front_headers(user), data=payload)
+    if code == 200:
+        return body if isinstance(body, dict) else {"ok": True}, None
+    return None, friendly_error(url, code, body)
+
+
 def list_workflows(user: str, team: str = "") -> list[dict]:
     """Combine YAML + Python workflow listings from the local filesystem."""
     items: list[dict] = []
