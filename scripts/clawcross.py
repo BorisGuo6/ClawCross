@@ -1446,12 +1446,7 @@ def _handle_slash(command: str, state: dict) -> bool:
             print(out)
         return True
     if name == "/help":
-        print("Executable commands:")
-        for command, description in SLASH_COMMANDS:
-            print(f"  {command:<16} {description}")
-        print("\nCLI commands:")
-        for command, description in CLI_COMMANDS:
-            print(f"  {command:<36} {description}")
+        print(_rich_help_text())
         return True
     print(f"unknown command: {name}. Try /help.")
     return True
@@ -1470,24 +1465,101 @@ def _chat_state_lines(state: dict) -> list[str]:
     ]
 
 
+_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Quick start", [
+        ("clawcross", "start the interactive shell"),
+        ("/model", "pick an LLM (curses TUI: ↑↓ / PgUp / PgDn / ENTER)"),
+        ("/use codex", "switch to the Codex CLI platform (any /platforms entry works)"),
+        ("type a message", "send to the active agent"),
+    ]),
+    ("LLM configuration", [
+        ("/model", "interactive picker — choose model + provider in one go"),
+        ("/model gpt-4o", "set directly (writes .env or updates the active profile)"),
+        ("/model list", "list saved profiles in ~/.clawcross/config/models.json"),
+        ("/model show", "show the active profile (provider/model/base_url/api_key)"),
+        ("/model use <profile>", "switch which profile is active"),
+        ("/model add <profile>", "create a new profile (CLI: prompts; chatbot: rejected)"),
+        ("/model migrate", "import current .env into a new profile"),
+        ("/provider", "pick provider (curses); includes 'Custom endpoint' for self-host"),
+        ("/provider deepseek", "set provider directly on the active profile"),
+    ]),
+    ("Platform & session", [
+        ("/platforms", "list all agent platforms (internal + acpx tools)"),
+        ("/use <platform>", "switch active platform (internal / codex / claude / gemini / ...)"),
+        ("/session", "show existing sessions for the current platform"),
+        ("/session <name>", "switch to / create session by name"),
+        ("/new session", "create timestamped session (e.g. ClawCross-20260512-031544)"),
+        ("/cwd [path]", "show or change the workspace directory"),
+        ("/mode <mode>", "label the run as execute / plan / review"),
+        ("/cancel", "cancel an in-flight internal generation"),
+    ]),
+    ("Team resources", [
+        ("/team", "list teams (and a usage footer)"),
+        ("/team <name>", "team overview (members + alarm count) + sub-command hints"),
+        ("/team <name> members", "list internal + external agents"),
+        ("/team <name> personas", "list persona / expert prompts (oasis_experts.json)"),
+        ("/team <name> workflows", "list team-scoped workflows"),
+        ("/team <name> skills", "list team SKILL.md files"),
+        ("/team <name> crons", "list team-scoped cron alarms"),
+        ("/team new <name>", "create a new team folder"),
+    ]),
+    ("Workflows", [
+        ("/workflow", "list all workflows (personal + every team, grouped)"),
+        ("/workflow show <name>", "print the YAML or Python source"),
+        ("/workflow show <name> team <T>", "disambiguate when the name exists in several teams"),
+        ("/workflow run <name> question <text...>", "run a personal workflow"),
+        ("/workflow run <name> team <T> question <text...>", "run a team workflow"),
+        ("/workflow new <name> [team <T>] [from <file>]",
+         "create a YAML workflow. CLI: opens $EDITOR with a template. Chatbot: needs `from <file>`."),
+    ]),
+    ("Skills", [
+        ("/skill", "list all skills aggregated across personal + every team"),
+        ("/skill <team>", "show skills scoped to one team + personal"),
+        ("/skill new <name> [team <T>] [from <file>]", "create a SKILL.md (CLI: $EDITOR)"),
+    ]),
+    ("Cron / Alarms", [
+        ("/cron", "list all cron entries (personal + all teams)"),
+        ("/cron <team>", "list one team's cron entries"),
+        ("/cron new team <T> target <X> [cron <expr>|once <ISO>] text <msg...>",
+         "create an alarm (cron expr or one-shot ISO time)"),
+    ]),
+    ("Shell", [
+        ("/state", "dump persisted state.json"),
+        ("/front", "get a public magic link (when frontend is reachable)"),
+        ("/exit", "leave the shell"),
+    ]),
+]
+
+
+_HELP_TIPS = [
+    "Press / on an empty line to open the command picker (alt-screen, ↑↓ ENTER, Esc cancels).",
+    "All `/<cmd>` commands also work as `clawcross <cmd>` and `/cross <cmd>` (chatbot).",
+    "`clawcross start` boots the full backend (web UI / API on PORT_FRONTEND).",
+    "Reset LLM profiles: rm ~/.clawcross/config/models.json (.env still works as fallback).",
+    "Reset shell state:  rm ~/.clawcross/state.json",
+]
+
+
+def _rich_help_text() -> str:
+    """Categorised /help output with one example per command + tips."""
+    out: list[str] = []
+    for section_title, rows in _HELP_SECTIONS:
+        out.append(_style(section_title))
+        col = max(len(label) for label, _ in rows)
+        col = min(max(col, 18), 56)
+        for label, desc in rows:
+            pad = " " * max(2, col - len(label) + 2)
+            out.append(f"  {label}{pad}{desc}")
+        out.append("")
+    out.append(_style("Tips"))
+    for tip in _HELP_TIPS:
+        out.append(f"  • {tip}")
+    return "\n".join(out)
+
+
 def chat_help_text() -> str:
-    lines = ["Commands:"]
-    for command, description in CHAT_SLASH_COMMANDS:
-        lines.append(f"{command}\n  {description}")
-    lines.extend([
-        "",
-        "Examples:",
-        "/use codex",
-        "/use claude",
-        "/use gemini",
-        "review this repo",
-        "",
-        "CLI equivalents:",
-        "clawcross",
-        "clawcross run -p codex \"review this repo\"",
-        "clawcross config KEY VALUE",
-    ])
-    return "\n".join(lines)
+    """Chatbot-flavoured help: same structure, no terminal styling."""
+    return _strip_ansi(_rich_help_text())
 
 
 def chat_welcome_text(state: dict, magic_link: str | None = None) -> str:
