@@ -1557,6 +1557,78 @@ _HELP_TIPS = [
     "Reset shell state:  rm ~/.clawcross/state.json",
 ]
 
+# ── Chatbot /cross help (no interactive-only commands, no terminal tips) ──
+
+_CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("Quick start", [
+        ("/cross use codex", "switch to the Codex CLI platform"),
+        ("/cross use internal", "use the built-in internal agent"),
+        ("Send a message", "text without /cross runs as a prompt on the active agent"),
+    ]),
+    ("Platform & session", [
+        ("/cross platforms", "list all agent platforms"),
+        ("/cross use <platform>", "switch platform (internal / codex / claude / gemini / ...)"),
+        ("/cross session", "show sessions for the current platform"),
+        ("/cross session <name>", "switch to / create session by name"),
+        ("/cross new session", "create timestamped session"),
+        ("/cross cwd [path]", "show or change workspace directory"),
+        ("/cross mode <mode>", "label the run as execute / plan / review"),
+        ("/cross cancel", "cancel an in-flight internal generation"),
+    ]),
+    ("Model & LLM", [
+        ("/cross model", "list saved model profiles"),
+        ("/cross model show", "show the active profile"),
+        ("/cross model use <name>", "switch active profile"),
+        ("/cross model <model>", "set LLM model directly"),
+        ("/cross provider", "show current provider"),
+    ]),
+    ("Team resources", [
+        ("/cross team", "list teams"),
+        ("/cross team <name>", "team overview (members + alarm count)"),
+        ("/cross team <name> members", "list internal + external agents"),
+        ("/cross team <name> personas", "list persona / expert prompts"),
+        ("/cross team <name> workflows", "list team-scoped workflows"),
+        ("/cross team <name> skills", "list team SKILL.md files"),
+        ("/cross team <name> crons", "list team-scoped cron alarms"),
+    ]),
+    ("Workflows", [
+        ("/cross workflow", "list all workflows"),
+        ("/cross workflow show <name>", "print the YAML or Python source"),
+        ("/cross workflow show <name> team <T>", "disambiguate across teams"),
+        ("/cross workflow run <name> question <text...>", "run a personal workflow"),
+        ("/cross workflow run <name> team <T> question <text...>", "run a team workflow"),
+    ]),
+    ("Skills", [
+        ("/cross skill", "list all skills"),
+        ("/cross skill <team>", "show skills scoped to one team"),
+    ]),
+    ("Cron / Alarms", [
+        ("/cross cron", "list all cron entries"),
+        ("/cross cron <team>", "list one team's cron entries"),
+    ]),
+    ("Chatbot channels", [
+        ("/cross channel", "list channels with configured/not status"),
+        ("/cross channel show <id>", "show current channel config"),
+        ("/cross channel clear <id>", "drop the channel config"),
+        ("/cross channel login weclaw", "run `weclaw login` (QR code)"),
+        ("/cross channel logout weclaw", "stop the WeClaw daemon"),
+        ("/cross channel status weclaw", "ask weclaw for live status"),
+    ]),
+    ("Shell", [
+        ("/cross state", "show current platform and session"),
+        ("/cross front", "get a public magic link"),
+        ("/cross exit", "leave cross shell (return to normal chat)"),
+    ]),
+]
+
+_CHAT_HELP_TIPS = [
+    "All commands use the /cross prefix in chatbot (e.g. /cross use codex).",
+    "Send any message without /cross to run it as a prompt on the active agent.",
+    "Send /cross front for a public magic link (web UI login).",
+    "Send /cross exit (or /cross off / /exit / /quit) to leave cross shell.",
+    "Some commands (model add, provider set, channel setup) need terminal — use `clawcross` CLI.",
+]
+
 
 def _rich_help_text() -> str:
     """Categorised /help output with one example per command + tips."""
@@ -1576,8 +1648,20 @@ def _rich_help_text() -> str:
 
 
 def chat_help_text() -> str:
-    """Chatbot-flavoured help: same structure, no terminal styling."""
-    return _strip_ansi(_rich_help_text())
+    """Chatbot-flavoured help: /cross-prefixed commands, no interactive-only features."""
+    out: list[str] = []
+    for section_title, rows in _CHAT_HELP_SECTIONS:
+        out.append(section_title)
+        col = max(len(label) for label, _ in rows)
+        col = min(max(col, 18), 56)
+        for label, desc in rows:
+            pad = " " * max(2, col - len(label) + 2)
+            out.append(f"  {label}{pad}{desc}")
+        out.append("")
+    out.append("Tips")
+    for tip in _CHAT_HELP_TIPS:
+        out.append(f"  \u2022 {tip}")
+    return "\n".join(out)
 
 
 def chat_welcome_text(state: dict, magic_link: str | None = None) -> str:
