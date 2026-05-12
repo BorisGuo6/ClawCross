@@ -1139,6 +1139,12 @@ def _choose_platform(state: dict) -> bool:
 
 
 def _read_interactive_line(prompt: str) -> str:
+    """Read one line with optional `/`-triggered slash-menu popup.
+
+    Slash menu is rendered in the alternate screen buffer (\\033[?1049h)
+    so opening/closing it never disturbs the main screen's scrollback —
+    no `\\033[J` clear leaves visible blank rows below short output.
+    """
     if not sys.stdin.isatty() or not sys.stdout.isatty() or termios is None or tty is None:
         return input(prompt)
 
@@ -1148,47 +1154,63 @@ def _read_interactive_line(prompt: str) -> str:
     pending_escape = False
     pending_bracket = False
     selected = 0
-    rendered_lines = 0
 
-    def render() -> None:
-        nonlocal rendered_lines
-        if rendered_lines:
-            sys.stdout.write("\r")
-            if rendered_lines > 1:
-                sys.stdout.write(f"\033[{rendered_lines - 1}A")
-            sys.stdout.write("\033[J")
-        lines = [prompt + buffer]
-        if menu_open:
-            lines.extend(_menu_lines(selected))
-        sys.stdout.write("\n".join(lines))
+    def render_input() -> None:
+        # Redraw just the prompt + buffer on the current main-screen line.
+        sys.stdout.write("\r\033[K" + prompt + buffer)
         sys.stdout.flush()
-        rendered_lines = len(lines)
+
+    def render_menu() -> None:
+        if not menu_open:
+            return
+        # We are in the alt screen — clear it and redraw.
+        sys.stdout.write("\033[H\033[2J")  # home + clear screen
+        # Show the originating prompt for context, then the picker.
+        sys.stdout.write(prompt + buffer + "\n\n")
+        sys.stdout.write("\n".join(_menu_lines(selected)))
+        sys.stdout.flush()
+
+    def open_menu() -> None:
+        nonlocal menu_open
+        if menu_open:
+            return
+        menu_open = True
+        sys.stdout.write("\033[?1049h\033[?25l")  # alt screen, hide cursor
+        sys.stdout.flush()
+        render_menu()
+
+    def close_menu(*, restore_input: bool = True) -> None:
+        nonlocal menu_open
+        if not menu_open:
+            return
+        menu_open = False
+        sys.stdout.write("\033[?1049l\033[?25h")  # back to main, show cursor
+        sys.stdout.flush()
+        if restore_input:
+            render_input()
 
     def finish_line() -> None:
-        nonlocal rendered_lines
-        if rendered_lines > 1:
-            sys.stdout.write("\r")
-            sys.stdout.write(f"\033[{rendered_lines - 1}A")
-            sys.stdout.write("\033[J")
-            sys.stdout.write(prompt + buffer)
+        if menu_open:
+            close_menu()
         sys.stdout.write("\n")
         sys.stdout.flush()
-        rendered_lines = 0
 
     try:
         tty.setcbreak(sys.stdin.fileno())
-        render()
+        sys.stdout.write(prompt + buffer)
+        sys.stdout.flush()
+
         while True:
             ch = sys.stdin.read(1)
             if pending_bracket:
                 pending_bracket = False
                 if menu_open and ch == "A":
                     selected = (selected - 1) % len(SLASH_MENU)
-                    render()
+                    render_menu()
                     continue
                 if menu_open and ch == "B":
                     selected = (selected + 1) % len(SLASH_MENU)
-                    render()
+                    render_menu()
                     continue
             if pending_escape:
                 pending_escape = False
@@ -1196,15 +1218,13 @@ def _read_interactive_line(prompt: str) -> str:
                     pending_bracket = True
                     continue
                 if menu_open:
-                    menu_open = False
                     buffer = ""
-                    render()
+                    close_menu()
             if ch in {"\r", "\n"}:
                 if menu_open:
                     _display, _description, insert, execute_now = SLASH_MENU[selected]
                     buffer = insert
-                    menu_open = False
-                    render()
+                    close_menu()
                     if execute_now:
                         finish_line()
                         return buffer
@@ -1212,9 +1232,13 @@ def _read_interactive_line(prompt: str) -> str:
                 finish_line()
                 return buffer
             if ch == "\x03":
+                if menu_open:
+                    close_menu(restore_input=False)
                 raise KeyboardInterrupt
             if ch == "\x04":
                 if not buffer:
+                    if menu_open:
+                        close_menu(restore_input=False)
                     raise EOFError
                 continue
             if ch == "\x1b":
@@ -1226,36 +1250,45 @@ def _read_interactive_line(prompt: str) -> str:
                     seq += sys.stdin.read(1)
                 if menu_open and seq == "[A":
                     selected = (selected - 1) % len(SLASH_MENU)
-                    render()
+                    render_menu()
                 elif menu_open and seq == "[B":
                     selected = (selected + 1) % len(SLASH_MENU)
-                    render()
+                    render_menu()
+                elif menu_open and seq in {"[5~"}:
+                    selected = max(0, selected - 8)
+                    render_menu()
+                elif menu_open and seq in {"[6~"}:
+                    selected = min(len(SLASH_MENU) - 1, selected + 8)
+                    render_menu()
                 elif not seq:
                     pending_escape = True
                 elif menu_open:
-                    menu_open = False
                     buffer = ""
-                    render()
+                    close_menu()
                 continue
             if ch in {"\x7f", "\b"}:
                 if buffer:
                     buffer = buffer[:-1]
-                    if not buffer:
-                        menu_open = False
-                    render()
+                    if not buffer and menu_open:
+                        close_menu()
+                    elif not menu_open:
+                        render_input()
                 continue
             if ch == "/" and not buffer:
                 buffer = "/"
-                menu_open = True
+                render_input()
                 selected = 0
-                render()
+                open_menu()
                 continue
             if ch.isprintable():
                 if menu_open:
-                    menu_open = False
+                    close_menu()
                 buffer += ch
-                render()
+                render_input()
     finally:
+        if menu_open:
+            sys.stdout.write("\033[?1049l\033[?25h")
+            sys.stdout.flush()
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_settings)
 
 
