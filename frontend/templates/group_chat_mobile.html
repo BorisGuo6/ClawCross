@@ -15201,7 +15201,9 @@ async function resetAllGroupAgents() {
         if (type === 'oasis') {
             await cancelInternalAgentRequest(sid);
             await deleteInternalSessionRequest(sid);
+            return;
         }
+        throw new Error(`Unknown member type '${type}' for agent ${sid || m.short_name || 'unknown'}`);
     }));
 
     const done = results.filter(r => r.status === 'fulfilled').length;

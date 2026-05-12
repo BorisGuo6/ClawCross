@@ -313,7 +313,8 @@ class OpsService:
             if not agent_info:
                 short_n = str(member.get("short_name") or "").strip()
                 tag_m = str(member.get("tag") or "").strip()
-                agent_info = {"global_name": agent_key, "name": short_n, "tag": tag_m, "platform": ""}
+                platform_guess = _canonical_external_platform(tag_m)
+                agent_info = {"global_name": agent_key, "name": short_n, "tag": tag_m, "platform": platform_guess if platform_guess else ""}
         else:
             agent_info = _resolve_external_agent_record(req.user_id, team_hint, agent_key)
             if not agent_info:
