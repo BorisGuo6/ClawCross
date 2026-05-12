@@ -1533,10 +1533,13 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
          "create an alarm (cron expr or one-shot ISO time)"),
     ]),
     ("Chatbot channels", [
-        ("/channel", "list channels with configured/not status"),
-        ("/channel setup [<id>]", "guided setup (CLI only — opens curses picker)"),
-        ("/channel show <id>", "show JSON bot entries currently in .env"),
-        ("/channel clear <id>", "drop the env_key for a channel"),
+        ("/channel", "list 17 channels with configured/not status"),
+        ("/channel setup [<id>]", "guided setup (curses picker; CLI only)"),
+        ("/channel show <id>", "show JSON entries / env vars currently in .env"),
+        ("/channel clear <id>", "drop the env_key (bots_json) or unset env vars"),
+        ("/channel login weclaw", "run `weclaw login` — QR appears in your terminal"),
+        ("/channel logout weclaw", "stop the WeClaw daemon"),
+        ("/channel status weclaw", "ask weclaw for live status"),
     ]),
     ("Shell", [
         ("/state", "dump persisted state.json"),

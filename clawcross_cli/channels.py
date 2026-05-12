@@ -255,10 +255,12 @@ CHANNELS: dict[str, ChannelInfo] = {
     "weclaw": ChannelInfo(
         id="weclaw", label="微信 / WeClaw", env_key="", kind="env_vars", emoji="🟢",
         setup_instructions=[
-            "1. Install / link the weclaw binary (https://github.com/...)",
-            "2. Run `clawcross channel setup weclaw` and fill in the proxy",
-            "3. Open the mobile UI's Create tab to scan the QR code login",
-            "   (the CLI sets the env vars; QR scan still uses the web UI)",
+            "1. Install / link the weclaw binary (often `pip install weclaw` or",
+            "   download from GitHub releases; CLI auto-resolves WECLAW_BIN)",
+            "2. `clawcross channel setup weclaw`     — fill in the proxy settings",
+            "3. `clawcross channel login weclaw`     — scan the ASCII QR in your terminal",
+            "4. `clawcross channel status weclaw`    — verify session is alive",
+            "   (`clawcross channel logout weclaw`   stops the daemon when done)",
         ],
         bot_fields=[
             BotField("WECLAW_ENABLED", "Enable WeClaw (true/false)", default="true"),

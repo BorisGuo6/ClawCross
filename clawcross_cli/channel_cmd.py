@@ -23,6 +23,8 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -278,12 +280,91 @@ def cmd_setup(channel_id: str | None, *, interactive: bool) -> str:
 
 # ── unified dispatcher ──────────────────────────────────────────────────────
 
+# ── WeClaw native CLI passthrough ───────────────────────────────────────────
+#
+# `weclaw login` prints an ASCII QR on stdout and waits for the user to
+# scan it with WeChat; on success it writes its account file and exits.
+# Forwarding the subprocess's stdio straight to the terminal lets the
+# user scan without the mobile UI in the loop.
+# `weclaw stop` and `weclaw status` are similarly thin — we just exec them.
+
+def _resolve_weclaw_bin() -> tuple[str, str | None]:
+    env = _read_env()
+    raw = (env.get("WECLAW_BIN") or os.environ.get("WECLAW_BIN") or "weclaw").strip() or "weclaw"
+    resolved = shutil.which(raw) or raw
+    if not (Path(resolved).is_file() or shutil.which(resolved)):
+        return resolved, f"weclaw binary not found: {resolved}. Set WECLAW_BIN via `/channel setup weclaw`."
+    return resolved, None
+
+
+def _weclaw_exec(args: list[str], *, stream: bool, timeout: int | None = None) -> tuple[int, str]:
+    """Run weclaw <args>. When *stream* is True, stdio is inherited so
+    the user sees output live (used for `login`). Otherwise stdout is
+    captured and returned."""
+    bin_path, err = _resolve_weclaw_bin()
+    if err:
+        return 1, err
+    cmd = [bin_path, *args]
+    try:
+        if stream:
+            proc = subprocess.run(cmd, stdin=subprocess.DEVNULL)
+            return proc.returncode, ""
+        proc = subprocess.run(
+            cmd, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=timeout,
+        )
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        return proc.returncode, out
+    except FileNotFoundError:
+        return 1, f"weclaw binary not on PATH (tried {bin_path})."
+    except subprocess.TimeoutExpired:
+        return 1, f"weclaw {' '.join(args)} timed out."
+
+
+def cmd_login(channel_id: str, *, interactive: bool) -> str:
+    ch = catalog.get_channel(channel_id)
+    if ch is None or ch.id != "weclaw":
+        return f"`channel login` is only supported for weclaw (got {channel_id!r})."
+    if not interactive:
+        return "Run `clawcross channel login weclaw` from a terminal — the QR has to render on your screen."
+    print("Launching `weclaw login` — the QR will appear below.")
+    print("Scan it with WeChat to authorize, or Ctrl-C to cancel.\n")
+    rc, _ = _weclaw_exec(["login"], stream=True)
+    if rc == 0:
+        return "WeClaw login completed. Run `clawcross channel status weclaw` to verify."
+    if rc == 130:  # Ctrl-C
+        return "Login cancelled."
+    return f"weclaw login exited with code {rc}. Re-run if the QR expired."
+
+
+def cmd_logout(channel_id: str) -> str:
+    ch = catalog.get_channel(channel_id)
+    if ch is None or ch.id != "weclaw":
+        return f"`channel logout` is only supported for weclaw (got {channel_id!r})."
+    rc, out = _weclaw_exec(["stop"], stream=False, timeout=10)
+    if rc == 0:
+        return "WeClaw stopped." + (f"\n{out}" if out else "")
+    return f"weclaw stop failed (exit={rc}).\n{out}" if out else f"weclaw stop failed (exit={rc})."
+
+
+def cmd_native_status(channel_id: str) -> str:
+    ch = catalog.get_channel(channel_id)
+    if ch is None or ch.id != "weclaw":
+        return f"Native status is only supported for weclaw (got {channel_id!r})."
+    rc, out = _weclaw_exec(["status"], stream=False, timeout=5)
+    body = out or f"exit={rc}"
+    return f"weclaw status:\n{body}"
+
+
 _HELP = (
     "\nchannel sub-commands:\n"
     "  /cross channel                    list channels with configured/not status\n"
     "  /cross channel show <id>          inspect entries currently in .env\n"
     "  /cross channel setup [<id>]       guided setup (CLI only — needs a terminal)\n"
     "  /cross channel clear <id>         drop the env_key for a channel\n"
+    "  /cross channel login weclaw       run `weclaw login` — scan the QR in your terminal\n"
+    "  /cross channel logout weclaw      run `weclaw stop`\n"
+    "  /cross channel status weclaw      run `weclaw status`\n"
 )
 
 
@@ -293,7 +374,11 @@ def handle_channel_command(args: list[str], *, interactive: bool = False) -> str
         return cmd_list() + _HELP
 
     sub = args[0].lower()
-    if sub in {"list", "ls", "status"}:
+    if sub in {"list", "ls"}:
+        return cmd_list()
+    if sub == "status":
+        if len(args) >= 2:
+            return cmd_native_status(args[1])
         return cmd_list()
     if sub in {"show", "info"}:
         if len(args) < 2:
@@ -305,6 +390,14 @@ def handle_channel_command(args: list[str], *, interactive: bool = False) -> str
         if len(args) < 2:
             return "Usage: channel clear <id>"
         return cmd_clear(args[1])
+    if sub == "login":
+        if len(args) < 2:
+            return "Usage: channel login <id> (currently weclaw only)"
+        return cmd_login(args[1], interactive=interactive)
+    if sub in {"logout", "stop"}:
+        if len(args) < 2:
+            return "Usage: channel logout <id> (currently weclaw only)"
+        return cmd_logout(args[1])
     if sub == "help":
         return _HELP.lstrip("\n")
 
