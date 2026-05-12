@@ -254,6 +254,21 @@ def team_members(name: str, user: str | None = None) -> tuple[dict | None, str |
     return None, friendly_error(url, code, body)
 
 
+def team_experts(name: str, user: str | None = None) -> tuple[list[dict], str | None]:
+    """GET /teams/<n>/experts — return the persona list for a team."""
+    url = f"{FRONT_BASE}/teams/{urllib.parse.quote(name, safe='')}/experts"
+    code, body = _req("GET", url, headers=_front_headers(user))
+    if code != 200:
+        return [], friendly_error(url, code, body)
+    if isinstance(body, dict):
+        items = body.get("experts") or body.get("personas") or body.get("items") or []
+    elif isinstance(body, list):
+        items = body
+    else:
+        items = []
+    return [it for it in items if isinstance(it, dict)], None
+
+
 def create_team(name: str, user: str | None = None) -> tuple[dict | None, str | None]:
     """POST /teams to create a new team folder. Mirrors cli.py:cmd_teams[create]."""
     url = f"{FRONT_BASE}/teams"

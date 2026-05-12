@@ -106,6 +106,76 @@ def _format_team_detail(name: str, members_body: dict | None, alarms: list[dict]
     return _format_lines(lines)
 
 
+_TEAM_HELP = (
+    "\nTeam sub-commands:\n"
+    "  /cross team <name>                          overview (members + alarm count)\n"
+    "  /cross team <name> members                  internal + external agents\n"
+    "  /cross team <name> personas                 persona/expert prompts\n"
+    "  /cross team <name> workflows                team-scoped workflows\n"
+    "  /cross team <name> skills                   team-scoped skills\n"
+    "  /cross team <name> crons                    team-scoped cron alarms\n"
+    "  /cross team new <name>                      create a new team folder"
+)
+
+
+def _format_team_workflows(team: str, user: str) -> str:
+    """List YAML + Python workflows scoped to *team* only."""
+    items = api_client.list_workflows(user, team=team)
+    if not items:
+        return f"Team {team!r}: no workflows."
+    lines = [f"Team {team!r} workflows ({len(items)}):"]
+    for it in items:
+        kind = it.get("kind") or "?"
+        lines.append(f"  - [{kind}] {it.get('file', '?')}")
+        desc = (it.get("description") or "").strip()
+        if desc:
+            lines.append(f"      {desc}")
+    return _format_lines(lines)
+
+
+def _format_personas(name: str, personas: list[dict]) -> str:
+    if not personas:
+        return f"Team {name!r}: no personas."
+    lines = [f"Team {name!r} personas ({len(personas)}):"]
+    for p in personas:
+        tag = p.get("tag") or ""
+        title = p.get("name") or "?"
+        cat = p.get("category") or ""
+        desc = (p.get("description") or "").strip()
+        tag_part = f" [{tag}]" if tag else ""
+        cat_part = f" ({cat})" if cat else ""
+        lines.append(f"  - {title}{tag_part}{cat_part}")
+        if desc:
+            lines.append(f"      {desc}")
+    return _format_lines(lines)
+
+
+def _format_members(name: str, members_body: dict | None) -> str:
+    if not members_body:
+        return f"Team {name!r}: members unavailable."
+    members = members_body.get("members") or []
+    internal = [m for m in members if isinstance(m, dict) and m.get("type") == "oasis"]
+    external = [m for m in members if isinstance(m, dict) and m.get("type") != "oasis"]
+    lines = [f"Team {name!r} members ({len(members)}):"]
+    if internal:
+        lines.append(f"  internal ({len(internal)}):")
+        for m in internal:
+            tag = m.get("tag") or ""
+            tag_part = f" [{tag}]" if tag else ""
+            lines.append(f"    - {m.get('name', '?')}{tag_part}")
+    if external:
+        lines.append(f"  external ({len(external)}):")
+        for m in external:
+            tag = m.get("tag") or ""
+            tag_part = f" [{tag}]" if tag else ""
+            platform = m.get("platform") or ""
+            plat_part = f" ({platform})" if platform else ""
+            lines.append(f"    - {m.get('name', '?')}{tag_part}{plat_part}")
+    if not members:
+        lines.append("  (empty)")
+    return _format_lines(lines)
+
+
 def handle_team_command(args: list[str], *, interactive: bool = False, user: str | None = None) -> str:
     args = list(args or [])
     user = (user or api_client.DEFAULT_USER or "").strip() or api_client.DEFAULT_USER
@@ -125,13 +195,39 @@ def handle_team_command(args: list[str], *, interactive: bool = False, user: str
             return err
         return f"Team {name!r} created."
 
+    if args and args[0].lower() == "help":
+        return _TEAM_HELP.lstrip("\n")
+
+    # /cross team <name> <component>
+    if len(args) >= 2:
+        name = args[0]
+        component = args[1].lower()
+        if component in {"members", "member"}:
+            members, err = api_client.team_members(name, user=user)
+            if err and members is None:
+                return err
+            return _format_members(name, members)
+        if component in {"personas", "persona", "experts", "expert"}:
+            personas, err = api_client.team_experts(name, user=user)
+            if err:
+                return err
+            return _format_personas(name, personas)
+        if component in {"workflows", "workflow"}:
+            return handle_workflow_command([], interactive=interactive, user=user) \
+                if False else _format_team_workflows(name, user)
+        if component in {"skills", "skill"}:
+            return handle_skill_command([name], interactive=False, user=user)
+        if component in {"crons", "cron", "alarms", "alarm"}:
+            return handle_cron_command([name], interactive=False, user=user)
+        return f"Unknown component {component!r}.{_TEAM_HELP}"
+
     if args:
         name = args[0]
         members, err = api_client.team_members(name, user=user)
         if err and members is None:
             return err
         alarms, _ = api_client.list_crons(team=name, user=user)
-        return _format_team_detail(name, members, alarms)
+        return _format_team_detail(name, members, alarms) + _TEAM_HELP
 
     teams, err = api_client.list_teams(user=user)
     if err:
