@@ -7394,7 +7394,9 @@ async function handleSend() {
 
         const hasRenderedToolIndicators = !!chatBox.querySelector('.stream-tool-indicator');
         if (_ocChatMode === 'acp' && _acpTool && (sawAcpxTrace || sawToolActivity || !fullText)) {
-            await acpRefreshCurrentTranscriptFromHistory();
+            acpRefreshCurrentTranscriptFromHistory({ showLoading: false }).catch((e) => {
+                console.warn('acpRefreshCurrentTranscriptFromHistory failed', e);
+            });
         } else if ((sawToolActivity || hasRenderedToolIndicators) && _ocChatMode === 'internal' && currentSessionId) {
             await new Promise((resolve) => setTimeout(resolve, 300));
             await switchToSession(currentSessionId, true, { quiet: true });
@@ -15277,21 +15279,27 @@ function acpRenderHistoryEntries(entries) {
     }).join('');
 }
 
-async function acpLoadSessionHistory(force = false) {
+async function acpLoadSessionHistory(force = false, options = {}) {
     const chatBox = document.getElementById('chat-box');
     if (!chatBox || !_acpTool) return false;
+    const showLoading = options.showLoading !== false;
+    const applyToChat = options.applyToChat !== false;
     const cacheKey = _acpTranscriptKey();
     if (!force && _acpTranscriptByKey[cacheKey]) {
-        chatBox.innerHTML = _acpTranscriptByKey[cacheKey];
-        ocRefreshTtsButtonsIn(chatBox);
-        scrollChatToBottom(chatBox);
+        if (applyToChat) {
+            chatBox.innerHTML = _acpTranscriptByKey[cacheKey];
+            ocRefreshTtsButtonsIn(chatBox);
+            scrollChatToBottom(chatBox);
+        }
         return true;
     }
 
     const sessionName = acpResolveSessionName();
     if (!sessionName) return false;
 
-    chatBox.innerHTML = `<div class="text-xs text-gray-400 text-center py-4">${t('history_loading_msg')}</div>`;
+    if (showLoading && applyToChat) {
+        chatBox.innerHTML = `<div class="text-xs text-gray-400 text-center py-4">${t('history_loading_msg')}</div>`;
+    }
     try {
         const resp = await fetch(
             '/proxy_acpx_session_history?tool=' + encodeURIComponent(_acpTool) + '&name=' + encodeURIComponent(sessionName) + '&limit=200'
@@ -15304,9 +15312,11 @@ async function acpLoadSessionHistory(force = false) {
         const html = acpRenderHistoryEntries(history.entries || []);
         if (html) {
             _acpTranscriptByKey[cacheKey] = html;
-            chatBox.innerHTML = html;
-            ocRefreshTtsButtonsIn(chatBox);
-            scrollChatToBottom(chatBox);
+            if (applyToChat) {
+                chatBox.innerHTML = html;
+                ocRefreshTtsButtonsIn(chatBox);
+                scrollChatToBottom(chatBox);
+            }
             return true;
         }
     } catch (e) {
@@ -15343,11 +15353,13 @@ async function acpPaintTranscript() {
     _acpLastTranscriptKey = acpComputeTranscriptKey();
 }
 
-async function acpRefreshCurrentTranscriptFromHistory() {
+async function acpRefreshCurrentTranscriptFromHistory(options = {}) {
     if (_ocChatMode !== 'acp' || !_acpTool) return;
-    const ok = await acpLoadSessionHistory(true);
+    const ok = await acpLoadSessionHistory(true, options);
     if (!ok) {
-        await acpPaintTranscript();
+        if (options.applyToChat !== false && options.showLoading !== false) {
+            await acpPaintTranscript();
+        }
     } else {
         _acpLastTranscriptKey = acpComputeTranscriptKey();
     }
