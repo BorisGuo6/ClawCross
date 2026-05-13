@@ -308,10 +308,6 @@ function Get-OpenClawAgentBindings {
 }
 
 function Assert-LlmModelConfigured {
-    if ($env:CLAWCROSS_ALLOW_EMPTY_LLM_MODEL -eq "1") {
-        return
-    }
-
     $envValues = Read-ClawcrossEnvFile -Path $envPath
     $llmModel = ""
     if ($envValues.ContainsKey("LLM_MODEL")) {
@@ -322,12 +318,20 @@ function Assert-LlmModelConfigured {
         return
     }
 
+    if ($env:CLAWCROSS_REQUIRE_LLM_MODEL -eq "1") {
+        Write-Host ""
+        Write-Host "❌ LLM_MODEL 未配置，且 CLAWCROSS_REQUIRE_LLM_MODEL=1 已要求严格模式。"
+        Write-Host "   设置模型：powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 configure LLM_MODEL deepseek-chat"
+        Write-Host "   查看可用：powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 auto-model"
+        exit 1
+    }
+
     Write-Host ""
-    Write-Host "❌ LLM_MODEL 未配置，已停止启动。"
-    Write-Host "   请先设置模型，例如：powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 configure LLM_MODEL deepseek-chat"
-    Write-Host "   可先查看可用模型：powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 auto-model"
-    Write-Host "   如需临时允许空模型启动，仅本次可设置：`$env:CLAWCROSS_ALLOW_EMPTY_LLM_MODEL='1'"
-    exit 1
+    Write-Host "⚠️  LLM_MODEL 未配置，后端将照常启动但 LLM 调用会失败。"
+    Write-Host "   设置方式（任选其一）："
+    Write-Host "     • 进入交互式：clawcross  → /model"
+    Write-Host "     • 命令行：    powershell -ExecutionPolicy Bypass -File .\selfskill\scripts\run.ps1 configure LLM_MODEL <name>"
+    Write-Host ""
 }
 
 function Show-Help {
