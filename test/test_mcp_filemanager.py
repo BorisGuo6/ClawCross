@@ -92,6 +92,41 @@ class FileManagerTests(unittest.TestCase):
             self.assertIn("sha256 不匹配", result)
             self.assertEqual(path.read_text(encoding="utf-8"), "hello")
 
+    def test_read_file_allows_absolute_path_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "workspace"
+            root.mkdir()
+            outside = Path(tmpdir) / "outside.txt"
+            outside.write_text("outside content", encoding="utf-8")
+            workspace = SessionWorkspace(root=root, cwd=root, mode="shared", remote="")
+            with patch.object(filemanager, "resolve_session_workspace", return_value=workspace):
+                result = asyncio.run(filemanager.read_file("alice", str(outside)))
+            self.assertIn("outside content", result)
+
+    def test_read_file_allows_relative_traversal_from_cwd(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "workspace"
+            root.mkdir()
+            outside = Path(tmpdir) / "outside.txt"
+            outside.write_text("relative traversal", encoding="utf-8")
+            workspace = SessionWorkspace(root=root, cwd=root, mode="shared", remote="")
+            with patch.object(filemanager, "resolve_session_workspace", return_value=workspace):
+                result = asyncio.run(filemanager.read_file("alice", "../outside.txt"))
+            self.assertIn("relative traversal", result)
+
+    def test_list_files_accepts_absolute_folder(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "workspace"
+            folder = Path(tmpdir) / "other"
+            root.mkdir()
+            folder.mkdir()
+            (folder / "notes.txt").write_text("hello", encoding="utf-8")
+            workspace = SessionWorkspace(root=root, cwd=root, mode="shared", remote="")
+            with patch.object(filemanager, "resolve_session_workspace", return_value=workspace):
+                result = asyncio.run(filemanager.list_files("alice", folder=str(folder)))
+            self.assertIn(str(folder), result)
+            self.assertIn("notes.txt", result)
+
 
 if __name__ == "__main__":
     unittest.main()

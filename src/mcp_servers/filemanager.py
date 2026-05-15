@@ -30,28 +30,28 @@ def _limit_value(value: int, default: int, maximum: int) -> int:
     return min(parsed, maximum)
 
 def _user_dir(username: str, session_id: str = "") -> str:
-    """获取用户目录路径，自动创建。
+    """获取当前会话工作目录路径。
 
     :param username: 用户名
-    :return: 用户目录的绝对路径
+    :return: 当前工作目录的绝对路径
     """
 
-    return str(resolve_session_workspace(username, session_id).root)
+    return str(resolve_session_workspace(username, session_id).cwd)
 
 def _safe_path(username: str, filename: str, session_id: str = "") -> str:
-    """拼接安全路径，防止路径穿越。
+    """解析工具路径。
+
+    文件 MCP 与 command/python 工具处于同一信任边界内，不再限制路径必须位于
+    workspace 内；相对路径以当前 session cwd 为基准，绝对路径按原路径解析。
 
     :param username: 用户名
-    :param filename: 文件名
+    :param filename: 文件名或路径
     :return: 文件的完整绝对路径
-    :raises ValueError: 如果路径穿越尝试被检测到
     """
-    user_path = _user_dir(username, session_id)
-    full_path = os.path.abspath(os.path.normpath(os.path.join(user_path, filename)))
-    # 确保路径在用户目录内
-    if os.path.commonpath([user_path, full_path]) != user_path:
-        raise ValueError(f"非法路径: {filename}")
-    return full_path
+    requested = os.path.expanduser((filename or "").strip())
+    if os.path.isabs(requested):
+        return os.path.abspath(os.path.normpath(requested))
+    return os.path.abspath(os.path.normpath(os.path.join(_user_dir(username, session_id), requested)))
 
 
 def _file_sha256(path: str) -> str:
@@ -141,19 +141,24 @@ def _atomic_write_text(path: str, content: str, *, encoding: str = "utf-8", atom
                 pass
 
 @mcp.tool()
-async def list_files(username: str, session_id: str = "") -> str:
+async def list_files(username: str, session_id: str = "", folder: str = ".") -> str:
     """
-    列出当前用户的所有文件。
+    列出指定目录的文件。
 
     :param username: 用户名（由系统自动注入，无需手动传递）
-    :return: 用户文件列表的描述
+    :param folder: 要列出的目录；支持绝对路径，相对路径以当前 session cwd 为基准
+    :return: 文件列表的描述
     """
-    user_path = _user_dir(username, session_id)
     try:
+        user_path = _safe_path(username, folder or ".", session_id)
+        if not os.path.exists(user_path):
+            return f"❌ 目录 '{folder}' 不存在。"
+        if not os.path.isdir(user_path):
+            return f"❌ '{folder}' 不是目录。"
         files = os.listdir(user_path)
         if not files:
-            return "📂 你还没有任何文件。"
-        result = "📂 你的文件列表：\n"
+            return f"📂 目录 '{folder}' 没有任何文件。"
+        result = f"📂 目录 '{user_path}' 的文件列表：\n"
         for file_name in sorted(files):
             file_path = os.path.join(user_path, file_name)
             if os.path.isdir(file_path):
