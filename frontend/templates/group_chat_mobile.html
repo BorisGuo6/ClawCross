@@ -2126,6 +2126,74 @@
     font-size: 13px; line-height: 1.6; color: #374151;
   }
   .oasis-conclusion-content p { margin-bottom: 6px; }
+
+  /* ── OASIS Launch Workflow Panel ── */
+  .oasis-launch-panel {
+    display: block;
+  }
+  .oasis-launch-wf-list {
+    padding: 0;
+    background: var(--bg-card);
+  }
+  .oasis-launch-wf-group { }
+  .oasis-launch-wf-group-header {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 14px;
+    font-size: 12px; font-weight: 600; color: var(--text-secondary);
+    background: var(--bg); border-bottom: 0.5px solid var(--border);
+    cursor: pointer; user-select: none;
+  }
+  .oasis-launch-wf-group-header .wg-arrow { margin-left: auto; font-size: 10px; transition: transform 0.2s; }
+  .oasis-launch-wf-group-header.expanded .wg-arrow { transform: rotate(90deg); }
+  .oasis-launch-wf-items { display: none; }
+  .oasis-launch-wf-items.expanded { display: block; }
+  .oasis-launch-wf-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 0.5px solid var(--border);
+    cursor: pointer; background: var(--bg-card);
+  }
+  .oasis-launch-wf-item:active { background: #ececec; }
+  .oasis-launch-wf-item.selected { background: #eef4ff; }
+  .oasis-launch-wf-item-icon { font-size: 16px; flex-shrink: 0; }
+  .oasis-launch-wf-item-info { flex: 1; min-width: 0; }
+  .oasis-launch-wf-item-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .oasis-launch-wf-item-hint { font-size: 11px; color: var(--text-hint); margin-top: 2px; }
+  .oasis-launch-wf-mode-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; font-weight: 700; background: #fef3c7; color: #92400e;
+    margin-left: 4px; vertical-align: middle;
+  }
+  .oasis-launch-input-area {
+    position: sticky; bottom: 0;
+    padding: 10px 12px 14px;
+    border-top: 1px solid var(--border); background: var(--bg-card);
+    z-index: 2;
+  }
+  .oasis-launch-textarea {
+    width: 100%; min-height: 70px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); color: var(--text);
+    font-size: 13px; resize: vertical;
+    box-sizing: border-box; font-family: inherit;
+  }
+  .oasis-launch-textarea:focus { outline: none; border-color: var(--primary); }
+  .oasis-launch-start-btn {
+    width: 100%; margin-top: 8px;
+    padding: 10px 0; border: none; border-radius: 999px;
+    background: linear-gradient(135deg, #52c41a, #389e0d);
+    color: #fff; font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .oasis-launch-start-btn:active { opacity: 0.8; }
+  .oasis-launch-start-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .oasis-launch-selected-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; margin-bottom: 8px;
+    background: #f0f9eb; border: 1px solid #b7eb8f; border-radius: 999px;
+    font-size: 12px; color: #389e0d; font-weight: 600;
+  }
+
   .oasis-detail-loading {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     flex: 1; color: var(--text-hint); font-size: 13px;
@@ -4197,10 +4265,20 @@
     </div>
     <div class="oasis-header-actions">
       <button class="oasis-header-btn" id="oasis-back-btn" onclick="showOasisTopicList()" data-i18n-title="tip_back_list" title="返回列表" style="display:none;">←</button>
+      <button class="oasis-header-btn" id="oasis-launch-wf-btn" onclick="showOasisLaunchPanel()" title="启动工作流" style="font-size:13px;font-weight:700;">▶</button>
       <button class="oasis-header-btn" onclick="refreshOasisTopics()" data-i18n-title="tip_refresh" title="刷新">🔄</button>
     </div>
   </div>
   <div class="oasis-body" id="oasis-body">
+    <!-- Launch Workflow Panel (hidden by default) -->
+    <div class="oasis-launch-panel" id="oasis-launch-panel" style="display:none;">
+      <div class="oasis-launch-wf-list" id="oasis-launch-wf-list"></div>
+      <div class="oasis-launch-input-area">
+        <div id="oasis-launch-selected-tag" style="display:none;"></div>
+        <textarea class="oasis-launch-textarea" id="oasis-launch-textarea" rows="3" data-i18n="oasis_launch_placeholder" placeholder="输入任务描述..."></textarea>
+        <button class="oasis-launch-start-btn" id="oasis-launch-start-btn" onclick="launchWorkflowFromSidebar()" data-i18n="oasis_launch_btn">▶ 启动</button>
+      </div>
+    </div>
     <!-- Topic list header (count + clear) -->
     <div id="oasis-topic-list-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 16px;border-bottom:0.5px solid var(--border);flex-shrink:0;background:var(--bg-card);">
       <span style="font-size:11px;font-weight:600;color:var(--text-secondary);" data-i18n="oasis_topics">📋 讨论话题</span>
@@ -4346,6 +4424,12 @@ const I18N = {
     wf_input_hint: '输入问题启动工作流「{name}」…',
     wf_started: '✅ 工作流已启动',
     wf_start_failed: '启动工作流失败',
+    oasis_launch_workflow: '启动工作流',
+    oasis_launch_placeholder: '输入任务描述...',
+    oasis_launch_btn: '▶ 启动',
+    oasis_launch_no_wf: '请先选择一个工作流',
+    oasis_launch_no_task: '请输入任务描述',
+    oasis_launch_select_hint: '点击选择',
 
     // ── Group list ──
     no_groups: '暂无群聊，点击右上角 ➕ 创建',
@@ -4976,6 +5060,12 @@ const I18N = {
     wf_input_hint: 'Ask a question to start workflow "{name}"…',
     wf_started: '✅ Workflow started',
     wf_start_failed: 'Failed to start workflow',
+    oasis_launch_workflow: 'Launch Workflow',
+    oasis_launch_placeholder: 'Enter task description...',
+    oasis_launch_btn: '▶ Launch',
+    oasis_launch_no_wf: 'Please select a workflow first',
+    oasis_launch_no_task: 'Please enter a task description',
+    oasis_launch_select_hint: 'Click to select',
 
     no_groups: 'No chats yet. Tap ➕ to create one',
     members: 'members',
@@ -5676,6 +5766,8 @@ let selectedWorkflow = null;  // Selected workflow: {name, team, displayName} or
 let selectedOasisContexts = []; // [{topicId, label}]
 let workflowGroups = [];  // [{group, team, layouts}] — 公共 + 各 team
 let workflowExpandedGroups = new Set();
+let oasisLaunchWorkflow = null;  // {name, team, mode} selected in sidebar launch panel
+let oasisLaunchExpandedGroups = new Set();
 let contactsTeamList = [];  // teams for contacts
 let contactsLoaded = false;
 let groupListInitialized = false;
@@ -8636,10 +8728,14 @@ async function loadWorkflows() {
     workflowExpandedGroups = new Set(
       workflowGroups.map((g) => (g.team || '__public__'))
     );
+    oasisLaunchExpandedGroups = new Set(
+      workflowGroups.map((g) => (g.team || '__public__'))
+    );
   } catch (e) {
     console.error('Failed to load workflows:', e);
     workflowGroups = [];
     workflowExpandedGroups = new Set();
+    oasisLaunchExpandedGroups = new Set();
   }
 }
 
@@ -8954,11 +9050,140 @@ async function refreshOasisTopics() {
 function showOasisTopicList() {
   stopOasisDetailPolling();
   oasisCurrentTopicId = null;
+  document.getElementById('oasis-launch-panel').style.display = 'none';
   document.getElementById('oasis-topic-list').style.display = '';
   document.getElementById('oasis-topic-list-header').style.display = '';
   document.getElementById('oasis-detail-view').classList.remove('show');
   document.getElementById('oasis-back-btn').style.display = 'none';
+  document.getElementById('oasis-launch-wf-btn').style.display = '';
   document.getElementById('oasis-header-label').textContent = t('team_task_label');
+}
+
+// ── Launch Workflow Panel ──
+async function showOasisLaunchPanel() {
+  stopOasisDetailPolling();
+  oasisCurrentTopicId = null;
+  document.getElementById('oasis-topic-list').style.display = 'none';
+  document.getElementById('oasis-topic-list-header').style.display = 'none';
+  document.getElementById('oasis-detail-view').classList.remove('show');
+  document.getElementById('oasis-back-btn').style.display = '';
+  document.getElementById('oasis-launch-wf-btn').style.display = 'none';
+  document.getElementById('oasis-header-label').textContent = t('oasis_launch_workflow');
+  document.getElementById('oasis-launch-panel').style.display = 'block';
+  // Show loading state first
+  document.getElementById('oasis-launch-wf-list').innerHTML =
+    `<div class="oasis-empty"><div class="oasis-empty-icon" style="font-size:24px;">⏳</div><div class="oasis-empty-text">${t('loading')}</div></div>`;
+  // Always reload to get fresh list (workflowGroups may be empty if no group opened yet)
+  await loadWorkflows();
+  renderOasisLaunchWorkflowList();
+}
+
+function renderOasisLaunchWorkflowList() {
+  const container = document.getElementById('oasis-launch-wf-list');
+  if (!workflowGroups.length) {
+    container.innerHTML = `<div class="oasis-empty"><div class="oasis-empty-icon">📭</div><div class="oasis-empty-text">${t('no_workflows')}</div></div>`;
+    return;
+  }
+  let html = '';
+  for (const grp of workflowGroups) {
+    const groupKey = grp.team || '__public__';
+    const safeKey = groupKey.replace(/'/g, "\\'");
+    const expanded = oasisLaunchExpandedGroups.has(groupKey);
+    const icon = grp.team ? '👥' : '🌐';
+    const items = grp.items || [];
+    html += `<div class="oasis-launch-wf-group">
+      <div class="oasis-launch-wf-group-header${expanded ? ' expanded' : ''}" onclick="toggleOasisLaunchGroup('${safeKey}')">
+        <span>${icon}</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(grp.group)}</span>
+        <span style="font-size:11px;opacity:0.7;margin-right:2px;">${items.length}</span>
+        <span class="wg-arrow">▶</span>
+      </div>
+      <div class="oasis-launch-wf-items${expanded ? ' expanded' : ''}">`;
+    if (!items.length) {
+      html += `<div class="oasis-launch-wf-item" style="opacity:0.6;cursor:default;">
+          <div class="oasis-launch-wf-item-icon">📭</div>
+          <div class="oasis-launch-wf-item-info"><div class="oasis-launch-wf-item-name">${t('wf_team_no_layouts')}</div></div>
+        </div>`;
+    } else {
+      for (const wf of items) {
+        const isSelected = oasisLaunchWorkflow && oasisLaunchWorkflow.name === wf.name && oasisLaunchWorkflow.team === (grp.team || '') && oasisLaunchWorkflow.mode === wf.mode;
+        const safeTeam = (grp.team || '').replace(/'/g, "\\'");
+        const safeName = wf.name.replace(/'/g, "\\'");
+        const modeBadge = wf.mode === 'python' ? `<span class="oasis-launch-wf-mode-badge">py</span>` : '';
+        html += `<div class="oasis-launch-wf-item${isSelected ? ' selected' : ''}" onclick="selectOasisLaunchWorkflow('${safeName}','${safeTeam}','${wf.mode || 'yaml'}')">
+          <div class="oasis-launch-wf-item-icon">${isSelected ? '✅' : '📋'}</div>
+          <div class="oasis-launch-wf-item-info">
+            <div class="oasis-launch-wf-item-name">${esc(wf.name)}${modeBadge}</div>
+            <div class="oasis-launch-wf-item-hint">${isSelected ? t('wf_selected') : t('oasis_launch_select_hint')}</div>
+          </div>
+        </div>`;
+      }
+    }
+    html += `</div></div>`;
+  }
+  container.innerHTML = html;
+  updateOasisLaunchSelectedTag();
+}
+
+function toggleOasisLaunchGroup(groupKey) {
+  if (oasisLaunchExpandedGroups.has(groupKey)) {
+    oasisLaunchExpandedGroups.delete(groupKey);
+  } else {
+    oasisLaunchExpandedGroups.add(groupKey);
+  }
+  renderOasisLaunchWorkflowList();
+}
+
+function selectOasisLaunchWorkflow(name, team, mode) {
+  team = team || '';
+  mode = mode || 'yaml';
+  if (oasisLaunchWorkflow && oasisLaunchWorkflow.name === name && oasisLaunchWorkflow.team === team && oasisLaunchWorkflow.mode === mode) {
+    oasisLaunchWorkflow = null;
+  } else {
+    oasisLaunchWorkflow = { name, team, mode };
+  }
+  renderOasisLaunchWorkflowList();
+}
+
+function updateOasisLaunchSelectedTag() {
+  const tagEl = document.getElementById('oasis-launch-selected-tag');
+  if (!tagEl) return;
+  if (oasisLaunchWorkflow) {
+    const displayName = oasisLaunchWorkflow.team ? `${oasisLaunchWorkflow.team}/${oasisLaunchWorkflow.name}` : oasisLaunchWorkflow.name;
+    tagEl.innerHTML = `<span class="oasis-launch-selected-tag">📋 ${esc(displayName)}</span>`;
+    tagEl.style.display = '';
+  } else {
+    tagEl.style.display = 'none';
+  }
+}
+
+async function launchWorkflowFromSidebar() {
+  if (!oasisLaunchWorkflow) {
+    toast(t('oasis_launch_no_wf'));
+    return;
+  }
+  const textarea = document.getElementById('oasis-launch-textarea');
+  const question = (textarea && textarea.value.trim()) || '';
+  if (!question) {
+    toast(t('oasis_launch_no_task'));
+    textarea && textarea.focus();
+    return;
+  }
+  const btn = document.getElementById('oasis-launch-start-btn');
+  if (btn) btn.disabled = true;
+  try {
+    await startWorkflow(question, oasisLaunchWorkflow.name, oasisLaunchWorkflow.team, oasisLaunchWorkflow.mode);
+    // Clear state and return to topic list
+    oasisLaunchWorkflow = null;
+    if (textarea) textarea.value = '';
+    showOasisTopicList();
+    renderOasisTopicListLoading();
+    refreshOasisTopicsDirect();
+  } catch (e) {
+    toast(t('wf_start_failed') + ': ' + (e.message || e));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function renderOasisTopicListLoading() {
@@ -9025,8 +9250,10 @@ async function openOasisTopic(topicId) {
   // Switch views
   document.getElementById('oasis-topic-list').style.display = 'none';
   document.getElementById('oasis-topic-list-header').style.display = 'none';
+  document.getElementById('oasis-launch-panel').style.display = 'none';
   document.getElementById('oasis-detail-view').classList.add('show');
   document.getElementById('oasis-back-btn').style.display = '';
+  document.getElementById('oasis-launch-wf-btn').style.display = 'none';
   document.getElementById('oasis-header-label').textContent = t('oasis_topic_detail');
   document.getElementById('oasis-conclusion-area').style.display = 'none';
   document.getElementById('oasis-detail-status').textContent = '';

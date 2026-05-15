@@ -7583,7 +7583,8 @@ def preview_team_snapshot():
 
     # --- 6. workflows (yaml + python files) ---
     workflow_files = []
-    for root_path, dirs, files in os.walk(team_dir):
+    oasis_dir = os.path.join(team_dir, "oasis")
+    for root_path, dirs, files in os.walk(oasis_dir):
         for file in files:
             if file.endswith(('.yaml', '.yml', '.py')):
                 file_path = os.path.join(root_path, file)
@@ -7754,7 +7755,8 @@ def download_team_snapshot():
 
             # Add workflow files (.yaml/.yml/.py)
             if _inc("workflows"):
-                for root_path, dirs, files in os.walk(team_dir):
+                oasis_dir = os.path.join(team_dir, "oasis")
+                for root_path, dirs, files in os.walk(oasis_dir):
                     for file in files:
                         if file.endswith(('.yaml', '.yml', '.py')):
                             file_path = os.path.join(root_path, file)
