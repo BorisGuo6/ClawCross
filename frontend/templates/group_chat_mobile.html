@@ -10710,8 +10710,20 @@ async function saveMobileChatbotConfig() {
     const whitelistData = await whitelistResp.json();
     if (!whitelistResp.ok || whitelistData.error) throw new Error(whitelistData.error || `whitelist HTTP ${whitelistResp.status}`);
     mobileChatbotWhitelist = normalizeMobileChatbotWhitelist(whitelistData.whitelist || mobileChatbotWhitelist);
-    mobileChatbotStatus('已保存。重启服务后渠道运行配置会生效。');
-    toast('Channel 设置已保存');
+    mobileChatbotStatus('已保存，正在重启 chatbot 使配置生效...');
+    try {
+      const restartResp = await fetch('/proxy_restart_chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const restartData = await restartResp.json().catch(() => ({}));
+      if (!restartResp.ok || restartData.error) throw new Error(restartData.error || `HTTP ${restartResp.status}`);
+      mobileChatbotStatus('已保存，chatbot 正在后台重启。');
+      toast('Channel 设置已保存，chatbot 正在重启');
+    } catch (restartError) {
+      mobileChatbotStatus('已保存，但 chatbot 自动重启失败: ' + restartError.message, true);
+      toast('Channel 设置已保存，但需要手动重启 chatbot');
+    }
     return true;
   } catch (e) {
     mobileChatbotStatus('保存失败: ' + e.message, true);

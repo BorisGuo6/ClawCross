@@ -428,6 +428,10 @@ def launch_services(services):
     wait_for_started_services(services)
 
 
+def _channel_disabled():
+    return (os.getenv("CLAWCROSS_NO_CHANNEL") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def start_chatbot_if_configured(platforms):
     if not platforms:
         return None
@@ -441,9 +445,60 @@ def start_chatbot_if_configured(platforms):
         stderr=None,
     )
     proc._cc_optional = True
+    proc._cc_chatbot = True
     child_procs.append(proc)
     print(f"   ✅ 社交媒体机器人已启动 (PID: {proc.pid})")
     return proc
+
+
+def stop_chatbot_processes():
+    chatbot_procs = [p for p in child_procs if getattr(p, "_cc_chatbot", False)]
+    if not chatbot_procs:
+        return
+    for proc in chatbot_procs:
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+    for _ in range(50):
+        if all(p.poll() is not None for p in chatbot_procs):
+            break
+        time.sleep(0.1)
+    for proc in chatbot_procs:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    for proc in chatbot_procs:
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+    child_procs[:] = [p for p in child_procs if p not in chatbot_procs]
+
+
+def restart_chatbot_only():
+    print("\n🔄 检测到 chatbot 重启信号，正在重启社交媒体机器人...")
+    stop_chatbot_processes()
+    load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
+    if _channel_disabled():
+        print("💬 [skip] CLAWCROSS_NO_CHANNEL 已设置，聊天机器人已停止")
+        return
+    platforms = _detect_chatbot_platforms()
+    if not platforms:
+        print("💬 [skip] 未检测到聊天机器人配置，聊天机器人已停止")
+        return
+    if not os.path.exists(chatbot_main):
+        print("💬 [skip] chatbot/main.py 不存在")
+        return
+    nonebot_names = _configured_nonebot_adapter_names()
+    if nonebot_names and not _ensure_nonebot_deps(nonebot_names):
+        print("💬 [skip] NoneBot 依赖未就绪，跳过 chatbot（不影响其他服务）")
+        return
+    start_chatbot_if_configured(platforms)
+    print("✅ chatbot 已重启！")
 
 
 # 注册退出清理函数
@@ -705,9 +760,8 @@ def _ensure_nonebot_deps(adapter_names):
     return True
 
 
-_no_channel = (os.getenv("CLAWCROSS_NO_CHANNEL") or "").strip().lower() in ("1", "true", "yes", "on")
 chatbot_platforms = _detect_chatbot_platforms()
-has_chatbot_config = bool(chatbot_platforms) and not _no_channel
+has_chatbot_config = bool(chatbot_platforms) and not _channel_disabled()
 
 chatbot_main = os.path.join(PROJECT_ROOT, "chatbot", "main.py")
 should_start_chatbot = has_chatbot_config and os.path.exists(chatbot_main)
@@ -732,7 +786,7 @@ if should_start_chatbot:
         }
     )
 else:
-    if _no_channel:
+    if _channel_disabled():
         print("💬 [skip] CLAWCROSS_NO_CHANNEL 已设置，跳过聊天机器人")
     elif not chatbot_platforms:
         print("💬 [skip] 未检测到聊天机器人配置（NONEBOT_ADAPTERS / *_WEBHOOK_URL 均为空）")
@@ -780,9 +834,12 @@ threading.Thread(target=_open_browser, daemon=True).start()
 
 # 重启信号文件路径
 RESTART_FLAG = os.path.join(str(PID_DIR), "restart_flag")
+CHATBOT_RESTART_FLAG = os.path.join(str(PID_DIR), "chatbot_restart_flag")
 # 启动时清理残留的重启信号
 if os.path.isfile(RESTART_FLAG):
     os.remove(RESTART_FLAG)
+if os.path.isfile(CHATBOT_RESTART_FLAG):
+    os.remove(CHATBOT_RESTART_FLAG)
 
 # 主循环：监测子进程退出和重启信号
 try:
@@ -829,7 +886,7 @@ try:
             restart_chatbot_platforms = _detect_chatbot_platforms()
             restart_should_start_chatbot = (
                 bool(restart_chatbot_platforms)
-                and not _no_channel
+                and not _channel_disabled()
                 and os.path.exists(chatbot_main)
             )
             if restart_should_start_chatbot:
@@ -842,6 +899,12 @@ try:
                 start_chatbot_if_configured(restart_chatbot_platforms)
             print()
             print("✅ 所有服务已重启！")
+            print()
+            continue
+
+        if os.path.isfile(CHATBOT_RESTART_FLAG):
+            os.remove(CHATBOT_RESTART_FLAG)
+            restart_chatbot_only()
             print()
             continue
 

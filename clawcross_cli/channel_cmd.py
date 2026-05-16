@@ -32,6 +32,7 @@ from pathlib import Path
 from clawcross_cli import channels as catalog
 from clawcross_cli.channels import BotField, ChannelInfo
 from clawcross_cli.picker import curses_radiolist, prompt_text
+from src.utils.runtime_paths import PID_DIR
 
 
 def _env_path() -> Path:
@@ -65,6 +66,14 @@ def _write_env(updates: dict[str, str]) -> None:
     existing.update(updates)
     lines = [f"{k}={_quote(v)}" for k, v in existing.items()]
     path.write_text("\n".join(lines) + "\n", "utf-8")
+
+
+def _request_chatbot_restart() -> None:
+    try:
+        PID_DIR.mkdir(parents=True, exist_ok=True)
+        (PID_DIR / "chatbot_restart_flag").write_text("restart", "utf-8")
+    except Exception:
+        pass
 
 
 def _quote(value: str) -> str:
@@ -196,6 +205,7 @@ def cmd_clear(channel_id: str) -> str:
         if not cleared:
             return f"Channel {ch.label} is already empty."
         _write_env(updates)
+        _request_chatbot_restart()
         return f"Cleared {len(cleared)} env vars for {ch.label}: {', '.join(cleared)}."
     updates = {}
     if ch.env_key in env and _parse_bots(env.get(ch.env_key, "")):
@@ -206,7 +216,8 @@ def cmd_clear(channel_id: str) -> str:
     if not updates:
         return f"Channel {ch.label} is already empty."
     _write_env(updates)
-    return f"Cleared {ch.label}: {', '.join(updates)}."
+    _request_chatbot_restart()
+    return f"Cleared {ch.label}: {', '.join(updates)}. Chatbot restart requested."
 
 
 def _prompt_field(field: BotField, *, interactive: bool) -> str:
@@ -317,7 +328,8 @@ def cmd_setup(channel_id: str | None, *, interactive: bool) -> str:
         if not updates:
             return "Setup cancelled (no values provided)."
         _write_env(updates)
-        return f"Saved {len(updates)} env vars for {ch.label}: {', '.join(updates)}."
+        _request_chatbot_restart()
+        return f"Saved {len(updates)} env vars for {ch.label}: {', '.join(updates)}. Chatbot restart requested."
 
     env_updates = _collect_env_fields(ch, interactive=True)
     bot = _collect_bot(ch, interactive=True)
@@ -330,9 +342,10 @@ def cmd_setup(channel_id: str | None, *, interactive: bool) -> str:
         bots.append(bot)
         env_updates[ch.env_key] = json.dumps(bots, ensure_ascii=False)
     _write_env(env_updates)
+    _request_chatbot_restart()
     if bot is None:
-        return f"Saved env fields for {ch.label}: {', '.join(env_updates)}."
-    return f"Saved 1 bot to {ch.env_key}.  Total bots: {len(bots)}."
+        return f"Saved env fields for {ch.label}: {', '.join(env_updates)}. Chatbot restart requested."
+    return f"Saved 1 bot to {ch.env_key}. Total bots: {len(bots)}. Chatbot restart requested."
 
 
 # ── unified dispatcher ──────────────────────────────────────────────────────

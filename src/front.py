@@ -2897,6 +2897,21 @@ def proxy_restart_services():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/proxy_restart_chatbot", methods=["POST"])
+def proxy_restart_chatbot():
+    """只重启社交媒体机器人，让 channel 配置保存后尽快生效。"""
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "not logged in"}), 401
+    try:
+        restart_flag = os.path.join(str(PID_DIR), "chatbot_restart_flag")
+        with open(restart_flag, "w") as f:
+            f.write("restart")
+        return jsonify({"status": "success", "message": "chatbot 重启信号已发送"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/proxy_update_check", methods=["POST"])
 def proxy_update_check():
     user_id = session.get("user_id", "")
