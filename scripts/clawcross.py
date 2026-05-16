@@ -19,7 +19,6 @@ import sys
 import tempfile
 import unicodedata
 import urllib.error
-import urllib.parse
 import urllib.request
 
 try:
@@ -598,8 +597,29 @@ def _request_json(method: str, url: str, headers: dict | None = None, data: dict
         hdrs["Content-Type"] = "application/json"
     hdrs.update(headers or {})
     req = urllib.request.Request(url, data=body, headers=hdrs, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        text = resp.read().decode("utf-8", errors="replace")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        # Read the body so the caller sees the real backend error
+        # (e.g. "acpx openclaw: sessions list failed: ...") instead of
+        # just "HTTP Error 502: BAD GATEWAY".
+        try:
+            body_bytes = exc.read() or b""
+        except Exception:
+            body_bytes = b""
+        body_text = body_bytes.decode("utf-8", errors="replace").strip()
+        detail = ""
+        if body_text:
+            try:
+                payload = json.loads(body_text)
+                if isinstance(payload, dict):
+                    detail = str(payload.get("error") or payload.get("message") or "").strip()
+            except json.JSONDecodeError:
+                detail = body_text[:200]
+        if detail:
+            raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+        raise
     return json.loads(text) if text.strip() else {}
 
 
@@ -628,22 +648,29 @@ def _fetch_session_history(state: dict, session_id: str, *, limit: int = 10) -> 
             return messages[-limit:], None
         tool = _acpx_tool(platform)
         if ":" not in platform and tool in ACP_PLATFORMS:
-            query = urllib.parse.urlencode({"tool": tool, "name": session_id, "limit": limit})
-            data = _request_json("GET", f"{FRONT_BASE}/proxy_acpx_session_history?{query}")
-            messages = (data.get("history") or data.get("messages")) if isinstance(data, dict) else None
-            if not isinstance(messages, list):
-                return [], None
-            return messages[-limit:], None
+            # Read directly from ~/.clawcross/data/external_agent_history/<tool>#<sid>.db
+            # — bypasses acpx subprocess (which may be missing or fail) and gives
+            # the full send/recv/tool stream, not acpx's short textPreview.
+            from clawcross_cli.session_adapter import fetch_history_messages
+            return fetch_history_messages(tool, session_id, limit=limit)
         return [], None
     except Exception as exc:
         return [], str(exc)
 
 
+_HIST_COLOR_USER = "\033[38;5;39m"   # cyan-blue
+_HIST_COLOR_AI = ANSI_GREEN
+_HIST_COLOR_TOOL = "\033[38;5;179m"  # warm yellow
+
+
 def _print_history_tail(messages: list[dict], *, max_chars: int = 400) -> None:
-    """Render replayed history in a CLI-friendly format."""
+    """Render replayed history with turn numbers, colored labels, and
+    blank-line separation. Each message stays on a single CLI row so a
+    code block in an AI reply does not flood the terminal."""
     if not messages:
         return
-    print("── history ──")
+    print(_dim("── history ──"))
+    turn = 0
     for msg in messages:
         if not isinstance(msg, dict):
             continue
@@ -655,29 +682,35 @@ def _print_history_tail(messages: list[dict], *, max_chars: int = 400) -> None:
                 if isinstance(part, dict) and part.get("type") == "text":
                     parts.append(part.get("text") or "")
             content = "".join(parts)
-        text = str(content).strip()
-        # Collapse newlines so each message stays on a single CLI row.
-        # Otherwise a code block in an AI reply would unfold into dozens
-        # of lines and the resume replay would flood the terminal.
-        text = re.sub(r"\s*\n\s*", " ⏎ ", text)
+        text = re.sub(r"\s*\n\s*", " ⏎ ", str(content).strip())
         if len(text) > max_chars:
             text = text[:max_chars].rstrip() + "…"
-        if role == "user":
-            label = "you"
-        elif role == "assistant":
-            label = "ai"
-        elif role == "tool":
-            label = f"tool[{msg.get('tool_name', '')}]"
-        else:
-            label = role or "?"
-        if text:
-            print(f"  {label}: {text}")
         tool_calls = msg.get("tool_calls") if role == "assistant" else None
-        if isinstance(tool_calls, list):
-            for tc in tool_calls:
-                if isinstance(tc, dict) and tc.get("name"):
-                    print(f"  ai→tool: {tc.get('name')}")
-    print("── end ──")
+        tool_call_names = [
+            tc.get("name") for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("name")
+        ] if isinstance(tool_calls, list) else []
+        if not text and not tool_call_names:
+            continue
+
+        turn += 1
+        if role == "user":
+            label = _style("you", _HIST_COLOR_USER)
+        elif role == "assistant":
+            label = _style("ai", _HIST_COLOR_AI)
+        elif role == "tool":
+            label = _style(f"tool[{msg.get('tool_name', '')}]", _HIST_COLOR_TOOL)
+        else:
+            label = _dim(role or "?")
+        prefix = _dim(f"[{turn}]")
+
+        if text:
+            print(f"  {prefix} {label}: {text}")
+        for name in tool_call_names:
+            arrow = _dim("→tool")
+            print(f"  {prefix} {label}{arrow}: {name}")
+        print()
+    print(_dim("── end ──"))
 
 
 def _new_session_name(state: dict) -> str:
@@ -717,22 +750,9 @@ def _list_current_platform_sessions(state: dict) -> tuple[list[dict], str | None
             return sessions, None
         tool = _acpx_tool(platform)
         if ":" not in platform and tool in ACP_PLATFORMS:
-            query = urllib.parse.urlencode({"tool": tool})
-            data = _request_json("GET", f"{FRONT_BASE}/proxy_acpx_sessions?{query}")
-            raw_sessions = data.get("sessions", []) if isinstance(data, dict) else []
-            sessions = []
-            for row in raw_sessions:
-                if not isinstance(row, dict) or row.get("closed"):
-                    continue
-                name = str(row.get("name") or row.get("session_id") or "").strip()
-                if not name:
-                    continue
-                sessions.append({
-                    "session": name,
-                    "title": row.get("title") or row.get("cwd") or "",
-                    "message_count": row.get("message_count"),
-                })
-            return sessions, None
+            # Same source as fetch — list every session DB on disk for this tool.
+            from clawcross_cli.session_adapter import list_history_sessions
+            return list_history_sessions(tool)
         return [], f"Platform '{platform}' does not expose session listing yet."
     except Exception as exc:
         return [], str(exc)
