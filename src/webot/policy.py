@@ -327,24 +327,25 @@ def evaluate_tool_policy(
                 reason=f"工具策略阻止了 {tool_name} 的内容模式。",
                 matched_rule=matched_rule,
             )
-        if rule.content_allow_patterns and not _matches_any(rule.content_allow_patterns, content_subject):
-            return ToolPolicyDecision(
-                allowed=False,
-                reason=f"工具策略未批准 {tool_name} 当前内容。",
-                matched_rule=matched_rule,
-            )
         if _matches_any(rule.path_block_patterns, path_subject):
             return ToolPolicyDecision(
                 allowed=False,
                 reason=f"工具策略阻止了 {tool_name} 访问该路径。",
                 matched_rule=matched_rule,
             )
-        if rule.path_allow_patterns and not _matches_any(rule.path_allow_patterns, path_subject):
-            return ToolPolicyDecision(
-                allowed=False,
-                reason=f"工具策略未批准 {tool_name} 当前路径。",
-                matched_rule=matched_rule,
-            )
+        if approval == "manual":
+            if rule.content_allow_patterns and not _matches_any(rule.content_allow_patterns, content_subject):
+                return ToolPolicyDecision(
+                    allowed=False,
+                    reason=f"工具策略未批准 {tool_name} 当前内容。",
+                    matched_rule=matched_rule,
+                )
+            if rule.path_allow_patterns and not _matches_any(rule.path_allow_patterns, path_subject):
+                return ToolPolicyDecision(
+                    allowed=False,
+                    reason=f"工具策略未批准 {tool_name} 当前路径。",
+                    matched_rule=matched_rule,
+                )
 
     if approval == "deny":
         return ToolPolicyDecision(

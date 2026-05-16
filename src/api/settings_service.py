@@ -23,30 +23,12 @@ from utils.env_settings import (
     read_env_settings,
     write_env_settings,
 )
+from utils.chatbot_channel_catalog import get_chatbot_channels
 from utils.runtime_paths import DATA_DIR, PID_DIR
 from api.settings_models import ChatbotWhitelistUpdateRequest, SettingsUpdateRequest
 
 
 CHATBOT_WHITELIST_CHANNELS = ("telegram", "qq", "weclaw", "webhook")
-CHATBOT_CHANNEL_CATALOG = [
-    {"id": "telegram", "label": "Telegram", "kind": "nonebot", "adapter": "telegram", "env_key": "TELEGRAM_BOTS"},
-    {"id": "qq", "label": "QQ", "kind": "nonebot", "adapter": "qq", "env_key": "QQ_BOTS"},
-    {"id": "onebotv11", "label": "OneBot V11", "kind": "nonebot", "adapter": "onebot.v11", "env_key": "ONEBOTV11_BOTS"},
-    {"id": "onebotv12", "label": "OneBot V12", "kind": "nonebot", "adapter": "onebot.v12", "env_key": "ONEBOTV12_BOTS"},
-    {"id": "discord", "label": "Discord", "kind": "nonebot", "adapter": "discord", "env_key": "DISCORD_BOTS"},
-    {"id": "dingtalk", "label": "DingTalk", "kind": "nonebot", "adapter": "dingtalk", "env_key": "DINGTALK_BOTS"},
-    {"id": "feishu", "label": "Feishu", "kind": "nonebot", "adapter": "feishu", "env_key": "FEISHU_BOTS"},
-    {"id": "kaiheila", "label": "Kaiheila / KOOK", "kind": "nonebot", "adapter": "kaiheila", "env_key": "KAIHEILA_BOTS"},
-    {"id": "mail", "label": "Mail", "kind": "nonebot", "adapter": "mail", "env_key": "MAIL_BOTS"},
-    {"id": "minecraft", "label": "Minecraft", "kind": "nonebot", "adapter": "minecraft", "env_key": "MINECRAFT_BOTS"},
-    {"id": "github", "label": "GitHub", "kind": "nonebot", "adapter": "github", "env_key": "GITHUB_BOTS"},
-    {"id": "villa", "label": "Villa", "kind": "nonebot", "adapter": "villa", "env_key": "VILLA_BOTS"},
-    {"id": "yunhu", "label": "Yunhu", "kind": "nonebot", "adapter": "yunhu", "env_key": "YUNHU_BOTS"},
-    {"id": "heybox", "label": "Heybox", "kind": "nonebot", "adapter": "heybox", "env_key": "HEYBOX_BOTS"},
-    {"id": "console", "label": "Console", "kind": "nonebot", "adapter": "console", "env_key": "CONSOLE_BOTS"},
-    {"id": "weclaw", "label": "微信 / WeClaw", "kind": "weclaw", "adapter": "weclaw", "env_key": ""},
-    {"id": "webhook", "label": "Custom Webhook", "kind": "webhook", "adapter": "webhook", "env_key": ""},
-]
 
 
 class SettingsService:
@@ -177,7 +159,7 @@ class SettingsService:
             "status": "success",
             "path": os.path.relpath(path, self.project_root) if path.startswith(self.project_root) else path,
             "channels": list(CHATBOT_WHITELIST_CHANNELS),
-            "available_channels": CHATBOT_CHANNEL_CATALOG,
+            "available_channels": get_chatbot_channels(),
             "whitelist": self._read_chatbot_whitelist(),
         }
 
@@ -187,6 +169,6 @@ class SettingsService:
         return {
             "status": "success",
             "channels": list(CHATBOT_WHITELIST_CHANNELS),
-            "available_channels": CHATBOT_CHANNEL_CATALOG,
+            "available_channels": get_chatbot_channels(),
             "whitelist": self._read_chatbot_whitelist(),
         }

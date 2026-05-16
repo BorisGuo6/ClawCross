@@ -8,12 +8,17 @@ keep consuming env vars; only the factory is rewired.
 
 Resolution priority:
 
-1. ``models.json``'s active profile (multi-profile mode)
-2. ``config/.env`` LLM_* keys (legacy single-config mode)
+1. ``config/.env`` LLM_* keys (single-config mode)
+2. ``models.json``'s active profile (multi-profile fallback)
 
-When (1) is present, the resolved values are *also* exported into
-``os.environ`` so legacy code paths reading ``LLM_API_KEY`` etc. directly
-keep working without further changes.
+(1) wins as long as ``.env`` has ``LLM_MODEL`` or ``LLM_API_KEY`` set —
+since ``model use`` mirrors the active profile into ``.env`` anyway,
+``.env`` is the authoritative "currently effective" config and
+``models.json`` is just the profile catalog used for switching.
+
+When (2) is resolved, the values are *also* exported into ``os.environ``
+so legacy code paths reading ``LLM_API_KEY`` etc. directly keep working
+without further changes.
 """
 
 from __future__ import annotations
@@ -44,6 +49,20 @@ class RuntimeProfile:
 
 def resolve_active_profile() -> RuntimeProfile:
     """Return the runtime LLM profile to use, in priority order."""
+    env = _read_env()
+    if env.get(ENV_MODEL_KEY) or env.get(ENV_API_KEY):
+        provider_slug = env.get(ENV_PROVIDER_KEY, "")
+        info = resolve_provider(provider_slug) if provider_slug else None
+        api_mode = info.api_mode if info else "chat"
+        return RuntimeProfile(
+            provider=provider_slug,
+            model=env.get(ENV_MODEL_KEY, ""),
+            base_url=env.get(ENV_BASE_URL_KEY, info.default_base_url if info else ""),
+            api_key=env.get(ENV_API_KEY, ""),
+            api_mode=api_mode,
+            source="env",
+        )
+
     profile = models_store.get_active()
     if profile is not None:
         info = resolve_provider(profile.provider)
@@ -59,20 +78,6 @@ def resolve_active_profile() -> RuntimeProfile:
         )
         _export_to_env(rt)
         return rt
-
-    env = _read_env()
-    if env.get(ENV_MODEL_KEY) or env.get(ENV_API_KEY):
-        provider_slug = env.get(ENV_PROVIDER_KEY, "")
-        info = resolve_provider(provider_slug) if provider_slug else None
-        api_mode = info.api_mode if info else "chat"
-        return RuntimeProfile(
-            provider=provider_slug,
-            model=env.get(ENV_MODEL_KEY, ""),
-            base_url=env.get(ENV_BASE_URL_KEY, info.default_base_url if info else ""),
-            api_key=env.get(ENV_API_KEY, ""),
-            api_mode=api_mode,
-            source="env",
-        )
 
     return RuntimeProfile(
         provider="", model="", base_url="", api_key="", api_mode="chat", source="empty"

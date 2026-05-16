@@ -90,16 +90,20 @@ def _is_configured(channel: ChannelInfo, env: dict[str, str]) -> bool:
     if channel.kind == "env_vars":
         # Configured if any non-default required-looking field is set.
         for f in channel.bot_fields:
-            value = (env.get(f.name) or "").strip()
+            value = (env.get(_field_env_name(f)) or "").strip()
             if value and (not f.default or value != f.default):
                 if f.password and value:
                     return True
                 if not f.password:
                     return True
         # Fall back: any of the fields differs from default
-        return any((env.get(f.name) or "").strip() not in {"", f.default}
+        return any((env.get(_field_env_name(f)) or "").strip() not in {"", f.default}
                    for f in channel.bot_fields)
     return bool(_parse_bots(env.get(channel.env_key, "")))
+
+
+def _field_env_name(field: BotField) -> str:
+    return field.env_key or field.name
 
 
 def _mask(value: str) -> str:
@@ -159,12 +163,20 @@ def cmd_show(channel_id: str) -> str:
     lines = [f"{ch.label} ({ch.env_key}):"]
     if not bots:
         lines.append("  (no bots configured)")
-        return "\n".join(lines)
-    for i, bot in enumerate(bots, 1):
-        lines.append(f"  Bot {i}:")
-        for k, v in bot.items():
-            display = _mask(v) if any(p in k.lower() for p in ("token", "secret", "key")) else v
-            lines.append(f"    {k}: {display}")
+    else:
+        for i, bot in enumerate(bots, 1):
+            lines.append(f"  Bot {i}:")
+            for k, v in bot.items():
+                display = _mask(v) if any(p in k.lower() for p in ("token", "secret", "key")) else v
+                lines.append(f"    {k}: {display}")
+    env_fields = [f for f in ch.bot_fields if f.target == "env"]
+    if env_fields:
+        lines.append("  Env fields:")
+        for f in env_fields:
+            key = _field_env_name(f)
+            value = env.get(key, "")
+            display = _mask(value) if f.password or any(p in key.lower() for p in ("token", "secret", "key", "password")) else (value or "(unset)")
+            lines.append(f"    {key}: {display}")
     return "\n".join(lines)
 
 
@@ -184,10 +196,16 @@ def cmd_clear(channel_id: str) -> str:
             return f"Channel {ch.label} is already empty."
         _write_env(updates)
         return f"Cleared {len(cleared)} env vars for {ch.label}: {', '.join(cleared)}."
-    if ch.env_key not in env or not _parse_bots(env.get(ch.env_key, "")):
+    updates = {}
+    if ch.env_key in env and _parse_bots(env.get(ch.env_key, "")):
+        updates[ch.env_key] = "[]"
+    for f in ch.bot_fields:
+        if f.target == "env" and env.get(_field_env_name(f)):
+            updates[_field_env_name(f)] = ""
+    if not updates:
         return f"Channel {ch.label} is already empty."
-    _write_env({ch.env_key: "[]"})
-    return f"Cleared all bots for {ch.label} ({ch.env_key}=[])."
+    _write_env(updates)
+    return f"Cleared {ch.label}: {', '.join(updates)}."
 
 
 def _prompt_field(field: BotField, *, interactive: bool) -> str:
@@ -211,14 +229,30 @@ def _prompt_field(field: BotField, *, interactive: bool) -> str:
 def _collect_bot(ch: ChannelInfo, *, interactive: bool) -> dict | None:
     bot: dict = {}
     for f in ch.bot_fields:
+        if f.target == "env":
+            continue
         value = _prompt_field(f, interactive=interactive)
         if not value and not f.default:
             if f.password:
                 print(f"   {f.name} is required.")
                 return None
         if value:
-            bot[f.name] = value
+            if f.target == "bot_intents":
+                bot.setdefault("intents", {})[f.name] = value.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                bot[f.name] = value
     return bot or None
+
+
+def _collect_env_fields(ch: ChannelInfo, *, interactive: bool) -> dict[str, str]:
+    updates: dict[str, str] = {}
+    for f in ch.bot_fields:
+        if f.target != "env":
+            continue
+        value = _prompt_field(f, interactive=interactive)
+        if value or f.default:
+            updates[_field_env_name(f)] = value or f.default
+    return updates
 
 
 def cmd_setup(channel_id: str | None, *, interactive: bool) -> str:
@@ -261,20 +295,25 @@ def cmd_setup(channel_id: str | None, *, interactive: bool) -> str:
         for f in ch.bot_fields:
             value = _prompt_field(f, interactive=True)
             if value or f.default:
-                updates[f.name] = value or f.default
+                updates[_field_env_name(f)] = value or f.default
         if not updates:
             return "Setup cancelled (no values provided)."
         _write_env(updates)
         return f"Saved {len(updates)} env vars for {ch.label}: {', '.join(updates)}."
 
+    env_updates = _collect_env_fields(ch, interactive=True)
     bot = _collect_bot(ch, interactive=True)
-    if bot is None:
+    if bot is None and not env_updates:
         return "Setup cancelled (no value provided)."
 
     env = _read_env()
     bots = _parse_bots(env.get(ch.env_key, ""))
-    bots.append(bot)
-    _write_env({ch.env_key: json.dumps(bots, ensure_ascii=False)})
+    if bot is not None:
+        bots.append(bot)
+        env_updates[ch.env_key] = json.dumps(bots, ensure_ascii=False)
+    _write_env(env_updates)
+    if bot is None:
+        return f"Saved env fields for {ch.label}: {', '.join(env_updates)}."
     return f"Saved 1 bot to {ch.env_key}.  Total bots: {len(bots)}."
 
 

@@ -391,50 +391,9 @@ def _schedule_background_run(
     )
 
 async def _recover_background_runs(username: str = "") -> None:
-    for run in list_recoverable_runs():
-        if username and run.user_id != username:
-            continue
-        if _active_background_task(run.agent_id) is not None:
-            continue
-        record = get_subagent(run.agent_id, run.user_id)
-        if record is None:
-            record_run_event(
-                run.user_id,
-                run.run_id,
-                run.session_id,
-                event_type="recover_failed",
-                status="failed",
-                message="关联子 Agent 已不存在，无法恢复后台运行。",
-            )
-            update_run_status(
-                run.run_id,
-                run.user_id,
-                status="failed",
-                last_error="关联子 Agent 已不存在，无法恢复后台运行。",
-                last_result="关联子 Agent 已不存在，无法恢复后台运行。",
-            )
-            continue
-        record_run_event(
-            run.user_id,
-            run.run_id,
-            run.session_id,
-            event_type="recovered",
-            status=run.status,
-            attempt=run.attempt_count,
-            message=f"后台运行由 worker {_WORKER_ID} 恢复。",
-        )
-        _schedule_background_run(
-            run_id=run.run_id,
-            username=run.user_id,
-            agent_id=run.agent_id,
-            session_id=run.session_id,
-            agent_type=run.agent_type,
-            agent_name=record.name,
-            content=run.input_text,
-            parent_session=run.parent_session,
-            timeout=run.timeout_seconds,
-            max_turns=run.max_turns,
-        )
+    # 后台执行已迁移到 agent 主进程（通过 /system_trigger fire-and-forget），
+    # webot.py 子进程不再持有 in-process task，无需"恢复"。保留函数签名让调用点不变。
+    return
 
 async def _call_internal_subagent(
     *,
@@ -888,7 +847,8 @@ async def spawn_subagent(
         reason=description or f"{profile.display_name} delegated from {effective_parent_session or 'default'}",
     )
 
-    if _active_background_task(agent_id) is not None:
+    # 后台执行已迁到 agent 主进程：通过 session busy 判断而不是本地 task
+    if record.status in {"queued", "running"} and await _peek_session_busy(username, session_id):
         return (
             f"⏳ 子 Agent {record.name} ({agent_id}) 正在后台运行中。\n"
             "请先等待完成，或稍后用 list_subagents / get_subagent_history 查看状态。"
@@ -1023,19 +983,23 @@ async def spawn_subagent(
                 f"error: {exc}"
             )
 
-    _schedule_background_run(
-        run_id=run_id,
+    # Fire-and-forget：把任务投递到 agent 主进程的 /system_trigger，
+    # 由它在自己的事件循环里跑这个 session，不依赖 webot.py 子进程存活。
+    await _push_system_message(
         username=username,
-        agent_id=agent_id,
         session_id=session_id,
-        agent_type=profile.agent_type,
-        agent_name=record.name,
-        content=task,
-        parent_session=effective_parent_session,
-        timeout=timeout,
-        max_turns=max_turns,
+        text=task,
     )
-    update_subagent_status(agent_id, username, status="queued")
+    update_run_status(run_id, username, status="running")
+    update_subagent_status(agent_id, username, status="running")
+    record_run_event(
+        username,
+        run_id,
+        session_id,
+        event_type="dispatched",
+        status="running",
+        message=f"后台子 Agent 已派发到 agent 主进程: {record.name}",
+    )
     return (
         f"🚀 {mode_label}子 Agent 已转后台运行\n"
         f"run_id: {run_id}\n"
@@ -1062,13 +1026,15 @@ async def list_subagents(username: str) -> str:
 
     lines = [f"📋 用户 {username} 的子 Agent 列表:\n"]
     for record in records:
-        task = _active_background_task(record.agent_id)
-        runtime_status = "running" if task else record.status
+        runtime_status = record.status
         latest_run = get_latest_run_for_agent(username, record.agent_id)
         queued_inbox = len(list_inbox_messages(username, record.session_id, status="queued", limit=5))
         session_mode = load_session_mode(username, record.session_id).get("mode")
-        if runtime_status in {"queued", "running"} and task is None:
-            runtime_status = "stale"
+        # 后台执行在 agent 主进程中跑：DB 写 "running" 后只能靠 session 是否 busy 判断真实状态。
+        if runtime_status == "running":
+            with contextlib.suppress(Exception):
+                if not await _peek_session_busy(username, record.session_id):
+                    runtime_status = "running (session idle — 用 get_subagent_history 查结果)"
         lines.append(
             f"- {record.name} ({record.agent_id})\n"
             f"  type: {record.agent_type}\n"
@@ -1113,7 +1079,8 @@ async def send_subagent_message(
         if updated is not None:
             record = updated
 
-    if _active_background_task(record.agent_id) is not None:
+    # 后台执行已迁到 agent 主进程：通过 session busy 判断
+    if record.status in {"queued", "running"} and await _peek_session_busy(username, record.session_id):
         return (
             f"⏳ 子 Agent {record.name} ({record.agent_id}) 仍在后台运行中，"
             "请等待其完成后再继续发送消息。"
@@ -1241,19 +1208,22 @@ async def send_subagent_message(
             )
             return f"❌ 子 Agent 续聊失败: {exc}\nrun_id: {run_id}"
 
-    _schedule_background_run(
-        run_id=run_id,
+    # Fire-and-forget：续聊也走 /system_trigger
+    await _push_system_message(
         username=username,
-        agent_id=record.agent_id,
         session_id=record.session_id,
-        agent_type=record.agent_type,
-        agent_name=record.name,
-        content=content,
-        parent_session=source_session or record.parent_session,
-        timeout=timeout,
-        max_turns=max_turns,
+        text=content,
     )
-    update_subagent_status(record.agent_id, username, status="queued")
+    update_run_status(run_id, username, status="running")
+    update_subagent_status(record.agent_id, username, status="running")
+    record_run_event(
+        username,
+        run_id,
+        record.session_id,
+        event_type="dispatched",
+        status="running",
+        message=f"后台续聊已派发到 agent 主进程: {record.name}",
+    )
     return (
         f"🚀 子 Agent 已收到后台续聊任务\n"
         f"run_id: {run_id}\n"
@@ -1340,13 +1310,6 @@ async def cancel_subagent(
             message=f"收到取消请求: {record.name}",
         )
 
-    background_task = _active_background_task(record.agent_id)
-    had_background_task = background_task is not None
-    if background_task is not None:
-        background_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await background_task
-
     cancelled = False
     try:
         cancelled = await _cancel_internal_subagent(
@@ -1387,7 +1350,9 @@ async def cancel_subagent(
             message=f"子 Agent 已取消: {updated.name}",
         )
 
-    if not had_background_task and (source_session or updated.parent_session):
+    # 后台执行在 agent 主进程跑，没有 in-process task 自己 notify，
+    # 这里如果有父 session 就主动通知一次。
+    if source_session or updated.parent_session:
         with contextlib.suppress(Exception):
             await _notify_parent_session(
                 username=username,
@@ -1456,13 +1421,6 @@ async def delete_subagent(
             message=f"收到删除请求: {record.name}",
         )
 
-    background_task = _active_background_task(record.agent_id)
-    had_background_task = background_task is not None
-    if background_task is not None:
-        background_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await background_task
-
     with contextlib.suppress(Exception):
         await _cancel_internal_subagent(username=username, session_id=record.session_id)
 
@@ -1530,7 +1488,6 @@ async def delete_subagent(
         f"name: {record.name}\n"
         f"type: {record.agent_type}\n"
         f"session_id: {record.session_id}\n"
-        f"had_background_task: {'yes' if had_background_task else 'no'}\n"
         f"registry_deleted_extra: {registry_deleted}\n"
         f"plan_deleted: {plan_deleted}\n"
         f"todos_deleted: {todos_deleted}\n"

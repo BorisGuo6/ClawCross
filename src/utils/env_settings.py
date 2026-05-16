@@ -10,6 +10,14 @@
 import shlex
 from typing import Iterable
 
+try:
+    from utils.chatbot_channel_catalog import get_chatbot_env_keys
+except Exception:  # pragma: no cover - keep settings import robust during bootstrap
+    try:
+        from src.utils.chatbot_channel_catalog import get_chatbot_env_keys
+    except Exception:
+        get_chatbot_env_keys = None
+
 
 SETTINGS_WHITELIST = [
     "LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "LLM_PROVIDER", "LLM_VISION_SUPPORT",
@@ -28,6 +36,10 @@ SETTINGS_WHITELIST = [
     "TINYFISH_MONITOR_DB_PATH", "TINYFISH_MONITOR_TARGETS_PATH",
     "TINYFISH_MONITOR_ENABLED", "TINYFISH_MONITOR_CRON",
 ]
+if get_chatbot_env_keys is not None:
+    for _key in get_chatbot_env_keys():
+        if _key not in SETTINGS_WHITELIST:
+            SETTINGS_WHITELIST.append(_key)
 
 MASK_FIELDS = {"LLM_API_KEY", "TELEGRAM_BOTS", "QQ_BOTS", "TINYFISH_API_KEY"}
 FULL_MASK_PATTERNS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
@@ -112,7 +124,11 @@ def mask_sensitive(settings: dict, masked_fields: set[str] | None = None) -> dic
     fields = masked_fields if masked_fields is not None else MASK_FIELDS
     masked = {}
     for key, val in settings.items():
-        if (key in fields or key.upper().endswith("_BOTS")) and val and len(val) > 8:
+        if (
+            key in fields
+            or key.upper().endswith("_BOTS")
+            or any(p in key.upper() for p in FULL_MASK_PATTERNS)
+        ) and val and len(val) > 8:
             masked[key] = val[:4] + "****" + val[-4:]
         else:
             masked[key] = val

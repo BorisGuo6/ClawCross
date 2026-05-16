@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src.utils.chatbot_channel_catalog import get_chatbot_channels
+
 
 @dataclass
 class BotField:
@@ -33,6 +35,8 @@ class BotField:
     password: bool = False
     default: str = ""
     help: str = ""
+    target: str = "bot"             # "bot" | "bot_intents" | "env"
+    env_key: str = ""
 
 
 @dataclass
@@ -290,6 +294,47 @@ CHANNELS: dict[str, ChannelInfo] = {
         ],
     ),
 }
+
+
+def _channels_from_shared_catalog() -> dict[str, ChannelInfo]:
+    loaded: dict[str, ChannelInfo] = {}
+    for raw in get_chatbot_channels():
+        channel_id = str(raw.get("id") or "").strip()
+        if not channel_id:
+            continue
+        raw_kind = str(raw.get("kind") or "nonebot").strip()
+        kind = "bots_json" if raw_kind == "nonebot" else "env_vars"
+        fields = []
+        for item in raw.get("fields") or []:
+            if not isinstance(item, dict) or not item.get("name"):
+                continue
+            field_type = str(item.get("type") or "text").lower()
+            target = str(item.get("target") or ("bot" if kind == "bots_json" else "env"))
+            fields.append(BotField(
+                name=str(item.get("name") or ""),
+                prompt=str(item.get("label") or item.get("name") or ""),
+                password=field_type == "password",
+                default=str(item.get("default") or ""),
+                help=str(item.get("help") or ""),
+                target=target,
+                env_key=str(item.get("env_key") or item.get("name") or ""),
+            ))
+        loaded[channel_id] = ChannelInfo(
+            id=channel_id,
+            label=str(raw.get("label") or channel_id),
+            env_key=str(raw.get("env_key") or ""),
+            kind=kind,
+            emoji=str(raw.get("emoji") or ""),
+            setup_instructions=[str(x) for x in raw.get("setup_instructions") or []],
+            bot_fields=fields,
+            notes=str(raw.get("help") or raw.get("notes") or ""),
+        )
+    return loaded
+
+
+_shared_channels = _channels_from_shared_catalog()
+if _shared_channels:
+    CHANNELS = _shared_channels
 
 
 def list_channels() -> list[ChannelInfo]:
