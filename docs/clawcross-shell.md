@@ -80,10 +80,15 @@ When `clawcross` is running in an interactive terminal, type `/` as the first ch
 /mode <mode>        set execute, plan, or review label
 /platforms          list known platforms
 /state              print persisted state
+/restart            request a backend restart
 /cancel             cancel current internal-agent generation
 /help               list commands
 /exit               quit
 ```
+
+`LLM_MODEL`、`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_BASE_URL`、`NONEBOT_ADAPTERS`、`WHITELIST_FILE` 以及相关 `*_BOTS` 配置通常需要重启后才会生效；界面会在保存后给出提示。
+
+`clawcross restart` 会在发起后继续等待服务恢复，恢复成功后会打印 `✅ 重启完成`。
 
 Normal input is sent as a prompt to the current platform.
 

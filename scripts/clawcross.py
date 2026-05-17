@@ -16,6 +16,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 import tempfile
 import unicodedata
 import urllib.error
@@ -152,6 +153,7 @@ SLASH_COMMANDS = [
     ("/cwd [path]", "show or change workspace"),
     ("/mode <mode>", "set execute, plan, or review label"),
     ("/state", "show persisted state"),
+    ("/restart", "restart the ClawCross backend"),
     ("/cancel", "cancel internal-agent generation"),
     ("/help", "show commands"),
     ("/exit", "quit"),
@@ -159,6 +161,7 @@ SLASH_COMMANDS = [
 SLASH_MENU = [
     ("/platform", "platform actions (list / use)", "/platform", True),
     ("/state", "show persisted state", "/state", True),
+    ("/restart", "restart the ClawCross backend", "/restart", True),
     ("/help", "show commands", "/help", True),
     ("/cancel", "cancel internal-agent generation", "/cancel", True),
     ("/session", "pick session — resumes & replays last 10 messages", "/session", True),
@@ -189,6 +192,7 @@ CLI_COMMANDS = [
     ("clawcross platforms", "list available platforms"),
     ("clawcross state", "print state json"),
     ("clawcross cancel", "cancel internal generation"),
+    ("clawcross restart", "request a backend restart"),
 ]
 
 SENSITIVE_CONFIG_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASS|COOKIE|AUTH)", re.IGNORECASE)
@@ -208,6 +212,7 @@ CHAT_SLASH_COMMANDS = [
     ("/cross cron [team]", "list cron alarms (optionally for one team)"),
     ("/cross channel", "list configured chatbot channels (setup requires CLI)"),
     ("/cross state", "show current shell state"),
+    ("/cross restart", "request a backend restart"),
     ("/cross cancel", "cancel internal generation"),
     ("/cross front", "get a public magic link"),
     ("/cross exit", "leave /cross mode"),
@@ -324,7 +329,10 @@ def _dim(text: str) -> str:
 
 
 def _term_width() -> int:
-    return max(76, min(120, shutil.get_terminal_size((100, 24)).columns))
+    # Use the actual terminal width when available, but keep a tiny floor so
+    # the TUI can still render in very small panes instead of pretending the
+    # screen is wider than it is.
+    return max(20, min(120, shutil.get_terminal_size((100, 24)).columns))
 
 
 def _term_height() -> int:
@@ -451,6 +459,26 @@ def _welcome_lines(state: dict) -> list[str]:
     current = _current(state)
     width = _term_width()
     platform = current.get("platform", "internal")
+    if width < 88:
+        # Narrow terminals get a stacked layout so the banner adapts instead of
+        # forcing a wide two-column frame that overflows the viewport.
+        inner_width = max(10, width - 4)
+        lines = [_style("╭" + "─" * (width - 2) + "╮")]
+        for text in [
+            f"{APP_NAME} v{_package_version()}",
+            f"Web UI: {FRONT_BASE}",
+            f"Platform: {platform} ({_platform_status_line(platform)}) | Session: {current.get('session', 'default')}",
+            f"User: {current.get('user', DEFAULT_USER)}",
+            f"CWD: {current.get('cwd', Path.cwd())}",
+            "Type / to choose a command.",
+            "Type /help for all commands.",
+            _llm_status_hint(),
+        ]:
+            lines.append("│ " + _pad_display(_fit(text, inner_width), inner_width) + " │")
+        lines.append(_style("╰" + "─" * (width - 2) + "╯"))
+        lines.append("")
+        return lines
+
     right_width = min(max(52, width - 31), 76)
     right = [
         f"{APP_NAME} v{_package_version()}",
@@ -467,7 +495,7 @@ def _welcome_lines(state: dict) -> list[str]:
     ]
     logo = _claw_logo()
     left_width = max(_display_width(line) for line in logo)
-    content_width = left_width + right_width + 5
+    content_width = min(width, left_width + right_width + 5)
     title = f" {APP_NAME} "
     lines = [_style("╭─" + title + "─" * max(0, content_width - len(title) - 1) + "╮")]
     for idx in range(max(len(logo), len(right))):
@@ -1053,6 +1081,44 @@ def cmd_cancel(args, state: dict) -> int:
         return 1
 
 
+def cmd_restart(_args, state: dict) -> int:
+    current = _current(state)
+    user = current.get("user") or DEFAULT_USER
+    payload = {
+        "user_id": user,
+        "password": "",
+        "settings": {},
+    }
+    req = urllib.request.Request(
+        f"{AGENT_BASE}/restart",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Internal-Token": INTERNAL_TOKEN},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read().decode("utf-8", errors="replace").strip()
+        print(body or "restart requested")
+        print("⏳ 正在等待服务恢复...")
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            try:
+                _request_json("GET", f"{AGENT_BASE}/v1/models", timeout=5)
+                print("✅ 重启完成")
+                return 0
+            except Exception:
+                time.sleep(2)
+        print("⚠️ 重启已发起，但在 120 秒内未确认恢复", file=sys.stderr)
+        return 1
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        print(f"restart failed: HTTP {exc.code}: {detail}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"restart failed: {exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_update(args, _state: dict) -> int:
     target = "clawcross@latest" if not args.version else f"clawcross@{args.version}"
     npm_bin = "npm.cmd" if sys.platform == "win32" else "npm"
@@ -1372,7 +1438,7 @@ def _read_interactive_line(prompt: str) -> str:
     pending_escape = False
     pending_bracket = False
     selected = 0
-    box_width = max(40, min(_term_width(), 120))
+    box_width = max(20, min(_term_width(), 120))
     inner_width = box_width - 4  # "│ " ... " │"
 
     def _truncate(text: str, w: int) -> str:
@@ -1569,6 +1635,9 @@ def _handle_slash(command: str, state: dict) -> bool:
     if name == "/state":
         cmd_state(None, state)
         return True
+    if name == "/restart":
+        cmd_restart(None, state)
+        return True
     if name == "/use":
         if len(parts) < 2:
             return _choose_platform(state)
@@ -1744,6 +1813,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Shell", [
         ("/state", "dump persisted state.json"),
+        ("/restart", "request a backend restart"),
         ("/front", "get a public magic link (when frontend is reachable)"),
         ("/exit", "leave the shell"),
     ]),
@@ -1775,6 +1845,7 @@ _CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/cross new session", "create timestamped session"),
         ("/cross cwd [path]", "show or change workspace directory"),
         ("/cross mode <mode>", "label the run as execute / plan / review"),
+        ("/cross restart", "request a backend restart"),
         ("/cross cancel", "cancel an in-flight internal generation"),
     ]),
     ("Model & LLM", [
@@ -1817,6 +1888,7 @@ _CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Shell", [
         ("/cross state", "show current platform and session"),
+        ("/cross restart", "request a backend restart"),
         ("/cross front", "get a public magic link"),
         ("/cross exit", "leave cross shell (return to normal chat)"),
     ]),
@@ -2022,6 +2094,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("platforms", help="List known platforms")
     sub.add_parser("state", help="Show persisted shell state")
     sub.add_parser("chat", help="Enter interactive shell")
+    sub.add_parser("restart", help="Request a backend restart")
 
     cancel = sub.add_parser("cancel", help="Cancel current internal-agent generation")
     cancel.add_argument("-s", "--session", help="Session id")
@@ -2076,6 +2149,8 @@ def main() -> int:
         return cmd_state(args, state)
     if args.command == "chat":
         return repl(state)
+    if args.command == "restart":
+        return cmd_restart(args, state)
     if args.command == "cancel":
         return cmd_cancel(args, state)
     if args.command == "update":

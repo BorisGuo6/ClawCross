@@ -177,6 +177,8 @@ uv run scripts/cli.py settings --set model gpt-4o
 | `--full` | 显示完整设置 | 否 | `False` |
 | `--set KEY VALUE` | 修改设置项 | 否 | — |
 
+> `LLM_MODEL`、`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_BASE_URL`、`NONEBOT_ADAPTERS`、`WHITELIST_FILE` 以及相关 `*_BOTS` 配置通常需要重启 ClawCross 后才会生效。
+
 ---
 
 ## 8. tools
@@ -237,7 +239,9 @@ uv run scripts/cli.py cancel -s mysession
 uv run scripts/cli.py restart
 ```
 
-无额外参数，无 HTTP 请求。
+无额外参数。命令会在发起重启后继续轮询服务，恢复成功后打印 `✅ 重启完成`。
+
+> 这类重启完成后，前端会提示“重启完成”。如果你刚改了 `model` 或 `channel` 相关的环境变量，也会在保存后提示需要重启后生效。
 
 ---
 

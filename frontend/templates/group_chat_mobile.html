@@ -14800,6 +14800,32 @@ const SETTINGS_FIELD_HELP = {
     WHITELIST_FILE: 'sf_whitelist_file',
 };
 
+const RESTART_REQUIRED_SETTING_KEYS = new Set([
+    'LLM_API_KEY',
+    'LLM_BASE_URL',
+    'LLM_MODEL',
+    'LLM_PROVIDER',
+    'LLM_VISION_SUPPORT',
+    'NONEBOT_ADAPTERS',
+    'NONEBOT_HOST',
+    'NONEBOT_PORT',
+    'WHITELIST_FILE',
+    'TELEGRAM_BOTS',
+    'QQ_BOTS',
+    'QQ_IS_SANDBOX',
+    'WECLAW_ENABLED',
+    'WECLAW_BIN',
+    'WECLAW_USERNAME',
+    'WECLAW_CONFIG',
+    'WECLAW_PROXY_HOST',
+    'WECLAW_PROXY_PORT',
+    'WECLAW_AUTO_INSTALL',
+]);
+const RESTART_NOTICE_STORAGE_KEY = 'clawcross_restart_notice';
+const RESTART_POLL_INTERVAL_MS = 2000;
+const RESTART_POLL_MAX_MS = 45000;
+let _restartPollTimer = null;
+
 let _settingsCache = {};
 
 function _isMaskedSettingsSecretValue(value) {
@@ -14817,6 +14843,60 @@ function _getSettingsInputValueAndPlaceholder(value, fallbackPlaceholder, isPass
         value: value || '',
         placeholder: fallbackPlaceholder,
     };
+}
+
+function _formatRestartRequiredHint(updatedKeys) {
+    const keys = Array.isArray(updatedKeys)
+        ? updatedKeys.filter((key) => RESTART_REQUIRED_SETTING_KEYS.has(key))
+        : [];
+    if (!keys.length) return '';
+    return `\n⚠️ 这些配置需要重启后生效：${keys.join(', ')}`;
+}
+
+function _storeRestartPending() {
+    try {
+        sessionStorage.setItem(RESTART_NOTICE_STORAGE_KEY, JSON.stringify({ startedAt: Date.now() }));
+    } catch (_) {}
+}
+
+function _clearRestartPending() {
+    try {
+        sessionStorage.removeItem(RESTART_NOTICE_STORAGE_KEY);
+    } catch (_) {}
+}
+
+function _startRestartRecoveryPolling() {
+    if (_restartPollTimer) {
+        clearInterval(_restartPollTimer);
+        _restartPollTimer = null;
+    }
+    const startedAt = Date.now();
+    _restartPollTimer = setInterval(async () => {
+        if (Date.now() - startedAt > RESTART_POLL_MAX_MS) {
+            clearInterval(_restartPollTimer);
+            _restartPollTimer = null;
+            return;
+        }
+        try {
+            const resp = await fetch('/proxy_tunnel/status', { cache: 'no-store' });
+            if (!resp.ok) return;
+            await resp.json();
+            clearInterval(_restartPollTimer);
+            _restartPollTimer = null;
+            _clearRestartPending();
+            toast('✅ 重启完成', 3000);
+        } catch (_) {
+            // Still restarting.
+        }
+    }, RESTART_POLL_INTERVAL_MS);
+}
+
+function _resumePendingRestartNotice() {
+    try {
+        if (sessionStorage.getItem(RESTART_NOTICE_STORAGE_KEY)) {
+            _startRestartRecoveryPolling();
+        }
+    } catch (_) {}
 }
 
 function escapeHtml(str) {
@@ -15666,6 +15746,8 @@ async function saveSettings() {
         if (data.status === 'success') {
             let msg = t('settings_saved');
             if (data.updated?.length) msg += ': ' + data.updated.join(', ');
+            const restartHint = _formatRestartRequiredHint(data.updated || []);
+            if (restartHint) msg += restartHint;
             toast(msg);
             for (const k of (data.updated || [])) {
                 const inp = document.querySelector('#settings-body .settings-input[data-key="' + k + '"]');
@@ -15684,6 +15766,7 @@ async function restartServices() {
     if (!confirm(t('confirm_restart'))) return;
     const btn = document.getElementById('restart-btn');
     if (btn) { btn.disabled = true; btn.textContent = t('restarting'); }
+    _storeRestartPending();
     try {
         const r = await fetch('/proxy_restart', {
             method: 'POST',
@@ -15691,8 +15774,9 @@ async function restartServices() {
         });
         const data = await r.json();
         if (data.status === 'success') {
-            toast(t('restart_success'), RESTART_PENDING_TOAST_MS);
+            toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
             closeSettings();
+            _startRestartRecoveryPolling();
             setTimeout(() => location.reload(), 20000);
         } else {
             toast(t('restart_failed') + ': ' + (data.detail || data.error || ''));
@@ -15700,8 +15784,9 @@ async function restartServices() {
         }
     } catch (e) {
         // 网络断开说明服务已在重启中
-        toast(t('restart_success'), RESTART_PENDING_TOAST_MS);
+        toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
         closeSettings();
+        _startRestartRecoveryPolling();
         setTimeout(() => location.reload(), 20000);
     }
 }
@@ -15891,16 +15976,19 @@ async function resetAllGroupAgents() {
 async function restartClawcross() {
     if (!confirm(t('confirm_restart_clawcross'))) return;
     toast(t('restarting_clawcross'));
+    _storeRestartPending();
     try {
         await fetch('/proxy_restart', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
         });
-        toast(t('restart_signal_sent'), RESTART_PENDING_TOAST_MS);
+        toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
+        _startRestartRecoveryPolling();
         setTimeout(() => location.reload(), 20000);
     } catch (e) {
         // 网络断开说明服务已在重启中
-        toast(t('restart_success'), RESTART_PENDING_TOAST_MS);
+        toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
+        _startRestartRecoveryPolling();
         setTimeout(() => location.reload(), 20000);
     }
 }
@@ -16175,6 +16263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.documentElement.lang = _currentLang === 'zh' ? 'zh-CN' : 'en';
   document.title = t('page_title');
   applyLangToDOM();
+  _resumePendingRestartNotice();
 
   window.addEventListener('message', (event) => {
     try {
