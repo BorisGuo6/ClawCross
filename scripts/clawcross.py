@@ -34,6 +34,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 from src.utils.runtime_paths import ENV_FILE, STATE_DIR, ensure_runtime_dirs
+from src.utils.env_settings import read_env_all, write_env_settings
 ensure_runtime_dirs()
 STATE_PATH = STATE_DIR / "state.json"
 STATE_VERSION = 1
@@ -911,38 +912,6 @@ def cmd_state(_args, state: dict) -> int:
     return 0
 
 
-def _read_env_file() -> list[str]:
-    if not ENV_FILE.exists():
-        return []
-    return ENV_FILE.read_text(encoding="utf-8").splitlines()
-
-
-def _parse_env_lines(lines: list[str]) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if (
-            (value.startswith('"') and value.endswith('"'))
-            or (value.startswith("'") and value.endswith("'"))
-        ):
-            value = value[1:-1]
-        if key:
-            values[key] = value
-    return values
-
-
-def _quote_env_value(value: str) -> str:
-    value = str(value)
-    if not value or any(ch.isspace() for ch in value) or any(ch in value for ch in "#'\""):
-        return json.dumps(value, ensure_ascii=False)
-    return value
-
-
 def _mask_config_value(key: str, value: str) -> str:
     if not value:
         return ""
@@ -958,30 +927,14 @@ def _set_config_value(key: str, value: str) -> None:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
         raise ValueError(f"invalid config key: {key!r}")
     ensure_runtime_dirs()
-    lines = _read_env_file()
-    rendered = f"{key}={_quote_env_value(value)}"
-    replaced = False
-    out = []
-    for raw in lines:
-        stripped = raw.strip()
-        if stripped and not stripped.startswith("#") and stripped.split("=", 1)[0].strip() == key:
-            if not replaced:
-                out.append(rendered)
-                replaced = True
-            continue
-        out.append(raw)
-    if not replaced:
-        if out and out[-1].strip():
-            out.append("")
-        out.append(rendered)
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ENV_FILE.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+    write_env_settings(str(ENV_FILE), {key: value})
 
 
 def cmd_config(args, _state: dict) -> int:
     action = args.config_action
     if action == "list":
-        values = _parse_env_lines(_read_env_file())
+        values = read_env_all(str(ENV_FILE))
         if not values:
             print(f"No config values found in {ENV_FILE}")
             return 0
@@ -990,7 +943,7 @@ def cmd_config(args, _state: dict) -> int:
         print(f"\nconfig_file: {ENV_FILE}")
         return 0
     if action == "get":
-        values = _parse_env_lines(_read_env_file())
+        values = read_env_all(str(ENV_FILE))
         value = values.get(args.key)
         if value is None:
             print(f"{args.key} is not set")

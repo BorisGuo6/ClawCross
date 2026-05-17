@@ -32,6 +32,7 @@ from pathlib import Path
 from clawcross_cli import channels as catalog
 from clawcross_cli.channels import BotField, ChannelInfo
 from clawcross_cli.picker import curses_radiolist, prompt_text
+from src.utils.env_settings import read_env_all, write_env_settings
 from src.utils.runtime_paths import PID_DIR
 
 
@@ -41,31 +42,13 @@ def _env_path() -> Path:
 
 
 def _read_env() -> dict[str, str]:
-    path = _env_path()
-    if not path.is_file():
-        return {}
-    values: dict[str, str] = {}
-    for raw in path.read_text("utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-            v = v[1:-1]
-        if k:
-            values[k] = v
-    return values
+    return read_env_all(str(_env_path()))
 
 
 def _write_env(updates: dict[str, str]) -> None:
     path = _env_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _read_env()
-    existing.update(updates)
-    lines = [f"{k}={_quote(v)}" for k, v in existing.items()]
-    path.write_text("\n".join(lines) + "\n", "utf-8")
+    write_env_settings(str(path), updates)
 
 
 def _request_chatbot_restart() -> None:
@@ -74,13 +57,6 @@ def _request_chatbot_restart() -> None:
         (PID_DIR / "chatbot_restart_flag").write_text("restart", "utf-8")
     except Exception:
         pass
-
-
-def _quote(value: str) -> str:
-    v = str(value)
-    if not v or any(c.isspace() for c in v) or any(c in v for c in "#'\""):
-        return json.dumps(v, ensure_ascii=False)
-    return v
 
 
 def _parse_bots(raw: str) -> list[dict]:

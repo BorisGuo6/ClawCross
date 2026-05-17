@@ -28,6 +28,7 @@ from clawcross_cli.providers import (
     list_providers,
     resolve_provider,
 )
+from src.utils.env_settings import read_env_all, write_env_settings
 
 
 # ---------------------------------------------------------------------------
@@ -41,40 +42,13 @@ def _find_env_file() -> Path:
 
 
 def _read_env() -> dict[str, str]:
-    path = _find_env_file()
-    if not path.is_file():
-        return {}
-    values: dict[str, str] = {}
-    for raw in path.read_text("utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-            v = v[1:-1]
-        if k:
-            values[k] = v
-    return values
+    return read_env_all(str(_find_env_file()))
 
 
 def _write_env(updates: dict[str, str]) -> None:
     path = _find_env_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _read_env()
-    existing.update(updates)
-    lines = [f"{k}={_quote(v)}" for k, v in existing.items()]
-    path.write_text("\n".join(lines) + "\n", "utf-8")
-
-
-def _quote(v: str) -> str:
-    v = str(v)
-    if not v or any(c.isspace() for c in v) or any(c in v for c in "#'\""):
-        import json
-
-        return json.dumps(v, ensure_ascii=False)
-    return v
+    write_env_settings(str(path), updates)
 
 
 # ---------------------------------------------------------------------------
