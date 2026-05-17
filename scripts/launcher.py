@@ -560,7 +560,7 @@ services = [
         "label": "OASIS 论坛服务",
         "script": "oasis/server.py",
         "port": PORT_OASIS,
-        "timeout": 20.0,
+        "timeout": 45.0,
         "health_url": f"http://127.0.0.1:{PORT_OASIS}/experts",
     },
     {
