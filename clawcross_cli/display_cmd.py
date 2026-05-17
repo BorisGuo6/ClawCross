@@ -315,6 +315,41 @@ def _workflow_label(item: dict) -> str:
     return f"[{kind}] {location} / {item.get('file', '?')}"
 
 
+def _pick_workflow_to_run(user: str) -> dict | str:
+    """Curses picker over runnable (YAML) workflows.
+
+    Returns the chosen workflow item dict, or a string message when the user
+    cancels / nothing is runnable. Python workflows are excluded because
+    run_workflow only supports kind=='yaml'.
+    """
+    items = [it for it in api_client.list_workflows(user, team="") if it.get("kind") == "yaml"]
+    if not items:
+        return (
+            "No runnable YAML workflows found. "
+            "Add one with `/workflow new <name>` or pass `from <file>`."
+        )
+    labels: list[str] = []
+    for it in items:
+        scope = it.get("scope") or "personal"
+        team = it.get("team") or ""
+        location = f"team:{team}" if scope == "team" else "personal"
+        desc = (it.get("description") or "").strip()
+        line = f"[{location}] {it.get('file', '?')}"
+        if desc:
+            line += f"  — {desc[:60]}"
+        labels.append(line)
+    labels.append("Cancel")
+    idx = curses_radiolist(
+        "Select a workflow to run:",
+        labels,
+        selected=0,
+        cancel_returns=len(labels) - 1,
+    )
+    if idx == len(labels) - 1:
+        return "Workflow run cancelled."
+    return items[idx]
+
+
 def _parse_run_args(rest: list[str]) -> tuple[dict | None, str | None]:
     """Parse ``<name> [team <T>] question <Q...>``. Returns (parsed, error)."""
     usage = (
@@ -495,9 +530,24 @@ def handle_workflow_command(args: list[str], *, interactive: bool = False, user:
         return f"# {path}\n\n{content}"
 
     if args and args[0].lower() == "run":
-        parsed, err = _parse_run_args(args[1:])
-        if err:
-            return err
+        run_rest = args[1:]
+        if not run_rest and interactive and _is_tty():
+            picked = _pick_workflow_to_run(user)
+            if isinstance(picked, str):  # error / cancel message
+                return picked
+            from clawcross_cli.picker import prompt_text
+            question = prompt_text("Question: ").strip()
+            if not question:
+                return "Workflow run cancelled (empty question)."
+            parsed = {
+                "name": picked["name"],
+                "team": picked["team"] if picked.get("scope") == "team" else "",
+                "question": question,
+            }
+        else:
+            parsed, err = _parse_run_args(run_rest)
+            if err:
+                return err
         body, rerr = api_client.run_workflow(
             user=user,
             name=parsed["name"],

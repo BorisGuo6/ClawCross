@@ -1674,6 +1674,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/workflow", "list all workflows (personal + every team, grouped)"),
         ("/workflow show <name>", "print the YAML or Python source"),
         ("/workflow show <name> team <T>", "disambiguate when the name exists in several teams"),
+        ("/workflow run", "picker over runnable workflows, then prompts for question"),
         ("/workflow run <name> question <text...>", "run a personal workflow"),
         ("/workflow run <name> team <T> question <text...>", "run a team workflow"),
         ("/workflow new <name> [team <T>] [from <file>]",
