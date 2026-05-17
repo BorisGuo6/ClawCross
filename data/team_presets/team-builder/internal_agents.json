@@ -1,0 +1,8 @@
+[
+  { "name": "Requirements Interviewer", "tag": "interviewer" },
+  { "name": "Persona Designer",         "tag": "persona_designer" },
+  { "name": "Agent Binder",             "tag": "agent_binder" },
+  { "name": "Workflow Architect",       "tag": "workflow_architect" },
+  { "name": "Skill & Cron Operator",    "tag": "skill_cron_operator" },
+  { "name": "Build Validator",          "tag": "validator" }
+]

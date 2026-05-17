@@ -26,13 +26,15 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 | Understand the platform | [`overview.md`](./overview.md) | [`../README.md`](../README.md) |
 | Understand WeBot agent runtime, subagents, delegated tool boundaries, runtime policy hooks, or the subagent panel | [`webot-agent-runtime.md`](./webot-agent-runtime.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Compare WeBot with Claude Code and inspect the runtime feature matrix that drives parity work | [`webot-claude-gap-analysis.md`](./webot-claude-gap-analysis.md) | [`webot-agent-runtime.md`](./webot-agent-runtime.md), [`repo-index.md`](./repo-index.md) |
-| Build a Team from a task description or discovered SOP pages | [`team-creator.md`](./team-creator.md) | [`build_team.md`](./build_team.md), [`example_team.md`](./example_team.md) |
+| Build a Team from a task description or discovered SOP pages | [`team-creator.md`](./team-creator.md) | [`build_team.md`](./build_team.md), [`example_team.md`](./example_team.md), [`team-anatomy.md`](./team-anatomy.md) |
+| Understand what a running Team is on disk (file layout, schemas, cross-file bindings) | [`team-anatomy.md`](./team-anatomy.md) | [`example_team.md`](./example_team.md), [`create_workflow.md`](./create_workflow.md) |
 | Understand OASIS runtime behavior, Town Mode, GraphRAG memory, or ReportAgent | [`oasis-reference.md`](./oasis-reference.md) | [`runtime-reference.md`](./runtime-reference.md), [`create_workflow.md`](./create_workflow.md), [`build_team.md`](./build_team.md) |
 | Build Python-script OASIS workflows, call team agents from Python, or post into OASIS topics from code | [`workflowpy.md`](./workflowpy.md) | [`oasis-reference.md`](./oasis-reference.md), [`create_workflow.md`](./create_workflow.md), [`repo-index.md`](./repo-index.md) |
 | Understand runtime architecture / auth / services | [`runtime-reference.md`](./runtime-reference.md) | [`ports.md`](./ports.md), [`repo-index.md`](./repo-index.md) |
 | Inspect or extend MCP web search tools | [`mcp-search.md`](./mcp-search.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Find CLI syntax or examples | [`cli.md`](./cli.md) | `uv run scripts/cli.py <command> --help` |
-| Build a Team | [`build_team.md`](./build_team.md) | [`example_team.md`](./example_team.md) |
+| Build a Team | [`build_team.md`](./build_team.md) | [`example_team.md`](./example_team.md), [`team-anatomy.md`](./team-anatomy.md) |
+| Debug a Team that already exists (wrong persona, missing member, dead workflow edge) | [`team-anatomy.md`](./team-anatomy.md) | [`build_team.md`](./build_team.md), [`create_workflow.md`](./create_workflow.md) |
 | Convert a workflow canvas into a Team | [`team-creator.md`](./team-creator.md) | [`build_team.md`](./build_team.md), [`create_workflow.md`](./create_workflow.md) |
 | Create / debug workflow YAML | [`create_workflow.md`](./create_workflow.md) | [`example_team.md`](./example_team.md) |
 | Configure OpenClaw or external agents | [`openclaw-commands.md`](./openclaw-commands.md) | [`build_team.md`](./build_team.md) |
@@ -58,6 +60,7 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 - [`oasis-reference.md`](./oasis-reference.md): OASIS runtime model, Town Mode, swarm / GraphRAG behavior, ReportAgent
 - [`webot-agent-runtime.md`](./webot-agent-runtime.md): WeBot delegated subagent runtime, profiles, tool boundaries, and the runtime DTO wiring
 - [`webot-claude-gap-analysis.md`](./webot-claude-gap-analysis.md): feature matrix vs Claude Code and the outstanding parity checklist
+- [`team-anatomy.md`](./team-anatomy.md): single-file runtime reference — folder layout, every file schema, cross-file bindings, runtime-only vs persistent fields, debug checklist
 - [`example_team.md`](./example_team.md): concrete file layout for a Team
 - [`openclaw-commands.md`](./openclaw-commands.md): OpenClaw command and config reference
 - [`tinyfish-monitor.md`](./tinyfish-monitor.md): TinyFish internet search agent, live crawl, and data persistence
@@ -81,7 +84,7 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 1. Read [`build_team.md`](./build_team.md)
 2. Read [`create_workflow.md`](./create_workflow.md)
 3. Read [`oasis-reference.md`](./oasis-reference.md)
-4. Read [`example_team.md`](./example_team.md)
+4. Read [`team-anatomy.md`](./team-anatomy.md) and [`example_team.md`](./example_team.md)
 5. If behavior looks wrong, inspect the indexed runtime files in [`repo-index.md`](./repo-index.md)
 
 ### Use ClawCross Creator or Generate Team from Workflow

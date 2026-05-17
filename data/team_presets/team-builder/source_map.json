@@ -1,0 +1,11 @@
+{
+  "preset_id": "team-builder",
+  "roles": {
+    "interviewer":         { "name": "Requirements Interviewer", "source_file": "clawcross/custom/team-builder#interviewer" },
+    "persona_designer":    { "name": "Persona Designer",         "source_file": "clawcross/custom/team-builder#persona_designer" },
+    "agent_binder":        { "name": "Agent Binder",             "source_file": "clawcross/custom/team-builder#agent_binder" },
+    "workflow_architect":  { "name": "Workflow Architect",       "source_file": "clawcross/custom/team-builder#workflow_architect" },
+    "skill_cron_operator": { "name": "Skill & Cron Operator",    "source_file": "clawcross/custom/team-builder#skill_cron_operator" },
+    "validator":           { "name": "Build Validator",          "source_file": "clawcross/custom/team-builder#validator" }
+  }
+}

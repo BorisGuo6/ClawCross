@@ -17,13 +17,35 @@ from webot.workspace import resolve_session_workspace
 
 
 class WeBotWorkspaceTests(unittest.TestCase):
+    def test_shared_workspace_exposes_runtime_teams_alias(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            original_workspace_dir = webot_workspace.WORKSPACE_DIR
+            original_user_files = webot_workspace.USER_FILES_DIR
+            self.addCleanup(setattr, webot_workspace, "WORKSPACE_DIR", original_workspace_dir)
+            self.addCleanup(setattr, webot_workspace, "USER_FILES_DIR", original_user_files)
+            webot_workspace.WORKSPACE_DIR = root / "workspace"
+            webot_workspace.USER_FILES_DIR = root / "user_files"
+
+            workspace = resolve_session_workspace("alice", "")
+            teams_alias = workspace.root / "teams"
+            runtime_teams = root / "user_files" / "alice" / "teams"
+
+            self.assertEqual(workspace.mode, "shared")
+            self.assertTrue(runtime_teams.exists())
+            self.assertTrue(teams_alias.exists())
+            self.assertEqual(teams_alias.resolve(), runtime_teams.resolve())
+
     def test_isolated_workspace_uses_subagent_root_and_cwd(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             original_db = store.DEFAULT_DB_PATH
+            original_workspace_dir = webot_workspace.WORKSPACE_DIR
             original_user_files = webot_workspace.USER_FILES_DIR
             self.addCleanup(setattr, store, "DEFAULT_DB_PATH", original_db)
+            self.addCleanup(setattr, webot_workspace, "WORKSPACE_DIR", original_workspace_dir)
             self.addCleanup(setattr, webot_workspace, "USER_FILES_DIR", original_user_files)
             store.DEFAULT_DB_PATH = Path(tmpdir) / "subagents.db"
+            webot_workspace.WORKSPACE_DIR = Path(tmpdir) / "workspace"
             webot_workspace.USER_FILES_DIR = Path(tmpdir) / "user_files"
             record = create_subagent_record(
                 agent_id="agent1",
@@ -43,14 +65,18 @@ class WeBotWorkspaceTests(unittest.TestCase):
 
     def test_worktree_workspace_creates_git_worktree(self):
         with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = Path(tmpdir) / "workspace"
             user_files = Path(tmpdir) / "user_files"
             original_db = store.DEFAULT_DB_PATH
+            original_workspace_dir = webot_workspace.WORKSPACE_DIR
             original_user_files = webot_workspace.USER_FILES_DIR
             self.addCleanup(setattr, store, "DEFAULT_DB_PATH", original_db)
+            self.addCleanup(setattr, webot_workspace, "WORKSPACE_DIR", original_workspace_dir)
             self.addCleanup(setattr, webot_workspace, "USER_FILES_DIR", original_user_files)
+            webot_workspace.WORKSPACE_DIR = workspace_root
             webot_workspace.USER_FILES_DIR = user_files
             store.DEFAULT_DB_PATH = Path(tmpdir) / "subagents.db"
-            repo_root = user_files / "alice" / "repo"
+            repo_root = workspace_root / "users" / "alice" / "repo"
             repo_root.mkdir(parents=True, exist_ok=True)
             subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
             (repo_root / "README.md").write_text("hello", encoding="utf-8")

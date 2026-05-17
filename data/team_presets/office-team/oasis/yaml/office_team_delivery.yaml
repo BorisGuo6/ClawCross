@@ -1,0 +1,49 @@
+# office-team — office delivery workflow
+version: 2
+repeat: false
+plan:
+- id: o0
+  manual:
+    author: begin
+    content: "请描述你要交付的办公任务：交付物类型（报告 / 方案 / 表格 / PPT / 视频）、受众、时间、关键素材或数据来源。Office Team 会按 协调 → 写作 → 数据 → 视觉 → PDF → 审校 的节奏协作。"
+- id: o1
+  expert: coordinator#oasis#Office Coordinator
+- id: o2
+  expert: writer#oasis#Document Writer
+- id: o3
+  expert: analyst#oasis#Data Analyst
+- id: o4
+  expert: designer#oasis#Visual Designer
+- id: o5
+  expert: pdf_master#oasis#PDF & Print Master
+- id: o6
+  expert: reviewer#oasis#Office Reviewer
+- id: o7
+  expert: coordinator#oasis#Office Coordinator
+- id: o8
+  manual:
+    author: bend
+    content: "Office Team 已经走完一次办公交付闭环：协调清单、文档草稿、数据表、视觉素材、PDF 与审校结论都在上面。请基于这些输出推进实际制作或对外发布。"
+edges:
+- - o0
+  - o1
+- - o1
+  - o2
+- - o1
+  - o3
+- - o2
+  - o4
+- - o3
+  - o4
+- - o2
+  - o5
+- - o3
+  - o5
+- - o4
+  - o5
+- - o5
+  - o6
+- - o6
+  - o7
+- - o7
+  - o8
