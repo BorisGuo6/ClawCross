@@ -316,16 +316,15 @@ def _workflow_label(item: dict) -> str:
 
 
 def _pick_workflow_to_run(user: str) -> dict | str:
-    """Curses picker over runnable (YAML) workflows.
+    """Curses picker over runnable workflows (YAML + Python).
 
     Returns the chosen workflow item dict, or a string message when the user
-    cancels / nothing is runnable. Python workflows are excluded because
-    run_workflow only supports kind=='yaml'.
+    cancels / nothing is runnable.
     """
-    items = [it for it in api_client.list_workflows(user, team="") if it.get("kind") == "yaml"]
+    items = api_client.list_workflows(user, team="")
     if not items:
         return (
-            "No runnable YAML workflows found. "
+            "No workflows found. "
             "Add one with `/workflow new <name>` or pass `from <file>`."
         )
     labels: list[str] = []
@@ -333,8 +332,9 @@ def _pick_workflow_to_run(user: str) -> dict | str:
         scope = it.get("scope") or "personal"
         team = it.get("team") or ""
         location = f"team:{team}" if scope == "team" else "personal"
+        kind = it.get("kind") or "?"
         desc = (it.get("description") or "").strip()
-        line = f"[{location}] {it.get('file', '?')}"
+        line = f"[{kind}] [{location}] {it.get('file', '?')}"
         if desc:
             line += f"  — {desc[:60]}"
         labels.append(line)
@@ -531,6 +531,7 @@ def handle_workflow_command(args: list[str], *, interactive: bool = False, user:
 
     if args and args[0].lower() == "run":
         run_rest = args[1:]
+        run_kind = "yaml"
         if not run_rest and interactive and _is_tty():
             picked = _pick_workflow_to_run(user)
             if isinstance(picked, str):  # error / cancel message
@@ -544,6 +545,7 @@ def handle_workflow_command(args: list[str], *, interactive: bool = False, user:
                 "team": picked["team"] if picked.get("scope") == "team" else "",
                 "question": question,
             }
+            run_kind = picked.get("kind") or "yaml"
         else:
             parsed, err = _parse_run_args(run_rest)
             if err:
@@ -553,17 +555,21 @@ def handle_workflow_command(args: list[str], *, interactive: bool = False, user:
             name=parsed["name"],
             team=parsed["team"],
             question=parsed["question"],
-            kind="yaml",
+            kind=run_kind,
         )
         if rerr:
             return rerr
-        topic_id = body.get("topic_id") if isinstance(body, dict) else None
-        msg = body.get("message") if isinstance(body, dict) else ""
         out_lines = ["Workflow launched."]
-        if topic_id:
-            out_lines.append(f"  topic_id: {topic_id}")
-        if msg:
-            out_lines.append(f"  message: {msg}")
+        if isinstance(body, dict):
+            for key, label in (
+                ("topic_id", "topic_id"),
+                ("run_id", "run_id"),
+                ("log_file", "log_file"),
+                ("message", "message"),
+            ):
+                val = body.get(key)
+                if val:
+                    out_lines.append(f"  {label}: {val}")
         return _format_lines(out_lines)
 
     items = api_client.list_workflows(user, team="")
