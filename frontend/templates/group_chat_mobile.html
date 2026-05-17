@@ -1792,6 +1792,134 @@
   .msg-avatar.clickable:hover { opacity: .8; }
   .member-avatar.clickable:hover { opacity: .8; }
 
+  /* ── Agent history overlay (mirrors main frontend chat-box history) ── */
+  .agent-history-overlay {
+    position: fixed; inset: 0; z-index: 10010;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    transform: translateX(100%);
+    transition: transform .28s cubic-bezier(.4,0,.2,1);
+  }
+  .agent-history-overlay.open { transform: translateX(0); }
+  .agent-history-dialog {
+    flex: 1; display: flex; flex-direction: column;
+    background: var(--bg); overflow: hidden;
+    width: 100%; max-width: 100%; max-height: 100%;
+  }
+  .agent-history-header {
+    display: flex; align-items: center;
+    height: var(--header-h);
+    padding: 0 6px; background: var(--bg-card);
+    border-bottom: 0.5px solid var(--border); flex-shrink: 0;
+  }
+  .agent-history-header h3 {
+    flex: 1; text-align: center; font-size: 17px; font-weight: 600; color: var(--text);
+    margin: 0; margin-right: 40px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agent-history-close {
+    display: flex; align-items: center;
+    background: none; border: none; color: var(--text);
+    cursor: pointer; padding: 8px 6px; border-radius: 6px; line-height: 1;
+  }
+  .agent-history-close:active { background: rgba(0,0,0,0.06); }
+  .agent-history-body {
+    flex: 1; overflow-y: auto;
+    padding: 12px;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg);
+  }
+  .agent-history-empty,
+  .agent-history-loading {
+    display: flex; align-items: center; justify-content: center;
+    padding: 40px; color: #9ca3af; font-size: 14px;
+  }
+  .agent-history-error {
+    padding: 20px; text-align: center; color: #ef4444; font-size: 13px;
+  }
+  .ah-row { display: flex; margin-bottom: 12px; }
+  .ah-row.user { justify-content: flex-end; }
+  .ah-row.assistant, .ah-row.tool { justify-content: flex-start; }
+  .ah-bubble {
+    max-width: 85%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.55;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    word-break: break-word;
+  }
+  .ah-bubble.user {
+    background: #1677ff; color: #fff;
+  }
+  .ah-bubble.assistant {
+    background: var(--bg-card); color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .ah-bubble.tool {
+    background: #f9fafb; color: #4b5563;
+    border: 1px dashed #d1d5db;
+    font-size: 12px;
+  }
+  .ah-bubble.assistant .markdown-body,
+  .ah-bubble.assistant .tc-markdown { color: var(--text); }
+  .ah-bubble img.ah-inline-image {
+    max-width: 100%;
+    border-radius: 6px;
+    display: block;
+    margin-bottom: 6px;
+  }
+  .ah-tool-title {
+    font-weight: 600; color: #374151; margin-bottom: 6px;
+    font-size: 12px;
+  }
+  .ah-tool-badges { margin-bottom: 6px; }
+  .ah-tool-badge {
+    display: inline-block;
+    background: #dbeafe; color: #1d4ed8;
+    font-size: 11px; padding: 2px 8px;
+    border-radius: 999px; margin: 0 4px 4px 0;
+  }
+  .ah-tool-details {
+    margin-top: 6px;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    background: #f8fbff;
+  }
+  .ah-tool-details summary {
+    cursor: pointer; list-style: none;
+    padding: 8px 10px; font-size: 12px; font-weight: 600;
+    color: #1d4ed8;
+  }
+  .ah-tool-details summary::-webkit-details-marker { display: none; }
+  .ah-tool-details > div { padding: 0 10px 10px 10px; }
+  .ah-pager-block { margin-top: 8px; }
+  .ah-pager-title {
+    font-weight: 600; color: #4b5563;
+    margin-bottom: 6px; font-size: 12px;
+  }
+  .ah-pager-content {
+    margin: 0;
+    max-height: 280px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 11px;
+    background: #fff;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+  }
+  .ah-pager-controls {
+    display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  }
+  .ah-pager-btn {
+    padding: 2px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+    background: #fff; font-size: 11px; color: #374151; cursor: pointer;
+  }
+  .ah-pager-label { font-size: 11px; color: #6b7280; }
+
   /* ── Workflow selector popup ── */
   .workflow-popup {
     position: absolute;
@@ -4350,6 +4478,20 @@
   </div>
 </div>
 
+<div id="agent-history-overlay" class="agent-history-overlay" style="display:none;">
+  <div class="agent-history-dialog">
+    <div class="agent-history-header">
+      <button class="agent-history-close" onclick="closeAgentHistory()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <h3 id="agent-history-title">📜 历史</h3>
+    </div>
+    <div class="agent-history-body" id="agent-history-body">
+      <div class="agent-history-loading">加载中...</div>
+    </div>
+  </div>
+</div>
+
 <div class="settings-modal-overlay" id="mobile-update-modal-overlay">
   <div class="settings-modal">
     <div class="settings-header">
@@ -4800,6 +4942,22 @@ const I18N = {
     all_skills: '全部技能',
     no_detail_info: '未获取到详细信息',
     agent_detail_title: '🤖 Agent 详情',
+
+    // ── Agent history ──
+    view_main_history: '📜 查看主端历史',
+    agent_history_title: '📜 主端历史',
+    agent_history_loading: '加载历史消息...',
+    agent_history_empty: '（此对话暂无消息记录）',
+    agent_history_error: '加载失败',
+    agent_history_no_session: '此 Agent 没有可用的会话 ID',
+    ah_tool_return: '工具返回',
+    ah_tool_full_output: '完整输出',
+    ah_tool_call_args: '调用参数',
+    ah_tool_calling: '（调用工具中）',
+    ah_image_placeholder: '图片',
+    ah_page_prev: '上一页',
+    ah_page_next: '下一页',
+    ah_page_label: '第 {current} / {total} 页',
 
     // ── Contacts ──
     no_agents: '暂无 Agent',
@@ -5431,6 +5589,21 @@ const I18N = {
     all_skills: 'All Skills',
     no_detail_info: 'No details available',
     agent_detail_title: '🤖 Agent Details',
+
+    view_main_history: '📜 View Main History',
+    agent_history_title: '📜 Main History',
+    agent_history_loading: 'Loading messages...',
+    agent_history_empty: '(No messages in this conversation)',
+    agent_history_error: 'Failed to load',
+    agent_history_no_session: 'This agent has no associated session ID',
+    ah_tool_return: 'Tool return',
+    ah_tool_full_output: 'Full output',
+    ah_tool_call_args: 'Call args',
+    ah_tool_calling: '(calling tool)',
+    ah_image_placeholder: 'image',
+    ah_page_prev: 'Prev',
+    ah_page_next: 'Next',
+    ah_page_label: 'Page {current} / {total}',
 
     no_agents: 'No Agents',
     search_contacts: 'Search contacts...',
@@ -12506,6 +12679,367 @@ function closeAgentDetail() {
   setTimeout(() => { overlay.style.display = 'none'; }, 300);
 }
 
+// ── Agent main-frontend history viewer ──
+// Mirrors main frontend's switchToSession() history rendering against
+// /proxy_session_history, using agentInfo.global_id as the session_id.
+const AH_PAGER_CHARS = 1800;
+let _ahPagerSeq = 0;
+const _ahPagerStore = {};
+
+function _ahNormalize(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value, null, 2); }
+  catch (_) { return String(value); }
+}
+
+function _ahSplitPages(value, pageChars = AH_PAGER_CHARS) {
+  const text = _ahNormalize(value);
+  if (!text) return [''];
+  const pages = [];
+  for (let i = 0; i < text.length; i += pageChars) {
+    pages.push(text.slice(i, i + pageChars));
+  }
+  return pages.length ? pages : [''];
+}
+
+function _ahPagerRegister(value) {
+  const key = `ahpager-${++_ahPagerSeq}`;
+  _ahPagerStore[key] = { pages: _ahSplitPages(value), current: 0 };
+  return key;
+}
+
+function _ahPagerLabel(current, total) {
+  return esc(t('ah_page_label', { current: current + 1, total }));
+}
+
+function _ahRenderPager(value, title) {
+  const text = _ahNormalize(value);
+  if (!text) return '';
+  const key = _ahPagerRegister(text);
+  const store = _ahPagerStore[key];
+  const total = store.pages.length;
+  const page = esc(store.pages[0] || '');
+  const titleHtml = title ? `<div class="ah-pager-title">${esc(title)}</div>` : '';
+  const pager = total > 1
+    ? `<div class="ah-pager-controls">
+         <button type="button" class="ah-pager-btn" onclick="ahPagerPrev('${key}')">${esc(t('ah_page_prev'))}</button>
+         <span id="${key}-label" class="ah-pager-label">${_ahPagerLabel(0, total)}</span>
+         <button type="button" class="ah-pager-btn" onclick="ahPagerNext('${key}')">${esc(t('ah_page_next'))}</button>
+       </div>`
+    : '';
+  return `<div class="ah-pager-block">
+    ${titleHtml}
+    <pre id="${key}-content" class="ah-pager-content">${page}</pre>
+    ${pager}
+  </div>`;
+}
+
+function ahPagerSetPage(key, nextIndex) {
+  const store = _ahPagerStore[key];
+  if (!store || !store.pages.length) return;
+  const total = store.pages.length;
+  const current = ((Number(nextIndex) % total) + total) % total;
+  store.current = current;
+  const contentEl = document.getElementById(`${key}-content`);
+  const labelEl = document.getElementById(`${key}-label`);
+  if (contentEl) contentEl.textContent = store.pages[current] || '';
+  if (labelEl) labelEl.innerHTML = _ahPagerLabel(current, total);
+}
+
+function ahPagerPrev(key) {
+  const store = _ahPagerStore[key];
+  if (!store) return;
+  ahPagerSetPage(key, store.current - 1);
+}
+
+function ahPagerNext(key) {
+  const store = _ahPagerStore[key];
+  if (!store) return;
+  ahPagerSetPage(key, store.current + 1);
+}
+
+function _ahRenderToolCallBadges(toolCalls) {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return '';
+  return `<div class="ah-tool-badges">` + toolCalls.map((tc) => {
+    const name = esc((tc && tc.name) || '');
+    return `<span class="ah-tool-badge">🔧 ${name}</span>`;
+  }).join('') + `</div>`;
+}
+
+function _ahRenderToolCallDetails(toolCalls) {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return '';
+  const items = toolCalls.map((tc, idx) => {
+    const name = esc((tc && tc.name) || ('tool_' + (idx + 1)));
+    const args = (tc && Object.prototype.hasOwnProperty.call(tc, 'args')) ? tc.args : {};
+    return `<details class="ah-tool-details">
+      <summary>🔧 ${name}</summary>
+      <div>${_ahRenderPager(args, t('ah_tool_call_args'))}</div>
+    </details>`;
+  }).join('');
+  return _ahRenderToolCallBadges(toolCalls) + `<div class="ah-tool-list">${items}</div>`;
+}
+
+function _ahRenderMarkdown(content) {
+  if (window.ClawcrossMarkdown && typeof window.ClawcrossMarkdown.render === 'function') {
+    return window.ClawcrossMarkdown.render(content || '');
+  }
+  if (typeof marked !== 'undefined' && content) {
+    let raw = String(content);
+    if (raw.indexOf('\\') !== -1) {
+      raw = raw.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n').replace(/\\t/g, '\t');
+    }
+    try { return marked.parse(raw); } catch (_) { return esc(raw); }
+  }
+  return esc(content || '');
+}
+
+function _ahHighlight(root) {
+  if (!root) return;
+  if (window.ClawcrossMarkdown && typeof window.ClawcrossMarkdown.highlight === 'function') {
+    try { window.ClawcrossMarkdown.highlight(root); } catch (_) { /* ignore */ }
+  }
+}
+
+function _ahRenderMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  const parts = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    if (msg.role === 'user') {
+      let textContent = '';
+      let imagesHtml = '';
+      if (typeof msg.content === 'string') {
+        textContent = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (!part || typeof part !== 'object') continue;
+          if (part.type === 'text') textContent = part.text || '';
+          else if (part.type === 'image_url' && part.image_url && part.image_url.url) {
+            imagesHtml += `<img src="${esc(part.image_url.url)}" class="ah-inline-image">`;
+          }
+        }
+      }
+      const body = textContent ? esc(textContent) : `(${esc(t('ah_image_placeholder'))})`;
+      parts.push(`<div class="ah-row user">
+        <div class="ah-bubble user">${imagesHtml}${body}</div>
+      </div>`);
+    } else if (msg.role === 'tool') {
+      const toolName = esc(msg.tool_name || '');
+      parts.push(`<div class="ah-row tool">
+        <div class="ah-bubble tool">
+          <div class="ah-tool-title">🔧 ${esc(t('ah_tool_return'))}: ${toolName}</div>
+          ${_ahRenderPager(msg.content, t('ah_tool_full_output'))}
+        </div>
+      </div>`);
+    } else {
+      const toolCallsHtml = _ahRenderToolCallDetails(msg.tool_calls);
+      const contentHtml = msg.content
+        ? `<div class="markdown-body tc-markdown">${_ahRenderMarkdown(msg.content)}</div>`
+        : `<span style="color:#9ca3af;font-size:12px;">${esc(t('ah_tool_calling'))}</span>`;
+      parts.push(`<div class="ah-row assistant">
+        <div class="ah-bubble assistant">${toolCallsHtml}${contentHtml}</div>
+      </div>`);
+    }
+  }
+  return parts.join('');
+}
+
+// Render OpenClaw external history (each msg has direction/role/content).
+function _ahRenderOpenclawMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  const parts = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    const direction = String(msg.direction || '');
+    const role = String(msg.role || '');
+    const content = String(msg.content || '');
+    if (!content) continue;
+    if (direction === 'send' || role === 'user') {
+      parts.push(`<div class="ah-row user"><div class="ah-bubble user">${esc(content)}</div></div>`);
+    } else if (direction === 'recv' || role === 'assistant') {
+      parts.push(`<div class="ah-row assistant"><div class="ah-bubble assistant"><div class="markdown-body tc-markdown">${_ahRenderMarkdown(content)}</div></div></div>`);
+    } else if (direction === 'error') {
+      parts.push(`<div class="ah-row assistant"><div class="ah-bubble assistant" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c;">⚠️ ${esc(content)}</div></div>`);
+    }
+  }
+  if (!parts.length) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  return parts.join('');
+}
+
+// Render ACPX history entries (each entry has role + textPreview with [tool:NAME] markers).
+function _ahExtractAcpxPreview(text) {
+  const raw = String(text || '');
+  const toolUses = [];
+  const cleaned = raw.replace(/\[tool:([\s\S]*?)\]/g, (_, inner) => {
+    const cmd = String(inner || '').trim();
+    if (cmd) toolUses.push(cmd);
+    return '';
+  });
+  return { text: cleaned.trim(), toolUses };
+}
+
+function _ahRenderAcpxEntries(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  const parts = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const role = String(entry.role || '').toLowerCase();
+    const parsed = _ahExtractAcpxPreview(entry.textPreview || '');
+    const text = parsed.text;
+    const toolBadges = parsed.toolUses.length
+      ? `<div class="ah-tool-badges">` + parsed.toolUses.map((name) => `<span class="ah-tool-badge">🛠 ${esc(name)}</span>`).join('') + `</div>`
+      : '';
+    if (!text && !toolBadges) continue;
+    if (role === 'user') {
+      parts.push(`<div class="ah-row user"><div class="ah-bubble user">${esc(text)}</div></div>`);
+    } else {
+      const contentHtml = text
+        ? `<div class="markdown-body tc-markdown">${_ahRenderMarkdown(text)}</div>`
+        : `<span style="color:#9ca3af;font-size:12px;">${esc(t('ah_tool_calling'))}</span>`;
+      parts.push(`<div class="ah-row assistant"><div class="ah-bubble assistant">${toolBadges}${contentHtml}</div></div>`);
+    }
+  }
+  if (!parts.length) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  return parts.join('');
+}
+
+// Map a platform key to the acpx CLI tool name (claude-code / codex / gemini-cli / ...).
+function _ahAcpxToolFromAgentInfo(info) {
+  const rawCandidates = [
+    info && info.platform,
+    info && info.platform_hint,
+    info && info.tag,
+  ].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean);
+  for (const raw of rawCandidates) {
+    if (raw === 'claude-code' || raw === 'claudecode') return 'claude-code';
+    if (raw === 'gemini-cli' || raw === 'gemini') return 'gemini-cli';
+    if (raw === 'codex') return 'codex';
+    if (raw === 'openclaw') return 'openclaw';
+    if (raw && raw !== 'http' && raw !== 'api' && raw !== 'ext') return raw;
+  }
+  if (typeof normalizePlatformKey === 'function') {
+    const k = normalizePlatformKey((info && (info.platform || info.platform_hint)) || '');
+    if (k === 'claudecode') return 'claude-code';
+    if (k && k !== 'default' && k !== 'unknown') return k;
+  }
+  return '';
+}
+
+async function showAgentHistory(agentInfo) {
+  if (!agentInfo) return;
+  const globalId = String(agentInfo.global_id || '').trim();
+  if (!globalId) {
+    toast(t('agent_history_no_session'));
+    return;
+  }
+  const overlay = document.getElementById('agent-history-overlay');
+  const body = document.getElementById('agent-history-body');
+  const titleEl = document.getElementById('agent-history-title');
+  if (!overlay || !body) return;
+
+  const displayName = agentInfo.short_name || agentInfo.name || globalId;
+  if (titleEl) titleEl.textContent = `📜 ${displayName}`;
+
+  body.innerHTML = `<div class="agent-history-loading">${esc(t('agent_history_loading'))}</div>`;
+  overlay.style.display = 'flex';
+  requestAnimationFrame(() => { overlay.classList.add('open'); });
+
+  const memberType = String(agentInfo.type || '').toLowerCase();
+  const isExt = memberType === 'ext';
+  const platformKey = isExt
+    ? (typeof resolveExternalPlatformKey === 'function' ? resolveExternalPlatformKey(agentInfo) : '')
+    : '';
+
+  try {
+    if (isExt && platformKey === 'openclaw') {
+      // OpenClaw: session_key = agent:<global_id>:<suffix>; suffix derived from model or 'clawcrosschat'.
+      const model = (typeof externalAgentModel === 'function') ? externalAgentModel(agentInfo) : (agentInfo.model || '');
+      const suffix = (typeof externalAgentSessionSuffix === 'function') ? externalAgentSessionSuffix(model) : 'clawcrosschat';
+      const sessionKey = `agent:${globalId}:${suffix}`;
+      const url = `/proxy_external_history/messages?platform=openclaw&session_key=${encodeURIComponent(sessionKey)}&limit=200`;
+      const resp = await fetch(url);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.ok === false) {
+        const errMsg = (data && data.error) ? String(data.error) : (`HTTP ${resp.status}`);
+        body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(errMsg)}</div>`;
+        return;
+      }
+      body.innerHTML = _ahRenderOpenclawMessages(data && data.messages);
+      _ahHighlight(body);
+      body.scrollTop = body.scrollHeight;
+      return;
+    }
+    if (isExt) {
+      // ACPX (claude-code / codex / gemini-cli / ...).
+      // Backend group chat dispatch uses session_key = `agent:<global_id>:<suffix>` and
+      // passes it as the acpx CLI session name (acpx_adapter.to_acpx_session_name is identity).
+      // So that same string is what we must pass to /proxy_acpx_session_history?name=...
+      // Suffix is parsed from the agent's `model` field (e.g. `agent:foo:custom`) or 'clawcrosschat'.
+      const tool = _ahAcpxToolFromAgentInfo(agentInfo);
+      if (!tool) {
+        body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: unknown platform</div>`;
+        return;
+      }
+      const model = (typeof externalAgentModel === 'function') ? externalAgentModel(agentInfo) : (agentInfo.model || '');
+      const suffix = (typeof externalAgentSessionSuffix === 'function') ? externalAgentSessionSuffix(model) : 'clawcrosschat';
+      const sessionName = `agent:${globalId}:${suffix}`;
+      const url = `/proxy_acpx_session_history?tool=${encodeURIComponent(tool)}&name=${encodeURIComponent(sessionName)}&limit=200`;
+      const resp = await fetch(url);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.ok === false) {
+        const errMsg = (data && data.error) ? String(data.error) : (`HTTP ${resp.status}`);
+        body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(errMsg)}</div>`;
+        return;
+      }
+      const entries = (data && data.history && data.history.entries) || [];
+      body.innerHTML = _ahRenderAcpxEntries(entries);
+      _ahHighlight(body);
+      body.scrollTop = body.scrollHeight;
+      return;
+    }
+
+    // Internal/oasis path: same as main frontend's switchToSession history.
+    const resp = await fetch('/proxy_session_history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: globalId }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const errMsg = (data && data.error) ? String(data.error) : (`HTTP ${resp.status}`);
+      body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(errMsg)}</div>`;
+      return;
+    }
+    body.innerHTML = _ahRenderMessages(data && data.messages);
+    _ahHighlight(body);
+    body.scrollTop = body.scrollHeight;
+  } catch (e) {
+    body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(e && e.message || String(e))}</div>`;
+  }
+}
+
+function closeAgentHistory() {
+  const overlay = document.getElementById('agent-history-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  setTimeout(() => {
+    overlay.style.display = 'none';
+    const body = document.getElementById('agent-history-body');
+    if (body) body.innerHTML = '';
+  }, 280);
+}
+
 function renderAgentDetailBody(name, agentId, memberType, data, agentInfo) {
   const config = data.config || {};
   const tools = config.tools || {};
@@ -12599,11 +13133,16 @@ function renderAgentDetailBody(name, agentId, memberType, data, agentInfo) {
 
   if (!html) html = `<div class="agent-detail-error">${t('no_detail_info')}</div>`;
 
-  // Add private chat button
+  // Add private chat button (and main-frontend history button when session_id available)
   const pcInfo = escapeHtml(JSON.stringify(agentInfo));
-  html += `<div style="padding:16px;">
-    <button onclick="startPrivateChat(JSON.parse(this.dataset.info))" data-info="${pcInfo}" style="width:100%;padding:14px;background:#07c160;color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('start_private_chat')}</button>
-  </div>`;
+  const hasGlobalId = !!(agentInfo && agentInfo.global_id);
+  html += `<div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
+    <button onclick="startPrivateChat(JSON.parse(this.dataset.info))" data-info="${pcInfo}" style="width:100%;padding:14px;background:#07c160;color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('start_private_chat')}</button>`;
+  if (hasGlobalId) {
+    html += `
+    <button onclick="showAgentHistory(JSON.parse(this.dataset.info))" data-info="${pcInfo}" style="width:100%;padding:14px;background:transparent;color:#1d4ed8;border:2px solid #1d4ed8;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('view_main_history')}</button>`;
+  }
+  html += `</div>`;
   return html;
 }
 
@@ -12713,6 +13252,12 @@ function renderAgentBasicInfo(name, memberType, agentInfo) {
     const pcInfo = escapeHtml(JSON.stringify(agentInfo));
     html += `<div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
       <button onclick="startPrivateChat(JSON.parse(this.dataset.info))" data-info="${pcInfo}" ${needsTrackFirst ? 'disabled' : ''} style="width:100%;padding:14px;background:${needsTrackFirst ? '#9ca3af' : '#07c160'};color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:${needsTrackFirst ? 'not-allowed' : 'pointer'};">${needsTrackFirst ? (_currentLang === 'zh' ? '先追踪再私聊' : 'Track before chat') : t('start_private_chat')}</button>`;
+
+    if (globalId) {
+      const histInfo = escapeHtml(JSON.stringify(agentInfo));
+      html += `
+      <button onclick="showAgentHistory(JSON.parse(this.dataset.info))" data-info="${histInfo}" style="width:100%;padding:14px;background:transparent;color:#1d4ed8;border:2px solid #1d4ed8;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('view_main_history')}</button>`;
+    }
 
     if (memberType === 'ext') {
       const editInfo = escapeHtml(JSON.stringify({
