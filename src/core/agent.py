@@ -149,7 +149,7 @@ USER_INJECTED_TOOLS = {
     "write_session_plan", "read_session_plan", "clear_session_plan",
     "write_session_todos", "read_session_todos", "clear_session_todos",
     "record_verification", "list_verifications", "run_verification",
-    "list_tool_approvals",
+    "list_tool_approvals", "resolve_tool_approval",
     "ultraplan_start", "ultraplan_status",
     "ultrareview_start", "ultrareview_status",
     "enter_plan_mode", "exit_plan_mode", "get_session_mode", "kairos_mode",

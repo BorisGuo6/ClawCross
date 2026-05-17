@@ -63,6 +63,13 @@ async function stubStudioNetwork(page, calls, options = {}) {
   calls.workflowApply = calls.workflowApply || [];
   calls.teamPresetInstall = calls.teamPresetInstall || [];
   calls.teamPresetList = calls.teamPresetList || 0;
+  calls.acpxEnsure = calls.acpxEnsure || [];
+  const acpxStatusPayload = options.acpxStatusPayload || { available: false, tools: [] };
+  const acpxSessionsPayload = options.acpxSessionsPayload || { ok: true, sessions: [] };
+  const acpxHistoryPayload = options.acpxHistoryPayload || { ok: true, history: { entries: [] } };
+  const acpxEnsurePayload = options.acpxEnsurePayload || { ok: true, tool: 'cursor', session_key: 'main:cursor:main-session' };
+  const acpxHistoryStatus = options.acpxHistoryStatus || 200;
+  const acpxEnsureStatus = options.acpxEnsureStatus || 200;
   const currentRuntimeState = {
     status: 'success',
     session_id: 'main-session',
@@ -376,6 +383,13 @@ async function stubStudioNetwork(page, calls, options = {}) {
   await page.route('**/teams', (route) => json(route, { teams: ['Smoke Team'] }));
   await page.route('**/proxy_visual/experts*', (route) => json(route, []));
   await page.route('**/proxy_openclaw_sessions', (route) => json(route, { available: true, agents: [] }));
+  await page.route('**/proxy_acpx_status', (route) => json(route, acpxStatusPayload));
+  await page.route('**/proxy_acpx_sessions?*', (route) => json(route, acpxSessionsPayload));
+  await page.route('**/proxy_acpx_session_history?*', (route) => json(route, acpxHistoryPayload, acpxHistoryStatus));
+  await page.route('**/proxy_acpx_session_ensure', async (route) => {
+    calls.acpxEnsure.push(await route.request().postDataJSON());
+    return json(route, acpxEnsurePayload, acpxEnsureStatus);
+  });
   await page.route('**/proxy_webot_subagents', (route) =>
     json(route, {
       status: 'success',
@@ -796,6 +810,58 @@ test('studio settings export button allows keyless ollama sync', async ({ page }
     model: 'llama3.2:latest',
   });
 
+  expect(pageErrors).toEqual([]);
+});
+
+test('studio ACP warmup surfaces backend errors inline', async ({ page }) => {
+  const calls = {
+    importOpenClaw: 0,
+    exportOpenClaw: 0,
+    tinyfishRun: 0,
+    lastExportPayload: null,
+    approvalActions: [],
+    acpxEnsure: [],
+  };
+  const pageErrors = [];
+
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('dialog', async (dialog) => {
+    pageErrors.push(`unexpected dialog: ${dialog.message()}`);
+    await dialog.dismiss();
+  });
+
+  await stubStudioNetwork(page, calls, {
+    acpxStatusPayload: { available: true, tools: ['cursor'] },
+    acpxHistoryPayload: {
+      ok: false,
+      error: 'No named session "main:cursor:main-session"',
+    },
+    acpxHistoryStatus: 502,
+    acpxEnsurePayload: {
+      ok: false,
+      error: 'Failed to spawn agent command: cursor-agent acp',
+      session_key: 'main:cursor:main-session',
+    },
+    acpxEnsureStatus: 502,
+  });
+  await installMockWebSocket(page);
+  await page.addInitScript(() => {
+    window.alert = (message) => {
+      throw new Error(`unexpected alert: ${message}`);
+    };
+    window.confirm = () => true;
+  });
+
+  await page.goto('/studio');
+  await page.getByRole('button', { name: 'Cursor' }).click();
+  await expect(page.locator('#oc-acp-session-row')).toBeVisible();
+
+  await page.locator('.oc-acp-session-ensure').click();
+
+  await expect.poll(() => calls.acpxEnsure.length).toBe(1);
+  expect(calls.acpxEnsure[0]).toMatchObject({ tool: 'cursor' });
+  await expect(page.locator('#oc-acp-session-status')).toContainText(/预热失败|Warm up failed/);
+  await expect(page.locator('#oc-acp-session-status')).toContainText('cursor-agent acp');
   expect(pageErrors).toEqual([]);
 });
 

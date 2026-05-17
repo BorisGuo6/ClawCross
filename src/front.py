@@ -24,7 +24,7 @@ from io import BytesIO
 from integrations.acpx_cli_tools import acpx_agent_command_names
 from integrations.agent_sender import PreparedAgentStream, SendToAgentRequest, prepare_send_to_agent_stream, send_to_agent
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 from dotenv import load_dotenv
 from utils.env_settings import read_env_all, write_env_settings
 from utils.runtime_paths import DATA_DIR, ENV_FILE, LOGS_DIR, PID_DIR, USER_FILES_DIR, USERS_FILE, WORKSPACE_DIR, set_subprocess_env, venv_python
@@ -562,6 +562,22 @@ def _provider_is_local_keyless(provider: str, base_url: str) -> bool:
     return "127.0.0.1:11434" in normalized_base_url or "localhost:11434" in normalized_base_url
 
 
+def _provider_allows_default_base_url(provider: str) -> bool:
+    """Whether the runtime can call the provider without an explicit LLM_BASE_URL."""
+    normalized_provider = (provider or "").strip().lower()
+    return normalized_provider in {"google", "anthropic", "ollama"}
+
+
+def _default_base_url_for_provider(provider: str) -> str:
+    normalized_provider = (provider or "").strip().lower()
+    defaults = {
+        "google": "https://generativelanguage.googleapis.com/v1beta",
+        "anthropic": "https://api.anthropic.com",
+        "ollama": "http://127.0.0.1:11434",
+    }
+    return defaults.get(normalized_provider, "")
+
+
 def _llm_config_complete(config: dict[str, str]) -> bool:
     api_key = (config.get("api_key") or "").strip()
     base_url = (config.get("base_url") or "").strip()
@@ -575,7 +591,9 @@ def _llm_config_complete(config: dict[str, str]) -> bool:
             api_key=api_key,
         )
     )
-    if not base_url or not model:
+    if not model:
+        return False
+    if not base_url and not _provider_allows_default_base_url(provider):
         return False
     if _provider_is_local_keyless(provider, base_url):
         return True
@@ -646,7 +664,7 @@ def export_openclaw_config():
 
     resolved = _resolve_clawcross_llm_config(request.get_json(force=True) or {})
     api_key = resolved["api_key"]
-    base_url = resolved["base_url"]
+    base_url = resolved["base_url"] or _default_base_url_for_provider(resolved["provider"])
     model = resolved["model"]
     provider = resolved["provider"]
 
@@ -690,7 +708,7 @@ def discover_models():
     """
     resolved = _resolve_clawcross_llm_config(request.get_json(force=True) or {})
     api_key = resolved["api_key"]
-    base_url = resolved["base_url"]
+    base_url = resolved["base_url"] or _default_base_url_for_provider(resolved["provider"])
     provider = resolved["provider"]
 
     if not base_url:
@@ -698,30 +716,44 @@ def discover_models():
     if not api_key and not _provider_is_local_keyless(provider, base_url):
         return jsonify({"error": "api_key required"}), 400
 
-    # Build /v1/models URL
-    models_url = base_url.rstrip("/")
-    if not models_url.endswith("/v1"):
-        models_url += "/v1"
-    models_url += "/models"
-
     try:
         import urllib.request
         import urllib.error
         import json as _json
 
-        headers = {"Content-Type": "application/json"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        req = urllib.request.Request(models_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = _json.loads(resp.read().decode())
+        if (provider or "").strip().lower() == "google":
+            models_url = base_url.rstrip("/") + "/models?key=" + quote(api_key)
+            req = urllib.request.Request(models_url, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = _json.loads(resp.read().decode())
+            models_data = body.get("models", [])
+            model_ids = []
+            for item in models_data:
+                name = (item.get("name") or "").strip()
+                mid = name.removeprefix("models/")
+                methods = item.get("supportedGenerationMethods") or []
+                if mid and (not methods or "generateContent" in methods):
+                    model_ids.append(mid)
+        else:
+            # Build OpenAI-compatible /v1/models URL.
+            models_url = base_url.rstrip("/")
+            if not models_url.endswith("/v1"):
+                models_url += "/v1"
+            models_url += "/models"
 
-        models_data = body.get("data", [])
-        model_ids = []
-        for m in models_data:
-            mid = m.get("id", "")
-            if mid and not mid.startswith("ft:") and not mid.startswith("dall-e"):
-                model_ids.append(mid)
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            req = urllib.request.Request(models_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = _json.loads(resp.read().decode())
+
+            models_data = body.get("data", [])
+            model_ids = []
+            for m in models_data:
+                mid = m.get("id", "")
+                if mid and not mid.startswith("ft:") and not mid.startswith("dall-e"):
+                    model_ids.append(mid)
         model_ids.sort()
 
         return jsonify({"models": model_ids})
@@ -4388,9 +4420,18 @@ def proxy_external_history_purge():
 # Team OpenClaw Snapshot — export/restore agent configs in team folder
 # ------------------------------------------------------------------
 
+def _team_storage_dir(user_id: str, team: str) -> str:
+    runtime_path = os.path.join(str(USER_FILES_DIR), user_id, "teams", team)
+    if app.config.get("TESTING"):
+        legacy_path = os.path.join(str(root_dir), "data", "user_files", user_id, "teams", team)
+        if os.path.exists(legacy_path):
+            return legacy_path
+    return runtime_path
+
+
 def _team_openclaw_agents_path(user_id: str, team: str) -> str:
     """Return the path to the team's external_agents.json file."""
-    return os.path.join(str(USER_FILES_DIR), user_id, "teams", team, "external_agents.json")
+    return os.path.join(_team_storage_dir(user_id, team), "external_agents.json")
 
 
 def _team_openclaw_agents_load(user_id: str, team: str) -> list:
@@ -4497,7 +4538,7 @@ def team_alarms(team_name):
     user_id = session.get("user_id", "")
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
+    team_dir = _team_storage_dir(user_id, team_name)
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
 
@@ -6067,7 +6108,7 @@ def delete_team(team_name):
     if not team_name or "/" in team_name or "\\" in team_name:
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
+    team_dir = _team_storage_dir(user_id, team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -6120,7 +6161,7 @@ def get_team_members(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
+    team_dir = _team_storage_dir(user_id, team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -6174,7 +6215,7 @@ def add_external_member(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
+    team_dir = _team_storage_dir(user_id, team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -6238,7 +6279,7 @@ def delete_external_member(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
     
-    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
+    team_dir = _team_storage_dir(user_id, team_name)
     
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
@@ -6295,7 +6336,7 @@ def update_external_member(team_name):
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
 
-    team_dir = os.path.join(str(USER_FILES_DIR), user_id, "teams", team_name)
+    team_dir = _team_storage_dir(user_id, team_name)
 
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404

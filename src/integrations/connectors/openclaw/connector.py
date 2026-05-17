@@ -25,14 +25,15 @@ class OpenclawConnector(GenericHttpConnector):
 
     async def send(self, request: SendToAgentRequest) -> SendToAgentResult:
         options = request.options or {}
+        use_env_defaults = request.options is None
 
         # Build effective options with openclaw env vars if not already set
         effective_options = dict(options)
-        if not effective_options.get("api_url"):
+        if use_env_defaults and not effective_options.get("api_url"):
             api_url = os.getenv("OPENCLAW_API_URL", "").strip()
             if api_url:
                 effective_options["api_url"] = api_url
-        if not effective_options.get("api_key"):
+        if use_env_defaults and not effective_options.get("api_key"):
             gateway_token = os.getenv("OPENCLAW_GATEWAY_TOKEN", "").strip()
             if gateway_token:
                 effective_options["api_key"] = gateway_token

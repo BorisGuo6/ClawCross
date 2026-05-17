@@ -12,7 +12,12 @@ from webot.models import (
     WeBotBridgeAttachRequest,
     WeBotBridgeDetachRequest,
     WeBotBuddyActionRequest,
+    WeBotClaudeKeepaliveUpdateRequest,
+    WeBotClaudeKickoffRequest,
+    WeBotClaudeProbeRequest,
     WeBotDreamRequest,
+    WeBotGoalHeartbeatRequest,
+    WeBotGoalUpdateRequest,
     WeBotKairosUpdateRequest,
     WeBotPlanUpdateRequest,
     WeBotRunInterruptRequest,
@@ -200,6 +205,68 @@ def create_webot_router(
         x_internal_token: str | None = Header(None),
     ):
         return await service.clear_session_todos(req, x_internal_token)
+
+    @router.get("/webot/session-goals")
+    async def list_session_goals(
+        user_id: str,
+        session_id: str = "",
+        status: str = "",
+        limit: int = 20,
+        password: str = "",
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.list_session_goals(
+            user_id,
+            session_id,
+            password,
+            status,
+            limit,
+            x_internal_token,
+        )
+
+    @router.post("/webot/session-goals")
+    async def update_session_goal(
+        req: WeBotGoalUpdateRequest,
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.update_session_goal(req, x_internal_token)
+
+    @router.post("/webot/session-goals/heartbeat")
+    async def record_goal_heartbeat(
+        req: WeBotGoalHeartbeatRequest,
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.record_goal_heartbeat(req, x_internal_token)
+
+    @router.get("/webot/claude-code/status")
+    async def get_claude_code_status(
+        user_id: str,
+        session_id: str = "default",
+        password: str = "",
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.get_claude_code_status(user_id, session_id, password, x_internal_token)
+
+    @router.post("/webot/claude-code/keepalive")
+    async def update_claude_keepalive(
+        req: WeBotClaudeKeepaliveUpdateRequest,
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.update_claude_keepalive(req, x_internal_token)
+
+    @router.post("/webot/claude-code/probe")
+    async def probe_claude_code(
+        req: WeBotClaudeProbeRequest,
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.probe_claude_code(req, x_internal_token)
+
+    @router.post("/webot/claude-code/kickoff")
+    async def run_claude_keepalive_once(
+        req: WeBotClaudeKickoffRequest,
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.run_claude_keepalive_once(req, x_internal_token)
 
     @router.post("/webot/verifications")
     async def record_verification(
