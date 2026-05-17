@@ -3127,7 +3127,7 @@ header {
     /* toggle 按钮 - 带文字标签 */
     .orch-mobile-toggle {
         display: flex !important;
-        position: absolute; z-index: 110;
+        position: absolute; z-index: 30;
         height: 32px; border-radius: 8px;
         padding: 0 10px; gap: 4px;
         align-items: center; justify-content: center;
