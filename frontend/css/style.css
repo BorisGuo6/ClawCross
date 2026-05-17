@@ -2095,7 +2095,7 @@ header {
 /* === Page Switch Tab === */
 .page-tab-bar {
     display: flex; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
-    flex-shrink: 0; z-index: 10; align-items: stretch;
+    flex-shrink: 0; z-index: 50; align-items: stretch;
 }
 .tab-bar-brand {
     display: flex; align-items: center; gap: 6px; padding: 0 10px;
