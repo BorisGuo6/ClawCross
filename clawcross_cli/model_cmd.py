@@ -288,6 +288,37 @@ def cmd_use(name: str) -> str:
     return f"Active profile -> {p.name} ({p.provider}/{p.model})"
 
 
+def cmd_use_interactive() -> str:
+    """Pick a saved profile via curses radiolist, then activate it."""
+    store = models_store.load()
+    profiles = list(store.profiles.values())
+    if not profiles:
+        return (
+            "No profiles configured. Add one with `/model add <name>` "
+            "or `/model migrate` first."
+        )
+    labels = [
+        f"{p.name}  ({p.provider}/{p.model})  {_mask_key(p.auth.api_key)}"
+        for p in profiles
+    ]
+    labels.append("Leave unchanged")
+    try:
+        active_idx = next(
+            i for i, p in enumerate(profiles) if p.name == store.active
+        )
+    except StopIteration:
+        active_idx = 0
+    idx = curses_radiolist(
+        "Select profile to activate:",
+        labels,
+        selected=active_idx,
+        cancel_returns=len(labels) - 1,
+    )
+    if idx == len(labels) - 1:
+        return "Profile selection cancelled."
+    return cmd_use(profiles[idx].name)
+
+
 def cmd_remove(name: str) -> str:
     if models_store.remove_profile(name):
         store = models_store.load()
@@ -375,7 +406,7 @@ def _model_help() -> str:
         "Usage: /cross model <subcommand>\n"
         "  list                list all profiles\n"
         "  show                show the active profile\n"
-        "  use <name>          switch active profile\n"
+        "  use [<name>]        switch active profile (no <name> -> picker)\n"
         "  add [<name>]        add a new profile (interactive)\n"
         "  remove <name>       delete a profile\n"
         "  migrate             import current .env into a new profile\n"
@@ -408,6 +439,8 @@ def handle_model_command(args: list[str], *, interactive: bool = False) -> str:
         return cmd_show()
     if sub in ("use",):
         if len(args) < 2:
+            if interactive:
+                return cmd_use_interactive()
             return "Usage: /cross model use <name>"
         return cmd_use(args[1])
     if sub in ("add", "new"):

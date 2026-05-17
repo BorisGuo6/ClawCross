@@ -1646,7 +1646,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/model gpt-4o", "set directly (writes .env or updates the active profile)"),
         ("/model list", "list saved profiles in ~/.clawcross/config/models.json"),
         ("/model show", "show the active profile (provider/model/base_url/api_key)"),
-        ("/model use <profile>", "switch which profile is active"),
+        ("/model use", "picker over saved profiles (or `/model use <name>` direct)"),
         ("/model add <profile>", "create a new profile (CLI: prompts; chatbot: rejected)"),
         ("/model migrate", "import current .env into a new profile"),
     ]),
