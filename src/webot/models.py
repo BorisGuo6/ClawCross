@@ -73,6 +73,16 @@ class WeBotSessionModeUpdateRequest(WeBotSessionRuntimeRequest):
     reason: str = ""
 
 
+class WeBotLspRequest(WeBotSessionRuntimeRequest):
+    file: str
+    op: str = "diagnostics"
+    line: int = 0
+    col: int = 0
+    new_name: str = ""
+    timeout_seconds: int = 30
+    max_diagnostics: int = 50
+
+
 class WeBotSessionInboxDeliverRequest(WeBotSessionRuntimeRequest):
     target_ref: str = ""
     limit: int = 20

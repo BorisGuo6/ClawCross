@@ -1375,7 +1375,7 @@ def save_session_state(
     db_path: str | os.PathLike | None = None,
 ) -> SessionStateRecord:
     normalized_mode = (mode or "execute").strip().lower()
-    if normalized_mode not in {"execute", "plan", "review"}:
+    if normalized_mode not in {"execute", "agent", "plan", "review", "yolo"}:
         normalized_mode = "execute"
     normalized_status = (status or "active").strip().lower() or "active"
     now = utc_now()

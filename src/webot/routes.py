@@ -19,6 +19,7 @@ from webot.models import (
     WeBotGoalHeartbeatRequest,
     WeBotGoalUpdateRequest,
     WeBotKairosUpdateRequest,
+    WeBotLspRequest,
     WeBotPlanUpdateRequest,
     WeBotRunInterruptRequest,
     WeBotSessionInboxDeliverRequest,
@@ -121,6 +122,13 @@ def create_webot_router(
         x_internal_token: str | None = Header(None),
     ):
         return await service.update_session_mode(req, x_internal_token)
+
+    @router.post("/webot/lsp")
+    async def run_lsp(
+        req: WeBotLspRequest,
+        x_internal_token: str | None = Header(None),
+    ):
+        return await service.run_lsp(req, x_internal_token)
 
     @router.get("/webot/workflow-presets")
     async def list_session_workflow_presets(

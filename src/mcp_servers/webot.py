@@ -1938,7 +1938,9 @@ async def enter_plan_mode(
     source_session: str = "",
 ) -> str:
     session_id = source_session or "default"
-    normalized_mode = "review" if (mode or "").strip().lower() == "review" else "plan"
+    normalized_mode = normalize_session_mode(mode)
+    if normalized_mode == "execute":
+        normalized_mode = "plan"
     save_session_mode(username, session_id, mode=normalized_mode, reason=reason)
     return (
         f"✅ 已进入 {normalized_mode} 模式\n"
@@ -1956,6 +1958,27 @@ async def exit_plan_mode(
     save_session_mode(username, session_id, mode="execute", reason=reason)
     return (
         f"✅ 已恢复 execute 模式\n"
+        f"session_id: {session_id}\n"
+        f"reason: {reason or '(none)'}"
+    )
+
+@mcp.tool()
+async def set_session_mode(
+    username: str,
+    mode: str = "agent",
+    reason: str = "",
+    source_session: str = "",
+) -> str:
+    """
+    Set the current WeBot session mode.
+
+    Supported modes: execute, agent, plan, review, yolo.
+    """
+    session_id = source_session or "default"
+    normalized_mode = normalize_session_mode(mode)
+    save_session_mode(username, session_id, mode=normalized_mode, reason=reason)
+    return (
+        f"✅ 已切换到 {normalized_mode} 模式\n"
         f"session_id: {session_id}\n"
         f"reason: {reason or '(none)'}"
     )

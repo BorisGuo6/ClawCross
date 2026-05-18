@@ -23,6 +23,7 @@ from webot.models import (
     WeBotGoalHeartbeatRequest,
     WeBotGoalUpdateRequest,
     WeBotKairosUpdateRequest,
+    WeBotLspRequest,
     WeBotPlanUpdateRequest,
     WeBotRunInterruptRequest,
     WeBotSessionInboxDeliverRequest,
@@ -39,6 +40,7 @@ from webot.models import (
     WeBotWorkflowPresetApplyRequest,
 )
 from webot.claude_code import detect_claude_code_cached, probe_claude_acp, run_claude_cli_prompt
+from webot.lsp import probe_diagnostics
 from webot.permission_context import resolve_permission_request
 from webot.policy import get_tool_policy, save_tool_policy_config, serialize_tool_policy
 from webot.profiles import slugify
@@ -783,6 +785,34 @@ class WeBotService:
             "status": "success",
             "session_id": req.session_id,
             "mode": mode,
+        }
+
+    async def run_lsp(
+        self,
+        req: WeBotLspRequest,
+        x_internal_token: str | None,
+    ):
+        self.verify_auth_or_token(req.user_id, req.password, x_internal_token)
+        normalized_op = (req.op or "diagnostics").strip().lower()
+        if normalized_op != "diagnostics":
+            if normalized_op == "rename" and not (req.new_name or "").strip():
+                raise HTTPException(status_code=400, detail="lsp rename requires new_name")
+            return {
+                "status": "stub",
+                "op": normalized_op,
+                "file": req.file,
+                "message": "Only diagnostics is implemented in this ClawCross LSP bridge.",
+            }
+        payload = probe_diagnostics(
+            username=req.user_id,
+            session_id=req.session_id,
+            file=req.file,
+            timeout_seconds=req.timeout_seconds,
+            max_diagnostics=req.max_diagnostics,
+        )
+        return {
+            "status": "success" if payload.get("ok") else "error",
+            **payload,
         }
 
     async def list_session_workflow_presets(

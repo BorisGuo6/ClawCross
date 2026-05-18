@@ -565,7 +565,24 @@ def _provider_is_local_keyless(provider: str, base_url: str) -> bool:
 def _provider_allows_default_base_url(provider: str) -> bool:
     """Whether the runtime can call the provider without an explicit LLM_BASE_URL."""
     normalized_provider = (provider or "").strip().lower()
-    return normalized_provider in {"google", "anthropic", "ollama"}
+    return normalized_provider in {
+        "google",
+        "anthropic",
+        "ollama",
+        "openrouter",
+        "groq",
+        "xai",
+        "mistral",
+        "perplexity",
+        "together",
+        "fireworks",
+        "deepinfra",
+        "cerebras",
+        "cohere",
+        "nvidia-nim",
+        "novita",
+        "vercel-gateway",
+    }
 
 
 def _default_base_url_for_provider(provider: str) -> str:
@@ -574,6 +591,19 @@ def _default_base_url_for_provider(provider: str) -> str:
         "google": "https://generativelanguage.googleapis.com/v1beta",
         "anthropic": "https://api.anthropic.com",
         "ollama": "http://127.0.0.1:11434",
+        "openrouter": "https://openrouter.ai/api/v1",
+        "groq": "https://api.groq.com/openai/v1",
+        "xai": "https://api.x.ai/v1",
+        "mistral": "https://api.mistral.ai/v1",
+        "perplexity": "https://api.perplexity.ai",
+        "together": "https://api.together.xyz/v1",
+        "fireworks": "https://api.fireworks.ai/inference/v1",
+        "deepinfra": "https://api.deepinfra.com/v1/openai",
+        "cerebras": "https://api.cerebras.ai/v1",
+        "cohere": "https://api.cohere.ai/compatibility/v1",
+        "nvidia-nim": "https://integrate.api.nvidia.com/v1",
+        "novita": "https://api.novita.ai/v3/openai",
+        "vercel-gateway": "https://ai-gateway.vercel.sh/v1",
     }
     return defaults.get(normalized_provider, "")
 
@@ -2366,7 +2396,7 @@ def proxy_check_session():
             "has_password": _user_exists_in_users_json(user_id),
             "mode": session.get("login_mode", ""),
         })
-    return jsonify({"valid": False}), 401
+    return jsonify({"valid": False})
 
 
 @app.route("/proxy_login", methods=["POST"])

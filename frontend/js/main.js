@@ -235,7 +235,9 @@ const i18n = {
         approval_working: '处理中...',
         approval_done: '✅ 已处理',
         subagent_runtime_mode_plan: '切到 Plan',
+        subagent_runtime_mode_agent: '切到 Agent',
         subagent_runtime_mode_review: '切到 Review',
+        subagent_runtime_mode_yolo: '切到 YOLO',
         subagent_runtime_mode_execute: '切到 Execute',
         subagent_runtime_mode_updated: '会话模式已更新',
         subagent_runtime_mode_update_failed: '会话模式更新失败',
@@ -1029,7 +1031,9 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         approval_working: 'Working...',
         approval_done: '✅ Done',
         subagent_runtime_mode_plan: 'Set Plan',
+        subagent_runtime_mode_agent: 'Set Agent',
         subagent_runtime_mode_review: 'Set Review',
+        subagent_runtime_mode_yolo: 'Set YOLO',
         subagent_runtime_mode_execute: 'Set Execute',
         subagent_runtime_mode_updated: 'Session mode updated',
         subagent_runtime_mode_update_failed: 'Failed to update session mode',
@@ -2683,7 +2687,7 @@ function _escapeAndFormatText(value) {
 }
 
 function _modeActionButtons(sessionId, currentMode) {
-    const modes = ['plan', 'review', 'execute'];
+    const modes = ['plan', 'agent', 'review', 'yolo', 'execute'];
     return `<div class="webot-mode-actions">${modes
         .map(mode => {
             const active = currentMode === mode;
@@ -5073,6 +5077,19 @@ function _renderLlmGroup(settings) {
         { val: 'anthropic', label: 'Claude (Anthropic)' },
         { val: 'antigravity', label: 'Antigravity (免费·Google One Pro)' },
         { val: 'minimax', label: 'MiniMax' },
+        { val: 'openrouter', label: 'OpenRouter' },
+        { val: 'groq', label: 'Groq' },
+        { val: 'xai', label: 'xAI Grok' },
+        { val: 'mistral', label: 'Mistral' },
+        { val: 'perplexity', label: 'Perplexity' },
+        { val: 'together', label: 'Together AI' },
+        { val: 'fireworks', label: 'Fireworks' },
+        { val: 'deepinfra', label: 'DeepInfra' },
+        { val: 'cerebras', label: 'Cerebras' },
+        { val: 'cohere', label: 'Cohere' },
+        { val: 'nvidia-nim', label: 'NVIDIA NIM' },
+        { val: 'novita', label: 'Novita' },
+        { val: 'vercel-gateway', label: 'Vercel AI Gateway' },
         { val: 'ollama', label: 'Ollama (本地)' },
     ];
     for (const p of providers) {
@@ -6468,6 +6485,19 @@ const _WIZARD_PROVIDER_DEFAULTS = {
     anthropic:   { base_url: 'https://api.anthropic.com',          key_hint: 'sk-ant-...' },
     antigravity: { base_url: 'http://127.0.0.1:8045',              key_hint: 'sk-antigravity', auto_key: 'sk-antigravity' },
     minimax:     { base_url: 'https://api.minimaxi.com',           key_hint: 'sk-api-...' },
+    openrouter:  { base_url: 'https://openrouter.ai/api/v1',       key_hint: 'sk-or-...' },
+    groq:        { base_url: 'https://api.groq.com/openai/v1',     key_hint: 'gsk_...' },
+    xai:         { base_url: 'https://api.x.ai/v1',                key_hint: 'xai-...' },
+    mistral:     { base_url: 'https://api.mistral.ai/v1',          key_hint: '...' },
+    perplexity:  { base_url: 'https://api.perplexity.ai',          key_hint: 'pplx-...' },
+    together:    { base_url: 'https://api.together.xyz/v1',        key_hint: '...' },
+    fireworks:   { base_url: 'https://api.fireworks.ai/inference/v1', key_hint: 'fw_...' },
+    deepinfra:   { base_url: 'https://api.deepinfra.com/v1/openai', key_hint: '...' },
+    cerebras:    { base_url: 'https://api.cerebras.ai/v1',         key_hint: 'csk-...' },
+    cohere:      { base_url: 'https://api.cohere.ai/compatibility/v1', key_hint: '...' },
+    'nvidia-nim': { base_url: 'https://integrate.api.nvidia.com/v1', key_hint: 'nvapi-...' },
+    novita:      { base_url: 'https://api.novita.ai/v3/openai',    key_hint: '...' },
+    'vercel-gateway': { base_url: 'https://ai-gateway.vercel.sh/v1', key_hint: '...' },
     ollama:      { base_url: 'http://127.0.0.1:11434',             key_hint: 'ollama', auto_key: 'ollama' },
     custom:      { base_url: '',                                    key_hint: 'your-api-key' },
 };

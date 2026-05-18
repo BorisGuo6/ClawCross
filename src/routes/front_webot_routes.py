@@ -157,6 +157,31 @@ def register_webot_routes(
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
 
+    @app.route("/proxy_webot_lsp", methods=["POST"])
+    def proxy_webot_lsp():
+        user_id = session.get("user_id", "")
+        body = request.get_json(force=True) if request.is_json else {}
+        try:
+            response = requests.post(
+                f"{base_url}/webot/lsp",
+                json={
+                    "user_id": user_id,
+                    "session_id": body.get("session_id", ""),
+                    "file": body.get("file", ""),
+                    "op": body.get("op", "diagnostics"),
+                    "line": body.get("line", 0),
+                    "col": body.get("col", 0),
+                    "new_name": body.get("new_name", ""),
+                    "timeout_seconds": body.get("timeout_seconds", 30),
+                    "max_diagnostics": body.get("max_diagnostics", 50),
+                },
+                headers=_internal_auth_headers(),
+                timeout=45,
+            )
+            return jsonify(response.json()), response.status_code
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
+
     @app.route("/proxy_webot_workflow_presets")
     def proxy_webot_workflow_presets():
         user_id = session.get("user_id", "")
