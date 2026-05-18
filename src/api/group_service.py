@@ -81,6 +81,38 @@ _external_agent_private_rules_cache: str | None = None
 _external_agent_system_prompt_cache: str | None = None
 
 
+# Per-message permission mode → backend wire format. Mirrors scripts/clawcross.py
+# and frontend/js/main.js so CLI / PC web / mobile group chat are interchangeable.
+_VALID_RUN_MODES = ("manual", "plan", "bypass")
+_ACPX_OVERRIDES_BY_MODE: dict[str, dict[str, Any]] = {
+    "manual": {
+        # All three together: tools hidden, and even if an old agent ignores --allowed-tools,
+        # approve-all is moot because no tool calls happen on the manual UI side anyway.
+        "permission_policy": "approve-all",
+        "non_interactive_permissions": "",
+        "allowed_tools": "",
+    },
+    "plan": {
+        "permission_policy": "approve-reads",
+        # Plan mode: writes must error out, not hang waiting for a human approval.
+        "non_interactive_permissions": "deny",
+    },
+    "bypass": {
+        "permission_policy": "approve-all",
+        "non_interactive_permissions": "",
+    },
+}
+
+
+def _normalize_run_mode(mode: str | None) -> str | None:
+    """Return one of _VALID_RUN_MODES, or None when the input is empty/invalid.
+
+    None means "no override" — each member uses its own default.
+    """
+    raw = (mode or "").strip().lower()
+    return raw if raw in _VALID_RUN_MODES else None
+
+
 def _external_agent_group_rules_block() -> str:
     """Rules for ext agents (ACP/HTTP): no access to agent.py group_chat_rules; prompt must be inlined."""
     global _external_agent_group_rules_cache
@@ -521,6 +553,7 @@ class GroupService:
         *,
         user_id: str = "",
         group_id: str = "",
+        run_mode: str | None = None,
         _retry_dead: bool = False,
     ) -> str | None:
         """Send message to external agent via acpx-backed ACP session."""
@@ -568,9 +601,14 @@ class GroupService:
                     for att in attachments
                 ]
 
+            acpx_overrides = _ACPX_OVERRIDES_BY_MODE.get(run_mode) if run_mode else None
             options = {
                 "cwd": str(WORKSPACE_DIR / "acpx"),
-                **acpx_options_from_agent(agent_info, default_timeout_sec=180),
+                **acpx_options_from_agent(
+                    agent_info,
+                    overrides=acpx_overrides,
+                    default_timeout_sec=180,
+                ),
                 "reset_session": bool(metadata and metadata.get("resetSession")),
                 "system_prompt": _external_agent_session_prompt(
                     agent_info,
@@ -771,6 +809,7 @@ class GroupService:
         metadata: dict | None = None,
         *,
         user_id: str = "",
+        run_mode: str | None = None,
     ):
         """Send message to external agent and handle reply.
 
@@ -799,6 +838,7 @@ class GroupService:
                     metadata=metadata,
                     user_id=user_id,
                     group_id=group_id,
+                    run_mode=run_mode,
                 )
                 if not reply:
                     logger.info(
@@ -850,13 +890,17 @@ class GroupService:
         mentions: list[str] | None = None,
         user_id: str = "",
         attachments: list[Attachment] | None = None,
+        run_mode: str | None = None,
     ):
         """向群内 agent 成员广播消息（异步 fire-and-forget）。
 
         members 直接从数据库读取，包含 global_id / short_name / tag / member_type。
         exclude_sender_display: 用 tag#type#short_name 格式排除发送者自己，
         避免 global_id 在不同 agent 平台间可能冲突的问题。
+        run_mode: optional permission override forwarded to each agent invocation
+        (manual / plan / bypass). None = use each agent's default.
         """
+        normalized_mode = _normalize_run_mode(run_mode)
         if group_id in self.group_muted:
             logger.info("群 %s 已静音，跳过广播", group_id)
             return
@@ -958,6 +1002,7 @@ class GroupService:
                         attachments=attachments,
                         metadata={"is_private_chat": is_private_chat},
                         user_id=owner_uid,
+                        run_mode=normalized_mode,
                     )
                 )
             else:
@@ -1011,6 +1056,11 @@ class GroupService:
                         trigger_body["attachments"] = [
                             a.model_dump() for a in attachments
                         ]
+                    if normalized_mode:
+                        trigger_body["session_mode"] = normalized_mode
+                        # Manual = no tool calls. Empty list is the explicit signal.
+                        if normalized_mode == "manual":
+                            trigger_body["enabled_tools"] = []
                     async with httpx.AsyncClient(timeout=30) as client:
                         await client.post(
                             trigger_url,
@@ -1239,6 +1289,7 @@ class GroupService:
                 mentions=final_mentions,
                 user_id=broadcast_uid,
                 attachments=req.attachments,
+                run_mode=req.run_mode,
             )
         )
 

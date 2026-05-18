@@ -356,7 +356,9 @@ class UserAwareToolNode:
         # parsing thread_id, because user_id itself may contain the separator.
         user_id = state.get("user_id") or "anonymous"
         session_id = state.get("session_id") or "default"
-        runtime_mode_name = normalize_session_mode(get_session_mode(user_id, session_id).get("mode"))
+        runtime_mode_name = normalize_session_mode(
+            state.get("session_mode") or get_session_mode(user_id, session_id).get("mode")
+        )
 
         last_message = state["messages"][-1]
         if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
@@ -1282,7 +1284,8 @@ class TeamAgent:
         current_turn_count = state.get("turn_count") or 0
         runtime_mode = get_session_state(user_id, session_id)
         runtime_mode_name = normalize_session_mode(
-            runtime_mode.get("mode") if isinstance(runtime_mode, dict) else getattr(runtime_mode, "mode", "execute")
+            state.get("session_mode")
+            or (runtime_mode.get("mode") if isinstance(runtime_mode, dict) else getattr(runtime_mode, "mode", "execute"))
         )
         runtime_mode_payload = {
             "mode": runtime_mode_name,

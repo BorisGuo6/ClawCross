@@ -66,7 +66,9 @@ class GenericAcpConnector(AgentConnector):
                     attachments=attachments,
                     ttl_sec=run_options["ttl_sec"],
                     approve_all=run_options["approve_all"],
+                    permission_policy=run_options["permission_policy"],
                     non_interactive_permissions=run_options["non_interactive_permissions"],
+                    allowed_tools=run_options["allowed_tools"],
                 )
                 _acp_mark("connector.prompt_with_trace.done", chars=len(trace.text or ""))
                 return SendToAgentResult(
@@ -94,7 +96,9 @@ class GenericAcpConnector(AgentConnector):
                 attachments=attachments,
                 ttl_sec=run_options["ttl_sec"],
                 approve_all=run_options["approve_all"],
+                permission_policy=run_options["permission_policy"],
                 non_interactive_permissions=run_options["non_interactive_permissions"],
+                allowed_tools=run_options["allowed_tools"],
             )
             _acp_mark("connector.prompt.done", chars=len(reply or ""))
             return SendToAgentResult(
@@ -136,7 +140,9 @@ class GenericAcpConnector(AgentConnector):
                     timeout_sec=run_options["timeout_sec"],
                     ttl_sec=run_options["ttl_sec"],
                     approve_all=run_options["approve_all"],
+                    permission_policy=run_options["permission_policy"],
                     non_interactive_permissions=run_options["non_interactive_permissions"],
+                    allowed_tools=run_options["allowed_tools"],
                 )
             else:
                 await adapter.ops_non_openclaw_reset_session(
@@ -145,7 +151,9 @@ class GenericAcpConnector(AgentConnector):
                     timeout_sec=run_options["timeout_sec"],
                     ttl_sec=run_options["ttl_sec"],
                     approve_all=run_options["approve_all"],
+                    permission_policy=run_options["permission_policy"],
                     non_interactive_permissions=run_options["non_interactive_permissions"],
+                    allowed_tools=run_options["allowed_tools"],
                 )
             cleared_http_sessions = await _clear_http_agent_session_records(options, session_key)
             return ResetAgentResult(
@@ -184,7 +192,9 @@ class GenericAcpConnector(AgentConnector):
             system_prompt=options.get("system_prompt"),
             ttl_sec=run_options["ttl_sec"],
             approve_all=run_options["approve_all"],
+            permission_policy=run_options["permission_policy"],
             non_interactive_permissions=run_options["non_interactive_permissions"],
+            allowed_tools=run_options["allowed_tools"],
         )
         cmd, temp_path = adapter.prepare_prompt_command(
             tool=platform,
@@ -194,7 +204,9 @@ class GenericAcpConnector(AgentConnector):
             attachments=attachments,
             ttl_sec=run_options["ttl_sec"],
             approve_all=run_options["approve_all"],
+            permission_policy=run_options["permission_policy"],
             non_interactive_permissions=run_options["non_interactive_permissions"],
+            allowed_tools=run_options["allowed_tools"],
         )
         return PreparedAgentStream(
             connect_type="acp",

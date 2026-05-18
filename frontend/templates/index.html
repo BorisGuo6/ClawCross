@@ -353,12 +353,20 @@
 
                 <div class="p-2 sm:p-4 border-t bg-white flex-shrink-0">
                     <!-- Tool List Panel -->
-                    <div id="tool-panel-wrapper" class="mb-2" style="display:none;">
+                    <div id="tool-panel-wrapper" class="mb-2">
                         <div class="flex items-center justify-between mb-1">
-                            <div class="tool-toggle-btn flex items-center space-x-1 text-sm text-gray-500 font-medium" onclick="toggleToolPanel()">
+                            <div id="tool-toggle-btn" class="tool-toggle-btn flex items-center space-x-1 text-sm text-gray-500 font-medium" onclick="toggleToolPanel()" style="display:none;">
                                 <span data-i18n="available_tools">🧰 可用工具</span>
                                 <span id="tool-count" class="text-xs text-gray-400"></span>
                                 <span id="tool-toggle-icon" class="tool-toggle-icon text-xs">▼</span>
+                            </div>
+                            <div class="oc-mode-selector" data-i18n-title="run_mode_title" title="工具权限模式：bypass=全工具自动批准；plan=只读;manual=完全不调用工具">
+                                <label for="oc-run-mode" class="oc-mode-label" data-i18n="run_mode_label">模式</label>
+                                <select id="oc-run-mode" class="oc-mode-select" onchange="onRunModeChange()">
+                                    <option value="bypass" data-i18n="run_mode_bypass">自动 (全工具)</option>
+                                    <option value="plan" data-i18n="run_mode_plan">规划 (只读)</option>
+                                    <option value="manual" data-i18n="run_mode_manual">手动 (无工具)</option>
+                                </select>
                             </div>
                         </div>
                         <div id="tool-panel" class="tool-panel collapsed">

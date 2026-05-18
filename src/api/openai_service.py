@@ -716,6 +716,7 @@ class OpenAIChatService:
             "max_tokens": effective_max_tokens,
             "turn_count": 0,
             "external_tools": req.tools,
+            "session_mode": (req.session_mode or "").strip().lower() or None,
         }
         # Per-request LLM model override (from OASIS SessionExpert)
         if req.llm_override:

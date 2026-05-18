@@ -826,6 +826,12 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         oc_acp_session_ensure: '预热',
         oc_acp_session_ensure_title: '仅创建/预热 ACP 会话，不发送消息',
         oc_internal_session_refresh_title: '从服务器刷新 WeBot 会话列表',
+        // Run mode (permission mode)
+        run_mode_label: '模式',
+        run_mode_bypass: '自动 (全工具)',
+        run_mode_plan: '规划 (只读)',
+        run_mode_manual: '手动 (无工具)',
+        run_mode_title: '工具权限模式：自动=全工具+全自动批准；规划=只读不写；手动=完全不调用工具，仅文字回复',
     },
     'en': {
         // General
@@ -1615,6 +1621,12 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         oc_acp_session_ensure: 'Warm up',
         oc_acp_session_ensure_title: 'Create/warm ACP session only (no message sent)',
         oc_internal_session_refresh_title: 'Refresh WeBot session list from server',
+        // Run mode (permission mode)
+        run_mode_label: 'Mode',
+        run_mode_bypass: 'Auto (all tools)',
+        run_mode_plan: 'Plan (read-only)',
+        run_mode_manual: 'Manual (no tools)',
+        run_mode_title: 'Tool permission mode: Auto = all tools, all approved; Plan = read-only; Manual = no tool calls, text only',
     }
 };
 
@@ -6134,6 +6146,60 @@ function getEnabledTools() {
     return Array.from(enabledToolSet);
 }
 
+// ── Run mode (permission mode) ──────────────────────────────────────────────
+// Mirrors the CLI's manual / plan / bypass. Persisted in localStorage.
+const RUN_MODE_VALID = ['manual', 'plan', 'bypass'];
+const RUN_MODE_DEFAULT = 'bypass';
+const RUN_MODE_STORAGE_KEY = 'clawRunMode';
+
+function getRunMode() {
+    const raw = (localStorage.getItem(RUN_MODE_STORAGE_KEY) || '').trim().toLowerCase();
+    return RUN_MODE_VALID.includes(raw) ? raw : RUN_MODE_DEFAULT;
+}
+
+function setRunMode(mode) {
+    const normalized = RUN_MODE_VALID.includes(mode) ? mode : RUN_MODE_DEFAULT;
+    localStorage.setItem(RUN_MODE_STORAGE_KEY, normalized);
+    const sel = document.getElementById('oc-run-mode');
+    if (sel) {
+        sel.value = normalized;
+        sel.dataset.activeMode = normalized;
+    }
+}
+
+function onRunModeChange() {
+    const sel = document.getElementById('oc-run-mode');
+    setRunMode(sel ? sel.value : RUN_MODE_DEFAULT);
+}
+
+function initRunModeUI() {
+    const sel = document.getElementById('oc-run-mode');
+    if (!sel) return;
+    setRunMode(getRunMode());
+}
+
+// Apply run-mode semantics to an outgoing chat payload.
+// endpoint: 'acp' for /proxy_acpx_chat, 'internal' for /v1/chat/completions.
+function applyRunModeToPayload(payload, endpoint) {
+    const mode = getRunMode();
+    if (endpoint === 'internal') {
+        payload.session_mode = mode;
+        if (mode === 'manual') {
+            payload.enabled_tools = [];
+        }
+    } else if (endpoint === 'acp') {
+        if (mode === 'plan') {
+            payload.permission_policy = 'approve-reads';
+            payload.non_interactive_permissions = 'deny';
+        } else {
+            payload.permission_policy = 'approve-all';
+        }
+        if (mode === 'manual') {
+            payload.allowed_tools = '';
+        }
+    }
+}
+
 async function loadTools() {
     try {
         const resp = await fetch('/proxy_tools');
@@ -6141,10 +6207,14 @@ async function loadTools() {
         const data = await resp.json();
         const tools = data.tools || [];
         const toolList = document.getElementById('tool-list');
-        const wrapper = document.getElementById('tool-panel-wrapper');
+        const toggleBtn = document.getElementById('tool-toggle-btn');
+        const toolPanel = document.getElementById('tool-panel');
 
         if (tools.length === 0) {
-            wrapper.style.display = 'none';
+            // Keep the wrapper visible so the mode selector stays in view;
+            // only hide the tool-toggle button and the (collapsed) panel.
+            if (toggleBtn) toggleBtn.style.display = 'none';
+            if (toolPanel) toolPanel.style.display = 'none';
             return;
         }
 
@@ -6160,7 +6230,8 @@ async function loadTools() {
             toolList.appendChild(tag);
         });
         updateToolCount();
-        wrapper.style.display = 'block';
+        if (toggleBtn) toggleBtn.style.display = '';
+        if (toolPanel) toolPanel.style.display = '';
     } catch (e) {
         console.warn('Failed to load tools:', e);
     }
@@ -7244,6 +7315,7 @@ async function handleSend() {
                 if (acpNameRaw) openaiPayload.acp_session_name = acpNameRaw;
             }
             acpRememberResolvedSessionName(acpComputeSessionNameFromInputs());
+            applyRunModeToPayload(openaiPayload, 'acp');
             chatEndpoint = '/proxy_acpx_chat';
         } else {
             openaiPayload = {
@@ -7253,6 +7325,7 @@ async function handleSend() {
                 session_id: currentSessionId,
                 enabled_tools: getEnabledTools(),
             };
+            applyRunModeToPayload(openaiPayload, 'internal');
             chatEndpoint = '/v1/chat/completions';
         }
 
@@ -12215,6 +12288,7 @@ window.addEventListener('load', () => {
         console.warn('Hub return import bootstrap failed:', e && e.message);
     });
     _resumePendingRestartNotice();
+    initRunModeUI();
 });
 
 window.addEventListener('message', (event) => {

@@ -47,6 +47,9 @@ class ChatCompletionRequest(BaseModel):
     # Per-request LLM model override (used by OASIS SessionExpert)
     llm_override: Optional[dict] = None
     max_turns: Optional[int] = None
+    # Per-request session mode override: "execute" | "plan" | "bypass".
+    # Wins over the stored session mode for this turn without writing the store.
+    session_mode: Optional[str] = None
 
 
 @dataclass

@@ -3911,6 +3911,9 @@ def proxy_acpx_chat():
             "system_prompt": front_external_system_prompt,
             "attachments": acpx_attachments or None,
             "timeout_sec": int(body.get("timeout_sec") or 600),
+            "permission_policy": body.get("permission_policy"),
+            "non_interactive_permissions": body.get("non_interactive_permissions"),
+            "allowed_tools": body.get("allowed_tools"),
         },
         user_id=session.get("user_id") or "",
     )

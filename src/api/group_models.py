@@ -41,6 +41,9 @@ class GroupMessageRequest(BaseModel):
     sender_display: Optional[str] = ""  # agent 发言显示名: tag#type#short_name
     mentions: Optional[list[str]] = None  # 被 @ 的 agent global_id 列表
     attachments: Optional[list[Attachment]] = None  # 附件列表（图片/音频/文件）
+    # Permission mode forwarded to broadcast recipients:
+    # "manual" | "plan" | "bypass". None = no override (use each agent's default).
+    run_mode: Optional[str] = None
 
 
 class GroupAddMemberRequest(BaseModel):

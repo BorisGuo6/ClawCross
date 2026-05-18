@@ -80,6 +80,39 @@ PORT_FRONTEND = int(os.getenv("PORT_FRONTEND", "51209"))
 AGENT_BASE = f"http://127.0.0.1:{PORT_AGENT}"
 FRONT_BASE = f"http://127.0.0.1:{PORT_FRONTEND}"
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
+
+# Unified CLI permission modes — apply to both internal agent (session_mode +
+# enabled_tools) and external ACP agents (acpx permission_policy / allowed_tools /
+# non_interactive_permissions). Default is bypass: full tools, auto-approve all.
+VALID_MODES = ("manual", "plan", "bypass")
+_DEFAULT_MODE = "bypass"
+_ACPX_POLICY_BY_MODE = {
+    "manual": "approve-all",  # moot — no tools advertised
+    "plan": "approve-reads",
+    "bypass": "approve-all",
+}
+_ACPX_NIP_BY_MODE = {
+    "manual": "",
+    "plan": "deny",  # plan mode: writes must error out, not hang waiting for a human
+    "bypass": "",
+}
+# None = let acpx advertise all tools. "" = explicitly advertise no tools.
+_ACPX_ALLOWED_TOOLS_BY_MODE: dict[str, str | None] = {
+    "manual": "",
+    "plan": None,
+    "bypass": None,
+}
+
+
+def _normalize_mode(mode: str | None) -> str:
+    """Normalize to one of VALID_MODES.
+
+    Legacy values (``execute`` / ``review``) and unknown strings collapse to
+    the default (currently ``bypass``), preserving the prior 'full tools +
+    auto-approve' behavior for users who never set a mode.
+    """
+    raw = (mode or "").strip().lower()
+    return raw if raw in VALID_MODES else _DEFAULT_MODE
 def _resolve_default_user() -> str:
     """Pick the canonical CLI user from env, users.json, or 'admin' fallback."""
     for var in ("CLAW_USER", "CLI_USER"):
@@ -150,8 +183,7 @@ SLASH_COMMANDS = [
     ("/session", "pick a session (replays last 10 messages on resume)"),
     ("/session <id>", "switch session by id (no history replay)"),
     ("/new session", "create and switch to a new session"),
-    ("/cwd [path]", "show or change workspace"),
-    ("/mode <mode>", "set execute, plan, or review label"),
+    ("/mode [<mode>]", "permission mode picker (or `/mode manual|plan|bypass` direct)"),
     ("/state", "show persisted state"),
     ("/restart", "restart the ClawCross backend"),
     ("/cancel", "cancel internal-agent generation"),
@@ -166,8 +198,7 @@ SLASH_MENU = [
     ("/cancel", "cancel internal-agent generation", "/cancel", True),
     ("/session", "pick session — resumes & replays last 10 messages", "/session", True),
     ("/new session", "create a new session", "/new session", True),
-    ("/cwd [path]", "show or change workspace", "/cwd ", False),
-    ("/mode <mode>", "set execute, plan, or review label", "/mode ", False),
+    ("/mode", "permission mode: manual / plan / bypass", "/mode", True),
     ("/model", "model actions (list / use / add / migrate / remove)", "/model", True),
     ("/team [<name>]", "list teams or show one team", "/team", True),
     ("/workflow", "workflow actions (list / show / run / new)", "/workflow", True),
@@ -203,8 +234,7 @@ CHAT_SLASH_COMMANDS = [
     ("/cross session", "list sessions for current platform"),
     ("/cross session <id>", "switch session by id"),
     ("/cross new session", "create and switch to a new session"),
-    ("/cross cwd [path]", "show or change workspace"),
-    ("/cross mode <mode>", "set execute/plan/review"),
+    ("/cross mode [<mode>]", "permission mode picker: manual / plan / bypass"),
     ("/cross model [name]", "select/set LLM model"),
     ("/cross team [name]", "list teams or show one team's details"),
     ("/cross workflow", "list workflows (or `show <name>` / `run <name> team <T> question <Q>`)"),
@@ -219,23 +249,21 @@ CHAT_SLASH_COMMANDS = [
 ]
 
 
-def _repo_session_name(cwd: str | None = None) -> str:
-    root = Path(cwd or os.getcwd()).resolve()
+def _repo_session_name() -> str:
+    root = Path(os.getcwd()).resolve()
     name = root.name or "default"
     return name.replace(" ", "-")
 
 
 def _default_state() -> dict:
-    cwd = str(Path.cwd())
-    session = _repo_session_name(cwd)
+    session = _repo_session_name()
     return {
         "version": STATE_VERSION,
         "current": {
             "platform": "internal",
             "session": session,
             "user": DEFAULT_USER,
-            "mode": "execute",
-            "cwd": cwd,
+            "mode": _DEFAULT_MODE,
         },
         "platforms": {
             "internal": {"session": session},
@@ -263,6 +291,9 @@ def _load_state(path: Path | str | None = None) -> dict:
     data.setdefault("recent", [])
     for key, value in default["current"].items():
         data["current"].setdefault(key, value)
+    # Drop legacy / unknown mode values (e.g. "review") so the CLI never prompts
+    # with a value its UI no longer offers. Silent — saved on next /save.
+    data["current"]["mode"] = _normalize_mode(data["current"].get("mode"))
     # Migrate legacy "admin" user to the canonical user from users.json
     # when admin is not a registered account. Avoids the empty-result
     # problem when state was created before users.json was provisioned.
@@ -432,10 +463,7 @@ def _recent_lines(state: dict, width: int) -> list[str]:
     for item in recent[:3]:
         platform = item.get("platform", "internal")
         session = item.get("session", "default")
-        cwd = item.get("cwd", "")
         lines.append(_fit(f"{platform} / {session}", width))
-        if cwd:
-            lines.append(_fit(cwd, width))
     return lines
 
 
@@ -468,8 +496,7 @@ def _welcome_lines(state: dict) -> list[str]:
             f"{APP_NAME} v{_package_version()}",
             f"Web UI: {FRONT_BASE}",
             f"Platform: {platform} ({_platform_status_line(platform)}) | Session: {current.get('session', 'default')}",
-            f"User: {current.get('user', DEFAULT_USER)}",
-            f"CWD: {current.get('cwd', Path.cwd())}",
+            f"User: {current.get('user', DEFAULT_USER)} | Mode: {_normalize_mode(current.get('mode'))}",
             "Type / to choose a command.",
             "Type /help for all commands.",
             _llm_status_hint(),
@@ -485,10 +512,10 @@ def _welcome_lines(state: dict) -> list[str]:
         _fit(f"Web UI: {FRONT_BASE}", right_width),
         _fit(
             f"Platform: {platform} ({_platform_status_line(platform)}) | "
-            f"Session: {current.get('session', 'default')} | User: {current.get('user', DEFAULT_USER)}",
+            f"Session: {current.get('session', 'default')} | User: {current.get('user', DEFAULT_USER)} | "
+            f"Mode: {_normalize_mode(current.get('mode'))}",
             right_width,
         ),
-        _fit(f"CWD: {current.get('cwd', Path.cwd())}", right_width),
         "Type / as the first character to choose a command.",
         "Type /help for all commands.",
         _fit(_llm_status_hint(), right_width),
@@ -547,7 +574,7 @@ def _set_platform(state: dict, platform: str) -> None:
     platform = (platform or "internal").strip()
     current = _current(state)
     old_platform = current.get("platform") or "internal"
-    old_session = current.get("session") or _repo_session_name(current.get("cwd"))
+    old_session = current.get("session") or _repo_session_name()
     state.setdefault("platforms", {}).setdefault(old_platform, {})["session"] = old_session
     current["platform"] = platform
     platform_state = state.setdefault("platforms", {}).setdefault(platform, {})
@@ -559,7 +586,7 @@ def _set_platform(state: dict, platform: str) -> None:
 def _set_chat_platform(state: dict, platform: str) -> None:
     platform = (platform or "internal").strip()
     current = _current(state)
-    default_session = state.get("__chat_default_session") or _repo_session_name(current.get("cwd"))
+    default_session = state.get("__chat_default_session") or _repo_session_name()
     current["platform"] = platform
     current["session"] = default_session
     current["session_resumed"] = False
@@ -570,18 +597,9 @@ def _set_chat_platform(state: dict, platform: str) -> None:
 def _set_session(state: dict, session: str, *, resumed: bool = False) -> None:
     current = _current(state)
     platform = current.get("platform") or "internal"
-    current["session"] = session or _repo_session_name(current.get("cwd"))
+    current["session"] = session or _repo_session_name()
     current["session_resumed"] = bool(resumed)
     state.setdefault("platforms", {}).setdefault(platform, {})["session"] = current["session"]
-
-
-def _set_cwd(state: dict, cwd: str) -> None:
-    path = Path(cwd).expanduser().resolve()
-    current = _current(state)
-    current["cwd"] = str(path)
-    if not current.get("session"):
-        current["session"] = _repo_session_name(str(path))
-        current["session_resumed"] = False
 
 
 def _remember_recent(state: dict) -> None:
@@ -590,12 +608,10 @@ def _remember_recent(state: dict) -> None:
     item = {
         "platform": current.get("platform", "internal"),
         "session": current.get("session", "default"),
-        "cwd": current.get("cwd", str(Path.cwd())),
     }
     recent[:] = [r for r in recent if not (
         r.get("platform") == item["platform"]
         and r.get("session") == item["session"]
-        and r.get("cwd") == item["cwd"]
     )]
     recent.insert(0, item)
     del recent[20:]
@@ -741,7 +757,7 @@ def _print_history_tail(messages: list[dict], *, max_chars: int = 400) -> None:
 
 
 def _new_session_name(state: dict) -> str:
-    cwd_name = _repo_session_name(_current(state).get("cwd"))
+    cwd_name = _repo_session_name()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     return f"{cwd_name}-{stamp}"
 
@@ -874,13 +890,18 @@ def _run_internal(prompt: str, state: dict, *, model: str = "default") -> None:
     current = _current(state)
     user = current.get("user") or DEFAULT_USER
     session_id = current.get("session") or "default"
+    mode = _normalize_mode(current.get("mode"))
     payload = {
         "model": model or "default",
         "messages": [{"role": "user", "content": prompt}],
         "stream": True,
         "user": user,
         "session_id": session_id,
+        "session_mode": mode,
     }
+    if mode == "manual":
+        # manual: agent must answer with text only; no tool calls allowed.
+        payload["enabled_tools"] = []
     _print_sse_text(_post_stream(
         f"{AGENT_BASE}/v1/chat/completions",
         _headers_for_user(user),
@@ -898,7 +919,8 @@ def _run_acpx(prompt: str, state: dict, *, model: str = "default") -> None:
     tool = _acpx_tool(platform)
     if tool not in ACP_PLATFORMS:
         raise RuntimeError(f"Unsupported ACP platform: {platform}")
-    session_id = current.get("session") or _repo_session_name(current.get("cwd"))
+    session_id = current.get("session") or _repo_session_name()
+    mode = _normalize_mode(current.get("mode"))
     # Pass the user's session name verbatim. The backend now trusts any
     # shell-safe name and forwards it to `acpx sessions ensure` (which is
     # idempotent — reuses an existing session or creates a new one).
@@ -910,7 +932,15 @@ def _run_acpx(prompt: str, state: dict, *, model: str = "default") -> None:
         "session_id": session_id,
         "acp_session_name": session_id,
         "timeout_sec": 600,
+        "permission_policy": _ACPX_POLICY_BY_MODE[mode],
     }
+    nip = _ACPX_NIP_BY_MODE[mode]
+    if nip:
+        payload["non_interactive_permissions"] = nip
+    allowed_tools = _ACPX_ALLOWED_TOOLS_BY_MODE.get(mode)
+    if allowed_tools is not None:
+        # Explicitly include even when "", so acpx receives `--allowed-tools ""`.
+        payload["allowed_tools"] = allowed_tools
     # When the user picked an existing ACP session via /session, send the
     # strict-reuse hint so the backend errors if the session is gone instead
     # of silently creating a new one under the same name.
@@ -929,11 +959,8 @@ def run_prompt(prompt: str, state: dict, *, model: str = "default") -> int:
     if not prompt:
         return 0
     current = _current(state)
-    cwd = current.get("cwd") or str(Path.cwd())
-    old_cwd = Path.cwd()
     platform = current.get("platform") or "internal"
     try:
-        os.chdir(cwd)
         if platform == "internal":
             _run_internal(prompt, state, model=model)
         elif ":" not in platform and _acpx_tool(platform) in ACP_PLATFORMS:
@@ -958,8 +985,6 @@ def run_prompt(prompt: str, state: dict, *, model: str = "default") -> int:
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    finally:
-        os.chdir(old_cwd)
 
 
 def cmd_platforms(_args, state: dict) -> int:
@@ -1052,8 +1077,6 @@ def cmd_run(args, state: dict) -> int:
         _set_session(state, args.session)
     if args.user:
         _current(state)["user"] = args.user
-    if args.cwd:
-        _set_cwd(state, args.cwd)
     if args.mode:
         _current(state)["mode"] = args.mode
     prompt = " ".join(args.prompt or []).strip()
@@ -1156,7 +1179,9 @@ def _prompt_label(state: dict) -> str:
     current = _current(state)
     platform = _fit(current.get("platform", "internal"), 14)
     session = _fit(current.get("session", "default"), 32)
-    return f"clawcross[{platform}:{session}]> "
+    mode = _normalize_mode(current.get("mode"))
+    mode_suffix = f"[{mode}]" if mode != _DEFAULT_MODE else ""
+    return f"clawcross[{platform}:{session}]{mode_suffix}> "
 
 
 def _menu_lines(selected: int) -> list[str]:
@@ -1427,6 +1452,33 @@ def _choose_platform(state: dict) -> bool:
     return True
 
 
+_MODE_DESCRIPTIONS: dict[str, str] = {
+    "bypass": "all tools, auto-approve everything (default)",
+    "plan": "read-only — writes denied non-interactively",
+    "manual": "no tool calls — text reply only",
+}
+
+
+def _choose_mode(state: dict) -> bool:
+    current_mode = _normalize_mode(_current(state).get("mode"))
+    rows = [(m, _MODE_DESCRIPTIONS[m]) for m in VALID_MODES]
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print(f"mode: {current_mode}")
+        for name, desc in rows:
+            marker = " (current)" if name == current_mode else ""
+            print(f"  {name}{marker} — {desc}")
+        return True
+    selected = _choose_from_menu("Run mode", rows)
+    if selected is None:
+        return True
+    mode = rows[selected][0]
+    _current(state)["mode"] = mode
+    _save_state(state)
+    marker = " unchanged" if mode == current_mode else ""
+    print(f"mode: {mode}{marker}")
+    return True
+
+
 def _read_interactive_line(prompt: str) -> str:
     """Read one line with a rounded-box prompt and optional slash menu.
 
@@ -1674,19 +1726,14 @@ def _handle_slash(command: str, state: dict) -> bool:
             _save_state(state)
             print(f"session: {_current(state)['session']}")
         return True
-    if name == "/cwd":
-        if len(parts) == 1:
-            print(_current(state).get("cwd", str(Path.cwd())))
-        else:
-            _set_cwd(state, " ".join(parts[1:]))
-            _save_state(state)
-            print(f"cwd: {_current(state)['cwd']}")
-        return True
     if name == "/mode":
         if len(parts) == 1:
-            print(_current(state).get("mode", "execute"))
+            return _choose_mode(state)
+        requested = parts[1].strip().lower()
+        if requested not in VALID_MODES:
+            print(f"unknown mode: {parts[1]!r}. choices: {', '.join(VALID_MODES)}", file=sys.stderr)
         else:
-            _current(state)["mode"] = parts[1]
+            _current(state)["mode"] = requested
             _save_state(state)
             print(f"mode: {_current(state)['mode']}")
         return True
@@ -1749,7 +1796,7 @@ def _chat_state_lines(state: dict) -> list[str]:
     return [
         f"Agent: {current.get('platform', 'internal')}",
         f"User: {current.get('user', DEFAULT_USER)}",
-        f"Mode: {current.get('mode', 'execute')}",
+        f"Mode: {_normalize_mode(current.get('mode'))}",
     ]
 
 
@@ -1777,8 +1824,7 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/session", "interactive picker (resumes & replays last 10 messages)"),
         ("/session <name>", "switch to / create session by name (no replay)"),
         ("/new session", "create timestamped session (e.g. ClawCross-20260512-031544)"),
-        ("/cwd [path]", "show or change the workspace directory"),
-        ("/mode <mode>", "label the run as execute / plan / review"),
+        ("/mode", "picker over manual / plan / bypass (or `/mode <name>` direct)"),
         ("/cancel", "cancel an in-flight internal generation"),
     ]),
     ("Team resources", [
@@ -1855,8 +1901,7 @@ _CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/cross session", "show sessions for the current platform"),
         ("/cross session <id>", "switch to / create session by id"),
         ("/cross new session", "create timestamped session"),
-        ("/cross cwd [path]", "show or change workspace directory"),
-        ("/cross mode <mode>", "label the run as execute / plan / review"),
+        ("/cross mode [<mode>]", "picker over manual / plan / bypass (or pass name direct)"),
         ("/cross restart", "request a backend restart"),
         ("/cross cancel", "cancel an in-flight internal generation"),
     ]),
@@ -2096,8 +2141,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("-p", "--platform", help="Platform, e.g. internal, codex, claude")
     run.add_argument("-s", "--session", help="Session id")
     run.add_argument("-u", "--user", help="User id")
-    run.add_argument("--cwd", help="Workspace directory")
-    run.add_argument("--mode", choices=["execute", "plan", "review"], help="Runtime mode label")
+    run.add_argument("--mode", choices=list(VALID_MODES), help="Permission mode: manual / plan / bypass")
     run.add_argument("-m", "--model", help="Model name for internal route")
 
     use = sub.add_parser("use", help="Persist the current platform")
