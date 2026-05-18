@@ -81,6 +81,27 @@ AGENT_BASE = f"http://127.0.0.1:{PORT_AGENT}"
 FRONT_BASE = f"http://127.0.0.1:{PORT_FRONTEND}"
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
 
+
+def _public_front_url() -> str:
+    """Return PUBLIC_DOMAIN (normalized to a full URL) when the tunnel is up,
+    else the localhost FRONT_BASE. Re-reads .env each call so tunnel updates
+    are picked up immediately without restarting the CLI.
+
+    Note: HTTP requests still target FRONT_BASE because backend endpoints like
+    /generate_login_link are localhost-only by design. This helper is for
+    *display* (welcome banner, status output) only.
+    """
+    try:
+        vals = read_env_all(str(ENV_FILE))
+    except Exception:
+        return FRONT_BASE
+    domain = (vals.get("PUBLIC_DOMAIN") or "").strip().rstrip("/")
+    if not domain or domain == "wait to set":
+        return FRONT_BASE
+    if domain.startswith(("http://", "https://")):
+        return domain
+    return f"https://{domain}"
+
 # Unified CLI permission modes — apply to both internal agent (session_mode +
 # enabled_tools) and external ACP agents (acpx permission_policy / allowed_tools /
 # non_interactive_permissions). Default is bypass: full tools, auto-approve all.
@@ -187,6 +208,7 @@ SLASH_COMMANDS = [
     ("/state", "show persisted state"),
     ("/restart", "restart the ClawCross backend"),
     ("/cancel", "cancel internal-agent generation"),
+    ("/front", "get a public magic link (web UI login)"),
     ("/help", "show commands"),
     ("/exit", "quit"),
 ]
@@ -205,6 +227,7 @@ SLASH_MENU = [
     ("/skill [<team>]", "list managed skills", "/skill", True),
     ("/cron [<team>]", "list cron alarms", "/cron", True),
     ("/channel", "list / setup chatbot channels", "/channel", True),
+    ("/front", "get a public magic link (web UI login)", "/front", True),
     ("/exit", "quit", "/exit", True),
 ]
 CLI_COMMANDS = [
@@ -491,10 +514,11 @@ def _welcome_lines(state: dict) -> list[str]:
         # Narrow terminals get a stacked layout so the banner adapts instead of
         # forcing a wide two-column frame that overflows the viewport.
         inner_width = max(10, width - 4)
+        web_ui_url = _public_front_url()
         lines = [_style("╭" + "─" * (width - 2) + "╮")]
         for text in [
             f"{APP_NAME} v{_package_version()}",
-            f"Web UI: {FRONT_BASE}",
+            f"Web UI: {web_ui_url}",
             f"Platform: {platform} ({_platform_status_line(platform)}) | Session: {current.get('session', 'default')}",
             f"User: {current.get('user', DEFAULT_USER)} | Mode: {_normalize_mode(current.get('mode'))}",
             "Type / to choose a command.",
@@ -507,9 +531,10 @@ def _welcome_lines(state: dict) -> list[str]:
         return lines
 
     right_width = min(max(52, width - 31), 76)
+    web_ui_url = _public_front_url()
     right = [
         f"{APP_NAME} v{_package_version()}",
-        _fit(f"Web UI: {FRONT_BASE}", right_width),
+        _fit(f"Web UI: {web_ui_url}", right_width),
         _fit(
             f"Platform: {platform} ({_platform_status_line(platform)}) | "
             f"Session: {current.get('session', 'default')} | User: {current.get('user', DEFAULT_USER)} | "
@@ -1102,6 +1127,37 @@ def cmd_cancel(args, state: dict) -> int:
     except Exception as exc:
         print(f"cancel failed: {exc}", file=sys.stderr)
         return 1
+
+
+def _show_magic_link(state: dict) -> None:
+    """POST /generate_login_link on the local front and print the resulting URL.
+
+    The endpoint is localhost-only by design; the CLI hits 127.0.0.1 so the
+    request is treated as direct-local. PUBLIC_DOMAIN (.env) is re-read on
+    every request by the backend, so tunnel updates take effect without a
+    restart.
+    """
+    current = _current(state)
+    user = current.get("user") or DEFAULT_USER
+    try:
+        resp = _request_json(
+            "POST",
+            f"{FRONT_BASE}/generate_login_link",
+            data={"user_id": user},
+            timeout=15,
+        )
+    except (urllib.error.URLError, RuntimeError) as exc:
+        print(f"failed to generate magic link: {exc}", file=sys.stderr)
+        print(f"is the frontend running on {FRONT_BASE} ?", file=sys.stderr)
+        return
+    if not isinstance(resp, dict) or not resp.get("ok"):
+        err = (resp or {}).get("error") if isinstance(resp, dict) else None
+        print(f"magic link request failed: {err or resp}", file=sys.stderr)
+        return
+    link = resp.get("link") or ""
+    valid_hours = resp.get("valid_hours") or 24
+    print(f"Magic link for {user} (valid {valid_hours}h):")
+    print(link)
 
 
 def cmd_restart(_args, state: dict) -> int:
@@ -1742,6 +1798,9 @@ def _handle_slash(command: str, state: dict) -> bool:
             user = ""
             session = ""
         cmd_cancel(CancelArgs(), state)
+        return True
+    if name == "/front":
+        _show_magic_link(state)
         return True
     if name == "/model":
         from clawcross_cli.model_cmd import handle_model_command
