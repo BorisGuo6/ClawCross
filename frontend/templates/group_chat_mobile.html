@@ -224,6 +224,230 @@
     position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
     font-size: 14px; color: var(--text-hint); pointer-events: none;
   }
+
+  /* ── Remote Claude sessions ── */
+  .remote-claude-section {
+    flex-shrink: 0;
+    background: var(--bg-card);
+    border-bottom: 0.5px solid var(--border);
+    padding: 10px 12px 12px;
+  }
+  .remote-claude-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .remote-claude-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .remote-claude-status {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 250px;
+  }
+  .remote-claude-refresh {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .remote-claude-refresh:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .remote-claude-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+    gap: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+  .remote-claude-card {
+    min-width: 220px;
+    min-height: 126px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    padding: 10px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .remote-claude-card:active { background: #ececec; }
+  .remote-claude-card.placeholder {
+    cursor: default;
+    border-style: dashed;
+    color: var(--text-hint);
+  }
+  .remote-claude-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .remote-claude-card-title {
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.25;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .remote-claude-pill {
+    flex-shrink: 0;
+    border-radius: 999px;
+    padding: 2px 7px;
+    background: #eef2ff;
+    color: #1e3a8a;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .remote-claude-pill.shell,
+  .remote-claude-pill.running {
+    background: #ecfdf3;
+    color: #166534;
+  }
+  .remote-claude-pill.idle {
+    background: #f1f5f9;
+    color: #475569;
+  }
+  .remote-claude-pill.error {
+    background: #fef2f2;
+    color: #b91c1c;
+  }
+  .remote-claude-card-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .remote-claude-preview {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.45;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    word-break: break-word;
+  }
+  .remote-claude-page {
+    background: var(--bg-chat);
+    z-index: 220;
+  }
+  .remote-claude-transcript {
+    flex: 1;
+    margin-top: var(--header-h);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px;
+  }
+  .remote-claude-input-wrap {
+    flex-shrink: 0;
+    padding: 8px 10px calc(8px + var(--bottom-inset));
+    background: var(--bg-nav);
+    border-top: 0.5px solid var(--border);
+  }
+  .remote-claude-input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .remote-claude-input {
+    flex: 1;
+    min-height: 38px;
+    max-height: 120px;
+    resize: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.35;
+    padding: 9px 10px;
+    outline: none;
+    font-family: inherit;
+  }
+  .remote-claude-send {
+    min-width: 64px;
+    height: 38px;
+    border: none;
+    border-radius: 8px;
+    background: #1e3a8a;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .remote-claude-send:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .remote-claude-message {
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .remote-claude-message.user {
+    align-items: flex-end;
+  }
+  .remote-claude-message-meta {
+    font-size: 11px;
+    color: var(--text-hint);
+    margin: 0 4px 3px;
+  }
+  .remote-claude-message-bubble {
+    max-width: 94%;
+    border-radius: 8px;
+    padding: 9px 11px;
+    background: var(--msg-other);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .remote-claude-message.user .remote-claude-message-bubble {
+    background: var(--msg-self);
+  }
+  .remote-claude-empty {
+    text-align: center;
+    padding: 32px 18px;
+    color: var(--text-hint);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  @media (max-width: 760px) {
+    .remote-claude-grid {
+      display: flex;
+    }
+    .remote-claude-card {
+      width: 78vw;
+      max-width: 320px;
+      flex: 0 0 auto;
+    }
+  }
   /* ── Pin indicator ── */
   .group-item.pinned { background: rgba(102, 126, 234, 0.04); }
   .pin-badge {
@@ -3495,6 +3719,16 @@
       <input type="text" class="chat-search-input" id="chat-search-input" data-i18n="search_placeholder" placeholder="搜索对话..." oninput="filterGroupList()">
     </div>
   </div>
+  <div class="remote-claude-section" id="remote-claude-section">
+    <div class="remote-claude-head">
+      <div style="min-width:0;">
+        <div class="remote-claude-title">远端 Claude Sessions</div>
+        <div class="remote-claude-status" id="remote-claude-status">正在连接远端 Claude agents...</div>
+      </div>
+      <button class="remote-claude-refresh" id="remote-claude-refresh" onclick="refreshRemoteClaudeSessions(true)" title="刷新">↻</button>
+    </div>
+    <div class="remote-claude-grid" id="remote-claude-grid"></div>
+  </div>
   <div class="group-list-area" id="group-list-container"></div>
 </div>
 
@@ -3572,6 +3806,29 @@
                 onkeydown="handleInputKey(event)"
                 oninput="handleInputForMention()"></textarea>
       <button class="send-btn" id="send-btn" onclick="sendMessage()" data-i18n="send">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Remote Claude Session Page ═══ -->
+<div id="remote-claude-page" class="sub-page remote-claude-page offscreen">
+  <div class="header">
+    <button class="header-back-btn" onclick="closeRemoteClaudePage()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="header-title" id="remote-claude-title">Remote Claude</div>
+    <div style="display:flex;gap:2px;align-items:center;margin-left:auto;">
+      <button class="header-btn" onclick="reloadOpenRemoteClaudeSession()" title="刷新" style="font-size:18px;font-weight:700;min-width:36px;">↻</button>
+    </div>
+  </div>
+  <div class="remote-claude-transcript" id="remote-claude-transcript">
+    <div class="remote-claude-empty">选择一个远端 Claude session 后显示 transcript。</div>
+  </div>
+  <div class="remote-claude-input-wrap">
+    <div class="remote-claude-input-row">
+      <textarea class="remote-claude-input" id="remote-claude-input" rows="1" placeholder="给这个远端 Claude session 发消息..."
+                onkeydown="handleRemoteClaudeInputKey(event)"></textarea>
+      <button class="remote-claude-send" id="remote-claude-send" onclick="sendRemoteClaudeMessage()">发送</button>
     </div>
   </div>
 </div>
@@ -5893,6 +6150,9 @@ let groups = [];
 let currentMembers = [];  // Store members for @ mention
 let currentGroupMuteAllAgents = false;
 let senderNameMap = {};   // sender key -> display name 映射
+let remoteClaudeSessions = [];
+let openRemoteClaudeSessionId = '';
+let remoteClaudeSending = false;
 let __agentDetailRenderSeq = 0;
 const __personaByTagCache = new Map();
 let mentionState = {
@@ -6158,6 +6418,233 @@ function toast(msg, duration = 2000) {
   el.classList.add('show');
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+function remoteClaudeSessionKey(session) {
+  return String(
+    (session && (session.display_id || session.bridge_session_id || session.session_id || session.id || session.job_id)) || ''
+  );
+}
+
+function remoteClaudeTitle(session, index) {
+  const raw = String((session && (session.title || session.name)) || '').trim();
+  if (raw) return raw;
+  const id = remoteClaudeSessionKey(session);
+  return id ? id : `Claude Session ${index + 1}`;
+}
+
+function remoteClaudeStatusText(status) {
+  const s = String(status || '').trim().toLowerCase();
+  const zh = _currentLang === 'zh';
+  if (s === 'idle') return zh ? '空闲' : 'Idle';
+  if (s === 'shell') return zh ? 'Shell 中' : 'Shell';
+  if (s === 'running' || s === 'working') return zh ? '运行中' : 'Running';
+  if (s === 'completed' || s === 'done') return zh ? '已完成' : 'Done';
+  return status || (zh ? '未知' : 'Unknown');
+}
+
+function remoteClaudeFormatTime(value) {
+  if (!value) return '';
+  let d;
+  if (typeof value === 'number') d = new Date(value > 1000000000000 ? value : value * 1000);
+  else d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  const now = new Date();
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (d.toDateString() === now.toDateString()) return time;
+  return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${time}`;
+}
+
+function remoteClaudePreviewText(message) {
+  const text = String((message && message.content) || '').replace(/\s+/g, ' ').trim();
+  return text || (_currentLang === 'zh' ? '暂无 transcript 预览' : 'No transcript preview yet');
+}
+
+function renderRemoteClaudePlaceholders(label) {
+  const grid = document.getElementById('remote-claude-grid');
+  if (!grid) return;
+  const text = label || (_currentLang === 'zh' ? '等待远端 Claude session' : 'Waiting for remote Claude session');
+  grid.innerHTML = [0, 1, 2].map(i => `
+    <div class="remote-claude-card placeholder">
+      <div class="remote-claude-card-top">
+        <div class="remote-claude-card-title">Claude Session ${i + 1}</div>
+        <span class="remote-claude-pill error">--</span>
+      </div>
+      <div class="remote-claude-preview">${esc(text)}</div>
+    </div>`).join('');
+}
+
+function renderRemoteClaudeSessions(payload) {
+  const grid = document.getElementById('remote-claude-grid');
+  const statusEl = document.getElementById('remote-claude-status');
+  if (!grid || !statusEl) return;
+  const sessions = Array.isArray(payload && payload.sessions) ? payload.sessions : [];
+  remoteClaudeSessions = sessions;
+  if ((!payload || !payload.ok) && !sessions.length) {
+    const msg = (payload && payload.error) || (_currentLang === 'zh' ? '远端 Claude 不可达' : 'Remote Claude unavailable');
+    statusEl.textContent = msg;
+    renderRemoteClaudePlaceholders(msg);
+    return;
+  }
+  const remote = payload.remote || {};
+  const remoteLabel = `${remote.user || ''}${remote.user ? '@' : ''}${remote.host || ''}`;
+  if (payload && payload.ok) {
+    statusEl.textContent = `${remoteLabel} · ${sessions.length}/3 sessions`;
+  } else {
+    const msg = (payload && payload.error) || (_currentLang === 'zh' ? '远端 Claude 不可达' : 'Remote Claude unavailable');
+    statusEl.textContent = `${remoteLabel} · ${_currentLang === 'zh' ? '使用上次缓存' : 'using last-known cache'} · ${msg}`;
+  }
+  if (!sessions.length) {
+    renderRemoteClaudePlaceholders(_currentLang === 'zh' ? '远端没有可读取的 Claude session' : 'No readable remote Claude session');
+    return;
+  }
+  const cards = sessions.slice(0, 3).map((session, i) => {
+    const key = remoteClaudeSessionKey(session);
+    const status = String(session.status || '').toLowerCase();
+    const title = remoteClaudeTitle(session, i);
+    const idLine = session.bridge_session_id || session.session_id || session.job_id || session.id || '';
+    const cwd = session.cwd || '';
+    const time = remoteClaudeFormatTime(session.updated_at);
+    return `
+      <div class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')">
+        <div class="remote-claude-card-top">
+          <div class="remote-claude-card-title">${esc(title)}</div>
+          <span class="remote-claude-pill ${esc(status)}">${esc(remoteClaudeStatusText(status))}</span>
+        </div>
+        <div class="remote-claude-card-meta">${esc(idLine)}${time ? ' · ' + esc(time) : ''}</div>
+        ${cwd ? `<div class="remote-claude-card-meta">${esc(cwd)}</div>` : ''}
+        <div class="remote-claude-preview">${esc(remoteClaudePreviewText(session.last_message))}</div>
+      </div>`;
+  });
+  while (cards.length < 3) {
+    cards.push(`
+      <div class="remote-claude-card placeholder">
+        <div class="remote-claude-card-top">
+          <div class="remote-claude-card-title">Claude Session ${cards.length + 1}</div>
+          <span class="remote-claude-pill error">--</span>
+        </div>
+        <div class="remote-claude-preview">${esc(_currentLang === 'zh' ? '未发现第三个 session' : 'No session found')}</div>
+      </div>`);
+  }
+  grid.innerHTML = cards.join('');
+}
+
+async function refreshRemoteClaudeSessions(showToast = false) {
+  const btn = document.getElementById('remote-claude-refresh');
+  const statusEl = document.getElementById('remote-claude-status');
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = _currentLang === 'zh' ? '正在连接远端 Claude agents...' : 'Connecting remote Claude agents...';
+  try {
+    const data = await api('GET', '/proxy_remote_claude_sessions?limit=3');
+    renderRemoteClaudeSessions(data);
+    if (showToast) {
+      toast(data.ok ? (_currentLang === 'zh' ? '远端 Claude sessions 已刷新' : 'Remote Claude sessions refreshed') : (data.error || 'Remote Claude unavailable'), data.ok ? 1800 : 3500);
+    }
+  } catch (e) {
+    renderRemoteClaudeSessions({ ok: false, error: e.message, sessions: [] });
+    if (showToast) toast(e.message, 3500);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function openRemoteClaudeSession(sessionId) {
+  if (!sessionId) return;
+  openRemoteClaudeSessionId = sessionId;
+  const session = remoteClaudeSessions.find(s => remoteClaudeSessionKey(s) === sessionId) || {};
+  const titleEl = document.getElementById('remote-claude-title');
+  if (titleEl) titleEl.textContent = remoteClaudeTitle(session, 0);
+  const inputEl = document.getElementById('remote-claude-input');
+  if (inputEl) inputEl.value = '';
+  const page = document.getElementById('remote-claude-page');
+  if (page) page.classList.remove('offscreen');
+  const tabBar = document.querySelector('.tab-bar');
+  if (tabBar) tabBar.classList.add('hidden');
+  loadRemoteClaudeTranscript(sessionId);
+}
+
+function closeRemoteClaudePage() {
+  openRemoteClaudeSessionId = '';
+  const page = document.getElementById('remote-claude-page');
+  if (page) page.classList.add('offscreen');
+  if (!currentGroupId) {
+    const tabBar = document.querySelector('.tab-bar');
+    if (tabBar) tabBar.classList.remove('hidden');
+  }
+}
+
+function reloadOpenRemoteClaudeSession() {
+  if (openRemoteClaudeSessionId) loadRemoteClaudeTranscript(openRemoteClaudeSessionId);
+}
+
+function renderRemoteClaudeTranscript(messages, error) {
+  const body = document.getElementById('remote-claude-transcript');
+  if (!body) return;
+  if (error) {
+    body.innerHTML = `<div class="remote-claude-empty">${esc(error)}</div>`;
+    return;
+  }
+  if (!messages || !messages.length) {
+    body.innerHTML = `<div class="remote-claude-empty">${esc(_currentLang === 'zh' ? '这个 session 暂时没有可显示的 transcript。' : 'No transcript messages for this session yet.')}</div>`;
+    return;
+  }
+  body.innerHTML = messages.map((m) => {
+    const role = String(m.role || m.type || 'event').toLowerCase();
+    const cls = role === 'user' ? ' user' : '';
+    const meta = `${role || 'event'}${m.timestamp ? ' · ' + remoteClaudeFormatTime(m.timestamp) : ''}`;
+    return `<div class="remote-claude-message${cls}">
+      <div class="remote-claude-message-meta">${esc(meta)}</div>
+      <div class="remote-claude-message-bubble">${esc(m.content || '')}</div>
+    </div>`;
+  }).join('');
+  requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+}
+
+async function loadRemoteClaudeTranscript(sessionId) {
+  const body = document.getElementById('remote-claude-transcript');
+  if (body) body.innerHTML = `<div class="remote-claude-empty">${esc(_currentLang === 'zh' ? '正在读取远端 transcript...' : 'Loading remote transcript...')}</div>`;
+  try {
+    const data = await api('GET', `/proxy_remote_claude_sessions/${encodeURIComponent(sessionId)}/messages?limit=120`);
+    renderRemoteClaudeTranscript(data.messages || [], data.ok ? '' : (data.error || 'Remote Claude unavailable'));
+  } catch (e) {
+    renderRemoteClaudeTranscript([], e.message);
+  }
+}
+
+function handleRemoteClaudeInputKey(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendRemoteClaudeMessage();
+  }
+}
+
+async function sendRemoteClaudeMessage() {
+  if (remoteClaudeSending || !openRemoteClaudeSessionId) return;
+  const inputEl = document.getElementById('remote-claude-input');
+  const sendBtn = document.getElementById('remote-claude-send');
+  const text = inputEl ? inputEl.value.trim() : '';
+  if (!text) {
+    toast(_currentLang === 'zh' ? '消息不能为空' : 'Message is empty', 1800);
+    return;
+  }
+  remoteClaudeSending = true;
+  if (sendBtn) sendBtn.disabled = true;
+  try {
+    const data = await api('POST', `/proxy_remote_claude_sessions/${encodeURIComponent(openRemoteClaudeSessionId)}/messages`, { text });
+    if (!data || data.ok === false) throw new Error((data && data.error) || 'Remote Claude send failed');
+    if (inputEl) inputEl.value = '';
+    toast(_currentLang === 'zh' ? '已发送到远端 Claude' : 'Sent to remote Claude', 1800);
+    setTimeout(() => {
+      if (openRemoteClaudeSessionId) loadRemoteClaudeTranscript(openRemoteClaudeSessionId);
+      refreshRemoteClaudeSessions(false);
+    }, 1200);
+  } catch (e) {
+    toast((_currentLang === 'zh' ? '发送失败: ' : 'Send failed: ') + e.message, 3500);
+  } finally {
+    remoteClaudeSending = false;
+    if (sendBtn) sendBtn.disabled = false;
+  }
 }
 
 let mobileAlarmTargets = [];
@@ -16210,6 +16697,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       await _consumeHubReturnParams();
       await refreshGroups();
+      refreshRemoteClaudeSessions(false);
       startGroupsPolling();
       await prefetchContactsBootstrap();
     } catch (e) {

@@ -12,6 +12,12 @@ from urllib.parse import quote
 from flask import jsonify, request, session
 import requests
 
+from integrations.remote_claude_agents import (
+    list_remote_claude_sessions,
+    read_remote_claude_messages,
+    send_remote_claude_message,
+)
+
 
 def _enc_group_seg(segment: str) -> str:
     """Path segment for FastAPI /groups/{group_id}/... (Unicode, #, :, etc.)."""
@@ -398,6 +404,58 @@ def register_group_routes(app, *, port_agent: int, internal_token: str) -> None:
             return jsonify({"error": "查询超时"}), 504
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/proxy_remote_claude_sessions", methods=["GET"])
+    def proxy_remote_claude_sessions():
+        """Read remote Claude Code background-agent sessions for the mobile UI."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        try:
+            limit = int(request.args.get("limit", "3") or "3")
+        except ValueError:
+            limit = 3
+        try:
+            data = list_remote_claude_sessions(limit=max(1, min(limit, 12)))
+            return jsonify(data), 200
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "sessions": []}), 200
+
+    @app.route("/proxy_remote_claude_sessions/<path:session_id>/messages", methods=["GET"])
+    def proxy_remote_claude_session_messages(session_id):
+        """Read one remote Claude Code transcript by local or bridge session id."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        try:
+            limit = int(request.args.get("limit", "120") or "120")
+        except ValueError:
+            limit = 120
+        try:
+            data = read_remote_claude_messages(session_id, limit=max(1, min(limit, 300)))
+            return jsonify(data), 200
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "messages": []}), 200
+
+    @app.route("/proxy_remote_claude_sessions/<path:session_id>/messages", methods=["POST"])
+    def proxy_remote_claude_session_send_message(session_id):
+        """Send a user reply to one remote Claude Code background-agent session."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        body = request.get_json(silent=True) or {}
+        text = body.get("text") or body.get("message") or ""
+        if not isinstance(text, str):
+            return jsonify({"ok": False, "error": "消息必须是文本"}), 400
+        if not text.strip():
+            return jsonify({"ok": False, "error": "消息不能为空"}), 400
+        try:
+            data = send_remote_claude_message(session_id, text)
+            return jsonify(data), 200
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 200
 
 
     @app.route("/proxy_sessions_delete", methods=["POST"])

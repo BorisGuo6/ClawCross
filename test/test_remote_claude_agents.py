@@ -1,0 +1,181 @@
+import json
+import sys
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import mock
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from integrations import remote_claude_agents as rca  # noqa: E402
+
+
+class RemoteClaudeParserTests(unittest.TestCase):
+    def test_parse_claude_transcript_text_and_result(self):
+        lines = [
+            json.dumps(
+                {
+                    "type": "user",
+                    "timestamp": "2026-05-18T10:00:00Z",
+                    "message": {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "timestamp": "2026-05-18T10:00:03Z",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "hello"},
+                            {"type": "tool_use", "name": "Bash"},
+                        ],
+                    },
+                }
+            ),
+            json.dumps({"type": "result", "subtype": "success", "result": "done"}),
+        ]
+
+        messages = rca.parse_claude_transcript_lines(lines, limit=10)
+
+        self.assertEqual([m["role"] for m in messages], ["user", "assistant", "result"])
+        self.assertEqual(messages[0]["content"], "hi")
+        self.assertIn("hello", messages[1]["content"])
+        self.assertIn("[tool_use:Bash]", messages[1]["content"])
+        self.assertEqual(messages[2]["content"], "done")
+
+    def test_list_sessions_normalizes_display_id_and_preview(self):
+        payload = {
+            "sessions": [
+                {
+                    "id": "local-a",
+                    "title": "dataset validation",
+                    "status": "idle",
+                    "bridge_session_id": "session_abc",
+                    "tail_lines": [
+                        json.dumps(
+                            {
+                                "type": "assistant",
+                                "message": {"role": "assistant", "content": "latest answer"},
+                            }
+                        )
+                    ],
+                }
+            ]
+        }
+        with TemporaryDirectory() as tmpdir:
+            cache_path = str(Path(tmpdir) / "remote_cache.json")
+            with mock.patch.object(rca, "_cache_path", return_value=cache_path), mock.patch.object(
+                rca, "_run_remote_python", return_value=payload
+            ):
+                data = rca.list_remote_claude_sessions(limit=3)
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["sessions"][0]["display_id"], "session_abc")
+        self.assertEqual(data["sessions"][0]["last_message"]["content"], "latest answer")
+
+    def test_list_sessions_falls_back_to_cache_when_remote_is_unreachable(self):
+        with TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "remote_cache.json"
+            cache_path.write_text(
+                json.dumps(
+                    {
+                        "sessions": [
+                            {
+                                "display_id": "session_cached",
+                                "title": "cached session",
+                                "status": "idle",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(rca, "_cache_path", return_value=str(cache_path)), mock.patch.object(
+                rca, "_run_remote_python", side_effect=RuntimeError("offline")
+            ):
+                data = rca.list_remote_claude_sessions(limit=3)
+
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["stale"])
+        self.assertEqual(data["sessions"][0]["display_id"], "session_cached")
+
+    def test_send_message_rejects_blank_message(self):
+        with self.assertRaises(ValueError):
+            rca.send_remote_claude_message("session_abc", "   ")
+
+    def test_send_message_returns_daemon_reply_payload(self):
+        payload = {
+            "found": True,
+            "short": "5dd495e1",
+            "session": {"bridge_session_id": "session_abc"},
+            "response": {"ok": True, "op": "reply"},
+        }
+        with mock.patch.object(rca, "_run_remote_python", return_value=payload):
+            data = rca.send_remote_claude_message("session_abc", "hello")
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["short"], "5dd495e1")
+        self.assertEqual(data["response"]["op"], "reply")
+
+
+class RemoteClaudeRouteTests(unittest.TestCase):
+    def setUp(self):
+        import front  # noqa: E402
+
+        self.front = front
+        front.app.config["TESTING"] = True
+        front.app.config["SECRET_KEY"] = "test-secret"
+
+    def _login(self, client):
+        with client.session_transaction() as sess:
+            sess["user_id"] = "alice"
+
+    def test_sessions_route_requires_login(self):
+        client = self.front.app.test_client()
+        resp = client.get("/proxy_remote_claude_sessions")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_sessions_route_returns_remote_payload(self):
+        client = self.front.app.test_client()
+        self._login(client)
+        payload = {"ok": True, "remote": {"host": "h", "user": "u"}, "sessions": []}
+        with mock.patch("routes.front_group_routes.list_remote_claude_sessions", return_value=payload):
+            resp = client.get("/proxy_remote_claude_sessions?limit=3")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), payload)
+
+    def test_messages_route_returns_remote_payload(self):
+        client = self.front.app.test_client()
+        self._login(client)
+        payload = {"ok": True, "messages": [{"role": "assistant", "content": "ok"}]}
+        with mock.patch("routes.front_group_routes.read_remote_claude_messages", return_value=payload):
+            resp = client.get("/proxy_remote_claude_sessions/session_abc/messages")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), payload)
+
+    def test_send_message_route_posts_remote_reply(self):
+        client = self.front.app.test_client()
+        self._login(client)
+        payload = {"ok": True, "response": {"ok": True, "op": "reply"}}
+        with mock.patch("routes.front_group_routes.send_remote_claude_message", return_value=payload) as send_mock:
+            resp = client.post("/proxy_remote_claude_sessions/session_abc/messages", json={"text": "hello"})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), payload)
+        send_mock.assert_called_once_with("session_abc", "hello")
+
+    def test_send_message_route_rejects_empty_text(self):
+        client = self.front.app.test_client()
+        self._login(client)
+        resp = client.post("/proxy_remote_claude_sessions/session_abc/messages", json={"text": "   "})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.get_json()["ok"])
+
+
+if __name__ == "__main__":
+    unittest.main()
