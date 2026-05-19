@@ -162,6 +162,16 @@ def _weclaw_session_expired_from_log() -> bool:
         return False
 
 
+def _weclaw_session_expired(accounts: list[str], status_output: str) -> bool:
+    """Treat stale launcher.log warnings as non-authoritative when account files still exist."""
+    if accounts:
+        return False
+    text = str(status_output or "").lower()
+    if "session expired" in text or "cannot be auto-recovered" in text:
+        return True
+    return _weclaw_session_expired_from_log()
+
+
 def _stop_managed_weclaw_proxy(settings: dict[str, str]) -> None:
     proxy_host = settings.get("WECLAW_PROXY_HOST") or os.getenv("WECLAW_PROXY_HOST") or "127.0.0.1"
     proxy_port = int(settings.get("WECLAW_PROXY_PORT") or os.getenv("WECLAW_PROXY_PORT") or "51298")
@@ -2741,6 +2751,7 @@ def proxy_weclaw_status():
                 status_output = ((result.stdout or "") + (result.stderr or "")).strip()
             except Exception as e:
                 status_output = f"status failed: {e}"
+        session_expired = _weclaw_session_expired(accounts, status_output)
         return jsonify({
             "status": "success",
             "bin": resolved_bin,
