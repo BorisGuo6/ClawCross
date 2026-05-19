@@ -44,3 +44,12 @@ class HarnessEventRequest(BaseModel):
     verifier: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+
+class HarnessOpenCliRunRequest(BaseModel):
+    user_id: str
+    password: str = ""
+    args: list[str] = Field(default_factory=list)
+    timeout_seconds: float = 60
+    max_output_chars: int = 20000
+    profile: str = ""
+    allow_mutating: bool = False

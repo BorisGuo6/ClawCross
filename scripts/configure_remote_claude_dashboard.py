@@ -32,6 +32,7 @@ import os
 from pathlib import Path
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -139,6 +140,23 @@ def post_event(args: argparse.Namespace, payload: dict, *, emit: bool = True) ->
     if emit:
         print(json.dumps(data, ensure_ascii=False, indent=2))
     return data
+
+
+def request_clawcross(args: argparse.Namespace, path: str, *, payload: dict | None = None) -> dict:
+    config = load_env(args.config)
+    base_url = config_value(config, "CLAWCROSS_AGENT_BASE_URL", "http://127.0.0.1:51200").rstrip("/")
+    token = config_value(config, "INTERNAL_TOKEN")
+    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "boris"))
+    if not token:
+        raise SystemExit(f"INTERNAL_TOKEN is missing in {args.config}")
+    url = f"{base_url}{path}"
+    if payload is None:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}user_id={urllib.parse.quote(user_id)}"
+        return request_json(url, timeout=args.timeout, token=token)
+    payload = {key: value for key, value in payload.items() if value not in (None, "")}
+    payload["user_id"] = user_id
+    return request_json(url, timeout=args.timeout, token=token, payload=payload)
 
 
 def command_dashboard(args: argparse.Namespace) -> None:
@@ -254,6 +272,30 @@ def command_comment(args: argparse.Namespace) -> None:
     )
 
 
+def command_opencli_status(args: argparse.Namespace) -> None:
+    query = f"?query={urllib.parse.quote(args.query)}" if args.query else ""
+    data = request_clawcross(args, f"/harness/opencli/status{query}")
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def command_opencli_run(args: argparse.Namespace) -> None:
+    opencli_args = args.args
+    if opencli_args and opencli_args[0] == "--":
+        opencli_args = opencli_args[1:]
+    data = request_clawcross(
+        args,
+        "/harness/opencli/run",
+        payload={
+            "args": opencli_args,
+            "profile": args.profile,
+            "allow_mutating": args.allow_mutating,
+            "max_output_chars": args.max_output_chars,
+            "timeout_seconds": args.timeout,
+        },
+    )
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
 def add_event_common(
     parser: argparse.ArgumentParser,
     *,
@@ -298,6 +340,17 @@ def build_parser() -> argparse.ArgumentParser:
     add_event_common(comment, task_required=True, message_required=True)
     comment.add_argument("--kind", default="comment")
     comment.set_defaults(func=command_comment)
+
+    opencli_status = sub.add_parser("opencli-status", help="Show OpenCLI status/capabilities on the private ClawCross host.")
+    opencli_status.add_argument("--query", default="")
+    opencli_status.set_defaults(func=command_opencli_status)
+
+    opencli_run = sub.add_parser("opencli-run", help="Run OpenCLI through the private ClawCross host.")
+    opencli_run.add_argument("--profile", default="")
+    opencli_run.add_argument("--allow-mutating", action="store_true")
+    opencli_run.add_argument("--max-output-chars", type=int, default=20000)
+    opencli_run.add_argument("args", nargs=argparse.REMAINDER)
+    opencli_run.set_defaults(func=command_opencli_run)
 
     return parser
 
@@ -402,6 +455,7 @@ if payload.get("install_settings"):
         "Bash(~/.local/bin/clawcross-harness-agent *)",
         f"Bash(curl -fsSL {payload['dashboard_url']}/*)",
         "Bash(curl -fsSL http://127.0.0.1:51200/harness/state*)",
+        "Bash(curl -fsSL http://127.0.0.1:51200/harness/opencli/status*)",
     ]:
         if rule not in allow:
             allow.append(rule)
@@ -485,6 +539,18 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         - `review` means work is ready for human review.
 
         If `clawcross-harness-agent` cannot reach ClawCross, say that explicitly. Do not pretend task status was updated.
+
+        ## Private OpenCLI Bridge
+
+        If a TODO explicitly requires local private sources such as WeChat, enterprise WeChat, Gmail/Outlook web, Lark, Notion, Telegram, Discord, GitHub, Docker, or another local CLI, use ClawCross as the private bridge. Do not put raw private messages, cookies, tokens, or full mail/chat transcripts into the public dashboard.
+
+        ```bash
+        clawcross-harness-agent opencli-status --query wechat
+        clawcross-harness-agent opencli-run -- wx search "<keyword>"
+        clawcross-harness-agent opencli-status --query gmail
+        ```
+
+        Summarize only task-relevant evidence back into TODO comments. If OpenCLI is missing or login/browser bridge is unavailable, mark the TODO `blocked` with the exact missing dependency.
 
         ## Dashboard Boundaries
 

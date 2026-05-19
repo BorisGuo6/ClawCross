@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -58,6 +59,40 @@ def post_event(args: argparse.Namespace, payload: dict) -> dict:
     data = json.loads(text)
     if data.get("ok") is False or data.get("status") == "error":
         raise SystemExit(f"harness event failed: {text}")
+    return data
+
+
+def request_json(args: argparse.Namespace, path: str, *, payload: dict | None = None) -> dict:
+    load_env_file()
+    token = args.internal_token or os.getenv("INTERNAL_TOKEN", "")
+    if not token:
+        raise SystemExit("INTERNAL_TOKEN is required. Start ClawCross once or pass --internal-token.")
+    base_url = (args.base_url or os.getenv("CLAWCROSS_AGENT_BASE_URL") or f"http://127.0.0.1:{os.getenv('PORT_AGENT', '51200')}").rstrip("/")
+    user_id = args.user_id or os.getenv("CLAWCROSS_HARNESS_USER") or os.getenv("CLAWCROSS_USER_ID") or os.getenv("USER") or "default"
+    url = f"{base_url}{path}"
+    headers = {"Accept": "application/json", "X-Internal-Token": token}
+    data = None
+    method = "GET"
+    if payload is not None:
+        payload = {key: value for key, value in payload.items() if value not in (None, "")}
+        payload["user_id"] = user_id
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+        method = "POST"
+    elif "?" in url:
+        url = f"{url}&user_id={urllib.parse.quote(user_id)}"
+    else:
+        url = f"{url}?user_id={urllib.parse.quote(user_id)}"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=args.timeout) as response:
+            text = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"harness request failed: HTTP {exc.code} {text}") from exc
+    data = json.loads(text)
+    if data.get("ok") is False or data.get("status") == "error":
+        raise SystemExit(f"harness request failed: {text}")
     return data
 
 
@@ -132,6 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--verifier-status", default="passed")
     run.add_argument("--verifier-exit-code", type=int, default=0)
 
+    opencli_status = sub.add_parser("opencli-status", help="Show OpenCLI availability and ClawCross harness capabilities.")
+    opencli_status.add_argument("--query", default="")
+
+    opencli_run = sub.add_parser("opencli-run", help="Run OpenCLI through the private ClawCross host.")
+    opencli_run.add_argument("--profile", default="")
+    opencli_run.add_argument("--allow-mutating", action="store_true")
+    opencli_run.add_argument("--max-output-chars", type=int, default=20000)
+    opencli_run.add_argument("args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -196,7 +240,7 @@ def main() -> None:
             "message": args.message,
             "kind": args.kind,
         }
-    else:
+    elif command == "run":
         payload = {
             "action": "run",
             "agent_id": args.agent_id,
@@ -224,6 +268,28 @@ def main() -> None:
                 "exit_code": args.verifier_exit_code,
             },
         }
+    elif command == "opencli-status":
+        query = f"?query={urllib.parse.quote(args.query)}" if args.query else ""
+        result = request_json(args, f"/harness/opencli/status{query}")
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    else:
+        opencli_args = args.args
+        if opencli_args and opencli_args[0] == "--":
+            opencli_args = opencli_args[1:]
+        result = request_json(
+            args,
+            "/harness/opencli/run",
+            payload={
+                "args": opencli_args,
+                "profile": args.profile,
+                "allow_mutating": args.allow_mutating,
+                "max_output_chars": args.max_output_chars,
+                "timeout_seconds": args.timeout,
+            },
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
     result = post_event(args, payload)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
