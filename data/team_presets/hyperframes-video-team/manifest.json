@@ -1,0 +1,19 @@
+{
+  "preset_id": "hyperframes-video-team",
+  "name": "HyperFrames 视频工坊",
+  "description": "HyperFrames 视频制作三角色小队：Director（分镜/交付）→ Engineer（HTML+GSAP+__hf 契约）→ Reviewer（渲染前自检+实际 npx hyperframes render）。Engineer / Reviewer 的 persona 已内嵌 SKILL（hyperframes）核心 API、HTML 结构契约、__hf / __timelines 对象格式、9 个常见报错码与修复路径、CDN 本地化建议，**不依赖团队 skills 目录就能跑**。",
+  "source": "clawcross/custom",
+  "regime": "hyperframes-video-team",
+  "role_count": 3,
+  "workflow_files": [
+    "hyperframes_video_pipeline.yaml"
+  ],
+  "default_team_name": "HyperFrames 视频工坊",
+  "tags": [
+    "video",
+    "hyperframes",
+    "html-to-video",
+    "gsap",
+    "creative"
+  ]
+}

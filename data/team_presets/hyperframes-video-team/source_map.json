@@ -1,0 +1,17 @@
+{
+  "preset_id": "hyperframes-video-team",
+  "roles": {
+    "director": {
+      "name": "Video Director",
+      "source_file": "clawcross/custom/hyperframes-video-team#director"
+    },
+    "engineer": {
+      "name": "HyperFrames Engineer",
+      "source_file": "clawcross/custom/hyperframes-video-team#engineer"
+    },
+    "reviewer": {
+      "name": "Video Reviewer",
+      "source_file": "clawcross/custom/hyperframes-video-team#reviewer"
+    }
+  }
+}
