@@ -1,0 +1,323 @@
+"""Task-only sync between the public dashboard and ClawCross harness.
+
+Dashboard remains a human/agent-readable TODO board. Runtime details such as
+Claude settings, session wiring, credentials, and worker process state stay in
+ClawCross.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+from harness.store import apply_harness_event, get_harness_state
+
+
+DASHBOARD_STATUSES = {"todo", "active", "blocked", "needs_user", "review", "done"}
+OPEN_DASHBOARD_STATUSES = {"todo", "active", "blocked", "needs_user", "review"}
+HOST_VERIFIED_COMMENT_KIND = "host_verified"
+INTERNAL_DASHBOARD_COMMENT_KINDS = {"conductor_reply", "conductor_note"}
+INTERNAL_DASHBOARD_BODY_PREFIXES = (
+    "本机主控已向远端 session",
+    "本机主控拦截到疑似危险输入请求",
+    "ClawCross tried to close remote session",
+    "ClawCross closed remote session",
+)
+
+
+def now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def default_dashboard_root() -> Path:
+    return Path(__file__).resolve().parents[3] / "BorisGuo6.github.io" / "dashboard"
+
+
+def clean_status(value: Any) -> str:
+    status = str(value or "").strip().lower().replace("-", "_")
+    if status == "doing":
+        status = "active"
+    if status == "undone":
+        status = "todo"
+    return status if status in DASHBOARD_STATUSES else ""
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def dashboard_tasks_path(dashboard_root: Path | None = None) -> Path:
+    return (dashboard_root or default_dashboard_root()) / "state" / "tasks.json"
+
+
+def task_has_host_verification(task: dict[str, Any], runs: list[dict[str, Any]] | None = None) -> bool:
+    for comment in task.get("comments", []) or []:
+        if isinstance(comment, dict) and str(comment.get("kind") or "") == HOST_VERIFIED_COMMENT_KIND:
+            return True
+    task_id = str(task.get("task_id") or "")
+    run_id = str(task.get("run_id") or "")
+    for run in runs or []:
+        if not isinstance(run, dict):
+            continue
+        if str(run.get("task_id") or "") != task_id and (not run_id or str(run.get("run_id") or "") != run_id):
+            continue
+        status = str(run.get("status") or "").lower()
+        verifier = run.get("verifier") if isinstance(run.get("verifier"), dict) else {}
+        if status in {"passed", "verified"} and str(verifier.get("status") or "").lower() == "passed":
+            return True
+    return False
+
+
+def requires_machine_verifier(task: dict[str, Any]) -> bool:
+    text = f"{task.get('task_id') or ''} {task.get('title') or ''} {task.get('description') or ''}".lower()
+    decision_markers = ("decision", "decide", "survey", "调研", "决定", "建议", "路线")
+    if any(marker in text for marker in decision_markers):
+        return False
+    keywords = (
+        "eval",
+        "evaluation",
+        "vbench",
+        "inference",
+        "train",
+        "benchmark",
+        "评测",
+        "推理",
+        "训练",
+        "安装",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def has_result_comment(task: dict[str, Any]) -> bool:
+    for comment in task.get("comments", []) or []:
+        if not isinstance(comment, dict):
+            continue
+        if str(comment.get("kind") or "") == "result" and str(comment.get("body") or "").strip():
+            return True
+    return False
+
+
+def import_dashboard_todos(
+    user_id: str,
+    *,
+    dashboard_root: Path | None = None,
+    project_id: str = "umi-world-model",
+    write: bool = True,
+) -> dict[str, Any]:
+    """Import open dashboard TODOs into the local harness task queue."""
+
+    path = dashboard_tasks_path(dashboard_root)
+    doc = load_json(path)
+    tasks = doc.get("tasks")
+    if not isinstance(tasks, list):
+        raise ValueError("dashboard/state/tasks.json must contain a tasks list")
+    state = get_harness_state(user_id)
+    existing = {
+        str(task.get("task_id") or ""): task
+        for task in state.get("tasks", [])
+        if isinstance(task, dict) and task.get("task_id")
+    }
+    created = 0
+    updated = 0
+    skipped = 0
+
+    for task in tasks:
+        if not isinstance(task, dict):
+            skipped += 1
+            continue
+        if project_id and task.get("project_id") != project_id:
+            skipped += 1
+            continue
+        status = clean_status(task.get("status")) or "todo"
+        if status not in OPEN_DASHBOARD_STATUSES:
+            skipped += 1
+            continue
+        task_id = str(task.get("task_id") or "").strip()
+        if not task_id:
+            skipped += 1
+            continue
+        local = existing.get(task_id)
+        payload = {
+            "action": "task_upsert",
+            "project_id": str(task.get("project_id") or project_id),
+            "task_id": task_id,
+            "title": str(task.get("title") or task_id),
+            "description": str(task.get("description") or ""),
+            "priority": str(task.get("priority") or "normal"),
+            "assignee": str(task.get("assignee") or ""),
+            "due_at": str(task.get("due_at") or ""),
+            "metadata": {"dashboard": {"imported_at": now_iso(), "source": "dashboard/state/tasks.json"}},
+        }
+        if not local:
+            payload["status"] = status
+            created += 1
+        else:
+            local_status = clean_status(local.get("status")) or "todo"
+            if local_status == "todo" and status != "todo":
+                payload["status"] = status
+            updated += 1
+        if write:
+            apply_harness_event(user_id, payload)
+
+    return {"created": created, "updated": updated, "skipped": skipped, "source": str(path)}
+
+
+def dashboard_comment_id(task_id: str, comment: dict[str, Any]) -> str:
+    body = str(comment.get("body") or "").strip()
+    kind = str(comment.get("kind") or "comment").strip()
+    created_at = str(comment.get("created_at") or "").strip()
+    digest = hashlib.sha1(f"{task_id}\n{kind}\n{created_at}\n{body}".encode("utf-8")).hexdigest()[:12]
+    return f"clawcross_{digest}"
+
+
+def dashboard_author(kind: str) -> str:
+    clean = str(kind or "").strip().lower()
+    if clean == "result":
+        return "Result"
+    if clean == "blocker":
+        return "Blocker"
+    if clean == "needs_user":
+        return "Needs user"
+    if clean == "host_verified":
+        return "Host verification"
+    if clean == "review":
+        return "Review"
+    return "Progress"
+
+
+def should_sync_dashboard_comment(comment: dict[str, Any]) -> bool:
+    kind = str(comment.get("kind") or "comment").strip()
+    body = str(comment.get("body") or "").strip()
+    if kind in INTERNAL_DASHBOARD_COMMENT_KINDS:
+        return False
+    if any(body.startswith(prefix) for prefix in INTERNAL_DASHBOARD_BODY_PREFIXES):
+        return False
+    if "session_" in body and ("本机主控" in body or "ClawCross" in body):
+        return False
+    return True
+
+
+def sync_harness_to_dashboard(
+    user_id: str,
+    *,
+    dashboard_root: Path | None = None,
+    project_id: str = "umi-world-model",
+    create_missing: bool = False,
+    write: bool = True,
+) -> dict[str, Any]:
+    """Copy harness task status/comments into dashboard/state/tasks.json."""
+
+    path = dashboard_tasks_path(dashboard_root)
+    doc = load_json(path)
+    dashboard_tasks = doc.setdefault("tasks", [])
+    if not isinstance(dashboard_tasks, list):
+        raise ValueError("dashboard/state/tasks.json must contain a tasks list")
+    state = get_harness_state(user_id)
+    runs = [run for run in state.get("runs", []) if isinstance(run, dict)]
+    harness_tasks = {
+        str(task.get("task_id")): task
+        for task in state.get("tasks", [])
+        if isinstance(task, dict) and task.get("task_id")
+    }
+    existing_ids = {str(task.get("task_id")) for task in dashboard_tasks if isinstance(task, dict)}
+    changed = False
+    summary = {"status_updates": 0, "comments_added": 0, "created": 0, "skipped": 0, "changed": False}
+
+    if create_missing:
+        for task_id, harness_task in sorted(harness_tasks.items()):
+            if task_id in existing_ids:
+                continue
+            if project_id and harness_task.get("project_id") != project_id:
+                continue
+            status = clean_status(harness_task.get("status")) or "todo"
+            if status == "done" and not task_has_host_verification(harness_task, runs):
+                status = "review"
+            dashboard_tasks.append(
+                {
+                    "task_id": task_id,
+                    "project_id": harness_task.get("project_id") or project_id,
+                    "title": harness_task.get("title") or task_id,
+                    "description": harness_task.get("description") or "",
+                    "status": status,
+                    "priority": harness_task.get("priority") or "medium",
+                    "assignee": harness_task.get("assignee") or None,
+                    "result": None,
+                    "comments": [],
+                    "updated_at": harness_task.get("updated_at") or now_iso(),
+                }
+            )
+            existing_ids.add(task_id)
+            summary["created"] += 1
+            changed = True
+
+    for dashboard_task in dashboard_tasks:
+        if not isinstance(dashboard_task, dict):
+            continue
+        if project_id and dashboard_task.get("project_id") != project_id:
+            continue
+        task_id = str(dashboard_task.get("task_id") or "")
+        harness_task = harness_tasks.get(task_id)
+        if not harness_task:
+            summary["skipped"] += 1
+            continue
+
+        status = clean_status(harness_task.get("status"))
+        if status == "done" and not task_has_host_verification(harness_task, runs):
+            status = "review"
+        if status and dashboard_task.get("status") != status:
+            dashboard_task["status"] = status
+            if status == "done" and not dashboard_task.get("completed_at"):
+                dashboard_task["completed_at"] = str(harness_task.get("updated_at") or now_iso()).split("T", 1)[0]
+            summary["status_updates"] += 1
+            changed = True
+
+        comments = dashboard_task.setdefault("comments", [])
+        if not isinstance(comments, list):
+            comments = []
+            dashboard_task["comments"] = comments
+            changed = True
+        seen_ids = {str(item.get("comment_id") or "").strip() for item in comments if isinstance(item, dict)}
+        seen_bodies = {str(item.get("body") or "").strip() for item in comments if isinstance(item, dict)}
+        for comment in harness_task.get("comments", []) or []:
+            if not isinstance(comment, dict):
+                continue
+            if not should_sync_dashboard_comment(comment):
+                continue
+            body = str(comment.get("body") or "").strip()
+            kind = str(comment.get("kind") or "comment").strip() or "comment"
+            if kind == "status_change":
+                continue
+            comment_id = dashboard_comment_id(task_id, comment)
+            if not body or comment_id in seen_ids or body in seen_bodies:
+                continue
+            comments.append(
+                {
+                    "comment_id": comment_id,
+                    "author": dashboard_author(kind),
+                    "body": body,
+                    "created_at": comment.get("created_at") or now_iso(),
+                    "kind": kind,
+                }
+            )
+            seen_ids.add(comment_id)
+            seen_bodies.add(body)
+            summary["comments_added"] += 1
+            changed = True
+
+        if changed:
+            dashboard_task["updated_at"] = harness_task.get("updated_at") or now_iso()
+
+    if changed:
+        doc["updated_at"] = now_iso()
+        if write:
+            write_json(path, doc)
+    summary["changed"] = changed
+    summary["target"] = str(path)
+    return summary

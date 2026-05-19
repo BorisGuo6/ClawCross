@@ -65,21 +65,21 @@ def load_remote_claude_config() -> RemoteClaudeConfig:
     timeout_raw = (
         os.environ.get("CLAWCROSS_REMOTE_CLAUDE_TIMEOUT_SEC")
         or os.environ.get("REMOTE_CLAUDE_TIMEOUT_SEC")
-        or "8"
+        or "30"
     )
     connect_timeout_raw = (
         os.environ.get("CLAWCROSS_REMOTE_CLAUDE_CONNECT_TIMEOUT_SEC")
         or os.environ.get("REMOTE_CLAUDE_CONNECT_TIMEOUT_SEC")
-        or "4"
+        or "10"
     )
     try:
         timeout_sec = max(1.0, float(timeout_raw))
     except ValueError:
-        timeout_sec = 8.0
+        timeout_sec = 30.0
     try:
         connect_timeout_sec = max(1, int(connect_timeout_raw))
     except ValueError:
-        connect_timeout_sec = 4
+        connect_timeout_sec = 10
     return RemoteClaudeConfig(
         host=host,
         user=user,
@@ -327,6 +327,155 @@ print(json.dumps({{"found": True, "session": matched, "short": short, "response"
 """
 
 
+def _remote_script_close_session(target: str, *, force: bool) -> str:
+    target_json = json.dumps(str(target))
+    force_json = "True" if force else "False"
+    return f"""
+import glob, json, os, signal, shutil, socket, time
+
+target = {target_json}
+force = {force_json}
+base = os.path.expanduser("~/.claude/sessions")
+matched = None
+session_path = ""
+
+for path in sorted(glob.glob(os.path.join(base, "*.json"))):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        continue
+    keys = [
+        os.path.splitext(os.path.basename(path))[0],
+        data.get("sessionId") or data.get("session_id") or data.get("localSessionId") or "",
+        data.get("bridgeSessionId") or data.get("bridge_session_id") or data.get("remoteSessionId") or "",
+        data.get("jobId") or data.get("job_id") or "",
+    ]
+    if target not in [str(k) for k in keys if k]:
+        continue
+    matched = {{
+        "id": os.path.splitext(os.path.basename(path))[0],
+        "title": data.get("title") or data.get("name") or data.get("task") or "",
+        "status": data.get("status") or data.get("state") or "",
+        "session_id": data.get("sessionId") or data.get("session_id") or data.get("localSessionId") or "",
+        "bridge_session_id": data.get("bridgeSessionId") or data.get("bridge_session_id") or data.get("remoteSessionId") or "",
+        "job_id": data.get("jobId") or data.get("job_id") or "",
+        "cwd": data.get("cwd") or data.get("workingDirectory") or "",
+        "session_file": path,
+    }}
+    session_path = path
+    break
+
+if not matched:
+    print(json.dumps({{"found": False, "ok": False, "error": "session not found"}}, ensure_ascii=False))
+    raise SystemExit(0)
+
+short = str(matched.get("job_id") or "").strip()
+pid = None
+kill_result = {{"attempted": False, "terminated": False, "error": ""}}
+daemon_kill = {{"attempted": False, "ok": False, "error": "", "response": {{}}}}
+control_sock = ""
+if short:
+    try:
+        with open(os.path.expanduser("~/.claude/daemon/roster.json"), "r", encoding="utf-8") as fh:
+            roster = json.load(fh)
+        worker = (roster.get("workers") or {{}}).get(short) or {{}}
+        raw_pid = worker.get("pid")
+        pid = int(raw_pid) if raw_pid else None
+        sock_ref = worker.get("rendezvousSock") or worker.get("ptySock") or ""
+        if sock_ref:
+            control_sock = os.path.join(os.path.dirname(os.path.dirname(sock_ref)), "control.sock")
+    except Exception as exc:
+        kill_result["error"] = "roster unavailable: " + str(exc)
+
+if short and control_sock:
+    daemon_kill["attempted"] = True
+    try:
+        payload = {{"proto": int(roster.get("proto") or 1), "op": "kill", "short": short}}
+        client = socket.socket(socket.AF_UNIX)
+        client.settimeout(4.0)
+        client.connect(control_sock)
+        client.sendall((json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\\n").encode("utf-8"))
+        buf = b""
+        while b"\\n" not in buf and len(buf) < 1024 * 1024:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        client.close()
+        line = buf.split(b"\\n", 1)[0].decode("utf-8", errors="replace").strip()
+        response = json.loads(line) if line else {{"ok": False, "error": "empty daemon response"}}
+        daemon_kill["response"] = response
+        daemon_kill["ok"] = bool(response.get("ok"))
+    except Exception as exc:
+        daemon_kill["error"] = str(exc)
+    time.sleep(0.5)
+
+if pid:
+    kill_result["attempted"] = True
+    try:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        if alive and not daemon_kill.get("ok"):
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(1.0)
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+        if alive and force:
+            os.kill(pid, signal.SIGKILL)
+            time.sleep(0.2)
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+        kill_result["terminated"] = not alive
+    except ProcessLookupError:
+        kill_result["terminated"] = True
+    except Exception as exc:
+        kill_result["error"] = str(exc)
+
+archive_path = ""
+archive_result = {{"attempted": False, "archived": False, "error": ""}}
+if session_path and os.path.exists(session_path):
+    archive_result["attempted"] = True
+    archive_dir = os.path.join(base, ".clawcross-archive")
+    try:
+        os.makedirs(archive_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        archive_path = os.path.join(archive_dir, os.path.basename(session_path) + "." + stamp + ".json")
+        counter = 1
+        while os.path.exists(archive_path):
+            archive_path = os.path.join(archive_dir, os.path.basename(session_path) + "." + stamp + f".{{counter}}.json")
+            counter += 1
+        shutil.move(session_path, archive_path)
+        archive_result["archived"] = True
+    except Exception as exc:
+        archive_result["error"] = str(exc)
+
+session_file_gone = bool(session_path) and not os.path.exists(session_path)
+ok = (bool(archive_result.get("archived")) or session_file_gone) and (not pid or kill_result.get("terminated") or not force)
+print(json.dumps({{
+    "found": True,
+    "ok": ok,
+    "session": matched,
+    "short": short,
+    "pid": pid,
+    "archive_path": archive_path,
+    "session_file_gone": session_file_gone,
+    "daemon_kill": daemon_kill,
+    "kill": kill_result,
+    "archive": archive_result,
+}}, ensure_ascii=False))
+"""
+
+
 def _ssh_prefix(config: RemoteClaudeConfig) -> list[str]:
     prefix = shlex.split(config.ssh_binary) if config.ssh_binary else ["ssh"]
     if os.path.basename(prefix[0]) == "ssh":
@@ -560,4 +709,27 @@ def send_remote_claude_message(target: str, text: str) -> dict[str, Any]:
         "short": payload.get("short") or "",
         "response": response,
         "error": "" if ok else (response.get("error") or payload.get("error") or "send failed"),
+    }
+
+
+def close_remote_claude_session(target: str, *, force: bool = True) -> dict[str, Any]:
+    session_key = str(target or "").strip()
+    if not session_key:
+        raise ValueError("session target is empty")
+
+    config = load_remote_claude_config()
+    payload = _run_remote_python(_remote_script_close_session(session_key, force=force), config=config)
+    ok = bool(payload.get("ok"))
+    return {
+        "ok": ok,
+        "remote": {"host": config.host, "user": config.user},
+        "session": payload.get("session") or {},
+        "short": payload.get("short") or "",
+        "pid": payload.get("pid"),
+        "archive_path": payload.get("archive_path") or "",
+        "session_file_gone": bool(payload.get("session_file_gone")),
+        "daemon_kill": payload.get("daemon_kill") or {},
+        "kill": payload.get("kill") or {},
+        "archive": payload.get("archive") or {},
+        "error": "" if ok else (payload.get("error") or payload.get("archive", {}).get("error") or payload.get("kill", {}).get("error") or "close failed"),
     }

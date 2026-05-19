@@ -445,6 +445,29 @@ def start_chatbot_if_configured(platforms):
     return proc
 
 
+def start_harness_conductor_if_configured():
+    enabled = (os.getenv("CLAWCROSS_HARNESS_CONDUCTOR") or "1").strip().lower()
+    if enabled in ("0", "false", "no", "off"):
+        print("🧭 [skip] ClawCross harness 主控已禁用（CLAWCROSS_HARNESS_CONDUCTOR=0）")
+        return None
+    script = os.path.join(PROJECT_ROOT, "scripts", "harness_conductor.py")
+    if not os.path.exists(script):
+        return None
+    print("🧭 启动 ClawCross harness 本机主控...")
+    proc = subprocess.Popen(
+        [venv_python, script],
+        cwd=WORKING_DIR,
+        env=set_subprocess_env(os.environ),
+        stdin=subprocess.DEVNULL,
+        stdout=None,
+        stderr=None,
+    )
+    proc._cc_optional = True
+    child_procs.append(proc)
+    print(f"   ✅ Harness 主控已启动 (PID: {proc.pid})")
+    return proc
+
+
 # 注册退出清理函数
 atexit.register(cleanup)
 
@@ -747,6 +770,7 @@ else:
 
 # 启动所有服务
 launch_services(services)
+start_harness_conductor_if_configured()
 if should_start_chatbot:
     start_chatbot_if_configured(chatbot_platforms)
 
@@ -823,6 +847,7 @@ try:
                     print("💬 [skip] NoneBot 依赖未就绪，跳过 chatbot（不影响其他服务）")
                     restart_should_start_chatbot = False
             launch_services(services)
+            start_harness_conductor_if_configured()
             if restart_should_start_chatbot:
                 start_chatbot_if_configured(restart_chatbot_platforms)
             print()

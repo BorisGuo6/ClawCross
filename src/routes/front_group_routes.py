@@ -457,6 +457,42 @@ def register_group_routes(app, *, port_agent: int, internal_token: str) -> None:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 200
 
+    @app.route("/proxy_harness_state", methods=["GET"])
+    def proxy_harness_state():
+        """Read ClawCross harness state for the mobile message center."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        try:
+            r = requests.get(
+                "http://127.0.0.1:{port}/harness/state".format(port=port_agent),
+                params={"user_id": user_id},
+                headers={"X-Internal-Token": internal_token},
+                timeout=15,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "tasks": [], "agents": [], "runs": []}), 500
+
+    @app.route("/proxy_harness_event", methods=["POST"])
+    def proxy_harness_event():
+        """Post a harness event through the logged-in user's ClawCross session."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        body = request.get_json(silent=True) or {}
+        body["user_id"] = user_id
+        try:
+            r = requests.post(
+                "http://127.0.0.1:{port}/harness/event".format(port=port_agent),
+                json=body,
+                headers={"X-Internal-Token": internal_token},
+                timeout=15,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
 
     @app.route("/proxy_sessions_delete", methods=["POST"])
     def proxy_sessions_delete():

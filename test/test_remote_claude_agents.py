@@ -122,6 +122,25 @@ class RemoteClaudeParserTests(unittest.TestCase):
         self.assertEqual(data["short"], "5dd495e1")
         self.assertEqual(data["response"]["op"], "reply")
 
+    def test_close_session_returns_archive_payload(self):
+        payload = {
+            "found": True,
+            "ok": True,
+            "short": "5dd495e1",
+            "pid": 1234,
+            "session": {"bridge_session_id": "session_abc"},
+            "archive_path": "/home/jingxiang/.claude/sessions/.clawcross-archive/1.json",
+            "kill": {"attempted": True, "terminated": True},
+            "archive": {"attempted": True, "archived": True},
+        }
+        with mock.patch.object(rca, "_run_remote_python", return_value=payload):
+            data = rca.close_remote_claude_session("session_abc")
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["short"], "5dd495e1")
+        self.assertTrue(data["kill"]["terminated"])
+        self.assertIn(".clawcross-archive", data["archive_path"])
+
 
 class RemoteClaudeRouteTests(unittest.TestCase):
     def setUp(self):

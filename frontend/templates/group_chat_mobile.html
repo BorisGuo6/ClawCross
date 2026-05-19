@@ -195,11 +195,17 @@
   }
   .sub-page.offscreen { transform: translateX(100%); pointer-events: none; }
 
-  /* ── Group List area ── */
-  .group-list-area {
+  /* ── Chat list scroll area ── */
+  .chat-scroll-area {
     flex: 1;
+    min-height: 0;
     margin-bottom: calc(var(--tab-h) + var(--bottom-inset));
     overflow-y: auto; -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .group-list-area {
+    min-height: 180px;
+    overflow: visible;
   }
   /* ── Chat search bar ── */
   .chat-search-bar {
@@ -223,6 +229,200 @@
   .chat-search-icon {
     position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
     font-size: 14px; color: var(--text-hint); pointer-events: none;
+  }
+
+  /* ── Agent ops panels ── */
+  .agent-ops-scroll {
+    flex-shrink: 0;
+    overflow: visible;
+    background: var(--bg-card);
+    border-bottom: 0.5px solid var(--border);
+  }
+
+  /* ── Harness TODO board ── */
+  .harness-section {
+    flex-shrink: 0;
+    background: var(--bg-card);
+    border-bottom: 0.5px solid var(--border);
+    padding: 10px 12px 12px;
+  }
+  .harness-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .harness-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .harness-status {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 260px;
+  }
+  .harness-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .harness-btn {
+    min-width: 32px;
+    height: 32px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .harness-btn:active { background: #e9e9e9; }
+  .harness-btn:disabled { opacity: 0.5; cursor: default; }
+  .harness-grid {
+    display: grid;
+    gap: 7px;
+  }
+  .harness-project-group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+  }
+  .harness-project-head {
+    width: 100%;
+    border: none;
+    background: #f8fafc;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 10px;
+    font: inherit;
+    text-align: left;
+  }
+  .harness-project-head:active {
+    background: #eef2ff;
+  }
+  .harness-project-name {
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .harness-project-meta {
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .harness-project-toggle {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #1d4ed8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 900;
+  }
+  .harness-project-body {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+  }
+  .harness-project-group.collapsed .harness-project-body {
+    display: none;
+  }
+  .harness-project-group.collapsed .harness-project-toggle {
+    transform: rotate(-90deg);
+  }
+  .harness-card {
+    width: min(320px, 78vw);
+    min-width: min(320px, 78vw);
+    border: 1px solid var(--border);
+    border-left: 3px solid #94a3b8;
+    border-radius: 10px;
+    background: #fff;
+    padding: 8px 9px;
+  }
+  .harness-card.active,
+  .harness-card.running { border-left-color: #2563eb; }
+  .harness-card.needs_user,
+  .harness-card.blocked,
+  .harness-card.error { border-left-color: #dc2626; background: #fffafa; }
+  .harness-card.done,
+  .harness-card.verified,
+  .harness-card.passed { border-left-color: #16a34a; background: #fbfefc; }
+  .harness-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .harness-card-title {
+    min-width: 0;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .harness-pill {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #1d4ed8;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .harness-meta,
+  .harness-preview {
+    margin-top: 4px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+  .harness-preview {
+    color: #555;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .harness-worker-row {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #f1f1f1;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .harness-worker-row strong {
+    color: var(--text);
   }
 
   /* ── Remote Claude sessions ── */
@@ -271,13 +471,78 @@
   }
   .remote-claude-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(220px, 1fr));
+    gap: 8px;
+    overflow: visible;
+  }
+  .remote-computer-group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+  }
+  .remote-computer-head {
+    width: 100%;
+    border: none;
+    background: #f8fafc;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 10px;
+    font: inherit;
+    text-align: left;
+  }
+  .remote-computer-head:active {
+    background: #eef2ff;
+  }
+  .remote-computer-name {
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .remote-computer-meta {
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .remote-computer-toggle {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #1d4ed8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 900;
+  }
+  .remote-computer-body {
+    display: flex;
     gap: 8px;
     overflow-x: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
     -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px;
+    padding: 8px;
+  }
+  .remote-computer-group.collapsed .remote-computer-body {
+    display: none;
+  }
+  .remote-computer-group.collapsed .remote-computer-toggle {
+    transform: rotate(-90deg);
   }
   .remote-claude-card {
+    width: min(320px, 78vw);
     min-width: 220px;
     min-height: 126px;
     border: 1px solid var(--border);
@@ -439,9 +704,6 @@
     line-height: 1.5;
   }
   @media (max-width: 760px) {
-    .remote-claude-grid {
-      display: flex;
-    }
     .remote-claude-card {
       width: 78vw;
       max-width: 320px;
@@ -3719,17 +3981,34 @@
       <input type="text" class="chat-search-input" id="chat-search-input" data-i18n="search_placeholder" placeholder="搜索对话..." oninput="filterGroupList()">
     </div>
   </div>
-  <div class="remote-claude-section" id="remote-claude-section">
-    <div class="remote-claude-head">
-      <div style="min-width:0;">
-        <div class="remote-claude-title">远端 Claude Sessions</div>
-        <div class="remote-claude-status" id="remote-claude-status">正在连接远端 Claude agents...</div>
+  <div class="chat-scroll-area" id="chat-scroll-area">
+    <div class="agent-ops-scroll" id="agent-ops-scroll">
+      <div class="harness-section" id="harness-section">
+        <div class="harness-head">
+          <div style="min-width:0;">
+            <div class="harness-title">Harness TODO</div>
+            <div class="harness-status" id="harness-status">正在读取 Harness 状态...</div>
+          </div>
+          <div class="harness-actions">
+            <button class="harness-btn" onclick="createHarnessTodo()" title="新增 TODO">＋</button>
+            <button class="harness-btn" id="harness-refresh" onclick="refreshHarnessState(true)" title="刷新">↻</button>
+          </div>
+        </div>
+        <div class="harness-grid" id="harness-grid"></div>
       </div>
-      <button class="remote-claude-refresh" id="remote-claude-refresh" onclick="refreshRemoteClaudeSessions(true)" title="刷新">↻</button>
+      <div class="remote-claude-section" id="remote-claude-section">
+        <div class="remote-claude-head">
+          <div style="min-width:0;">
+            <div class="remote-claude-title">远端 Claude Sessions</div>
+            <div class="remote-claude-status" id="remote-claude-status">正在连接远端 Claude agents...</div>
+          </div>
+          <button class="remote-claude-refresh" id="remote-claude-refresh" onclick="refreshRemoteClaudeSessions(true)" title="刷新">↻</button>
+        </div>
+        <div class="remote-claude-grid" id="remote-claude-grid"></div>
+      </div>
     </div>
-    <div class="remote-claude-grid" id="remote-claude-grid"></div>
+    <div class="group-list-area" id="group-list-container"></div>
   </div>
-  <div class="group-list-area" id="group-list-container"></div>
 </div>
 
 <!-- ═══ Chat Page (slides in from right, covers entire app) ═══ -->
@@ -6153,6 +6432,12 @@ let senderNameMap = {};   // sender key -> display name 映射
 let remoteClaudeSessions = [];
 let openRemoteClaudeSessionId = '';
 let remoteClaudeSending = false;
+let harnessState = null;
+let harnessLoading = false;
+const HARNESS_COLLAPSED_PROJECTS_KEY = 'clawcross_harness_collapsed_projects_v1';
+let harnessCollapsedProjects = new Set();
+const REMOTE_CLAUDE_COLLAPSED_REMOTES_KEY = 'clawcross_remote_claude_collapsed_remotes_v1';
+let remoteClaudeCollapsedRemotes = new Set();
 let __agentDetailRenderSeq = 0;
 const __personaByTagCache = new Map();
 let mentionState = {
@@ -6420,10 +6705,324 @@ function toast(msg, duration = 2000) {
   el._t = setTimeout(() => el.classList.remove('show'), duration);
 }
 
+function harnessStatusText(status) {
+  const s = String(status || '').trim().toLowerCase();
+  const zh = _currentLang === 'zh';
+  const labels = {
+    todo: zh ? '待办' : 'Todo',
+    active: zh ? '进行中' : 'Active',
+    running: zh ? '运行中' : 'Running',
+    needs_user: zh ? '等用户' : 'Needs user',
+    blocked: zh ? '阻塞' : 'Blocked',
+    review: zh ? '待审查' : 'Review',
+    done: zh ? '完成' : 'Done',
+    idle: zh ? '空闲' : 'Idle',
+    offline: zh ? '离线' : 'Offline',
+    error: zh ? '错误' : 'Error',
+    verified: zh ? '已验证' : 'Verified',
+    passed: zh ? '通过' : 'Passed'
+  };
+  return labels[s] || status || (zh ? '未知' : 'Unknown');
+}
+
+function harnessFormatAge(seconds) {
+  if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) {
+    return _currentLang === 'zh' ? '无心跳' : 'no heartbeat';
+  }
+  const sec = Math.max(0, Number(seconds));
+  if (sec < 120) return _currentLang === 'zh' ? '刚刚' : 'just now';
+  const min = Math.round(sec / 60);
+  if (min < 120) return `${min}m`;
+  const hour = Math.round(min / 60);
+  if (hour < 48) return `${hour}h`;
+  return `${Math.round(hour / 24)}d`;
+}
+
+function harnessTaskRank(task) {
+  const status = String(task.status || '').toLowerCase();
+  const weights = { needs_user: 0, blocked: 1, active: 2, review: 3, todo: 4, done: 8 };
+  return weights[status] === undefined ? 5 : weights[status];
+}
+
+function loadHarnessCollapsedProjects() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HARNESS_COLLAPSED_PROJECTS_KEY) || '[]');
+    harnessCollapsedProjects = new Set(Array.isArray(raw) ? raw.map(String) : []);
+  } catch (_) {
+    harnessCollapsedProjects = new Set();
+  }
+}
+
+function saveHarnessCollapsedProjects() {
+  try {
+    localStorage.setItem(HARNESS_COLLAPSED_PROJECTS_KEY, JSON.stringify(Array.from(harnessCollapsedProjects)));
+  } catch (_) {}
+}
+
+loadHarnessCollapsedProjects();
+
+function toggleHarnessProject(encodedProjectId) {
+  const projectId = decodeURIComponent(String(encodedProjectId || 'default'));
+  if (harnessCollapsedProjects.has(projectId)) harnessCollapsedProjects.delete(projectId);
+  else harnessCollapsedProjects.add(projectId);
+  saveHarnessCollapsedProjects();
+  if (harnessState) renderHarnessState(harnessState);
+}
+
+function bindHorizontalWheelScroll(el) {
+  if (!el || el.dataset.wheelScrollBound === '1') return;
+  el.dataset.wheelScrollBound = '1';
+  el.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    if (el.scrollWidth <= el.clientWidth + 2) return;
+    const before = el.scrollLeft;
+    try {
+      el.scrollLeft = before + e.deltaY;
+    } catch (_) {
+      return;
+    }
+    if (el.scrollLeft !== before) e.preventDefault();
+  }, { passive: false });
+}
+
+function harnessAgentLabel(agent) {
+  if (!agent) return '';
+  const id = agent.agent_id || 'worker';
+  const remote = String(agent.remote_host || '').trim();
+  if (!remote || String(id).includes(remote)) return id;
+  const remoteAddr = remote.includes('@') ? remote.split('@').pop() : remote;
+  if (remoteAddr && String(id).includes(remoteAddr)) return id;
+  return `${id} @ ${remote}`;
+}
+
+function isHarnessVisibleWorker(agent, visibleTaskIds = null) {
+  if (!agent) return false;
+  if (agent.remote_host && String(agent.agent_id || '') === String(agent.remote_host)) return false;
+  const taskId = agent.current_task_id || agent.task_id || '';
+  if (!taskId) return false;
+  return !visibleTaskIds || visibleTaskIds.has(taskId);
+}
+
+function harnessProjectRemoteLabel(tasks, agentsByTask) {
+  const agents = [];
+  tasks.forEach(task => (agentsByTask.get(task.task_id) || []).forEach(agent => agents.push(agent)));
+  const remote = agents.map(agent => agent.remote_host).find(Boolean);
+  if (remote) return remote;
+  return tasks.map(task => task.assignee).find(Boolean) || '';
+}
+
+function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask) {
+  const collapsed = harnessCollapsedProjects.has(projectId);
+  const groupAgents = [];
+  tasks.forEach(task => (agentsByTask.get(task.task_id) || []).forEach(agent => groupAgents.push(agent)));
+  const projectTitle = (project && (project.title || project.name)) || projectId || 'default';
+  const remoteLabel = harnessProjectRemoteLabel(tasks, agentsByTask);
+  const meta = [
+    `${tasks.length} TODO`,
+    `${groupAgents.length} worker`,
+    remoteLabel ? `remote ${remoteLabel}` : ''
+  ].filter(Boolean).join(' · ');
+  const encodedProjectId = encodeURIComponent(projectId || 'default');
+  const body = tasks.map(task => renderHarnessCard('task', {
+    ...task,
+    _agents: agentsByTask.get(task.task_id) || []
+  })).join('');
+  return `<div class="harness-project-group${collapsed ? ' collapsed' : ''}">
+    <button type="button" class="harness-project-head" onclick="toggleHarnessProject('${esc(encodedProjectId)}')" aria-expanded="${collapsed ? 'false' : 'true'}">
+      <div style="min-width:0;">
+        <div class="harness-project-name">${esc(projectTitle)}</div>
+        <div class="harness-project-meta">${esc(meta)}</div>
+      </div>
+      <span class="harness-project-toggle">⌄</span>
+    </button>
+    <div class="harness-project-body" data-harness-project="${esc(projectId || 'default')}">${body}</div>
+  </div>`;
+}
+
+function renderHarnessCard(kind, item) {
+  if (kind === 'task') {
+    const status = String(item.status || 'todo').toLowerCase();
+    const linkedAgents = Array.isArray(item._agents) ? item._agents : [];
+    const meta = [
+      item.project_id ? `project ${item.project_id}` : '',
+      item.assignee ? `owner ${item.assignee}` : '',
+      item.due_at ? `due ${item.due_at}` : ''
+    ].filter(Boolean).join(' · ');
+    const workerRows = linkedAgents.map(agent => {
+      const workerStatus = agent.needs_user ? harnessStatusText('needs_user') : harnessStatusText(agent.effective_status || agent.status || 'idle');
+      const workerMeta = [
+        workerStatus,
+        `heartbeat ${harnessFormatAge(agent.heartbeat_age_seconds)}`,
+        agent.message || ''
+      ].filter(Boolean).join(' · ');
+      return `<div class="harness-worker-row"><strong>${esc(harnessAgentLabel(agent))}</strong><br>${esc(workerMeta)}</div>`;
+    }).join('');
+    return `<div class="harness-card ${esc(status)}">
+      <div class="harness-card-top">
+        <div class="harness-card-title">${esc(item.title || item.task_id || 'TODO')}</div>
+        <span class="harness-pill">${esc(harnessStatusText(status))}</span>
+      </div>
+      ${meta ? `<div class="harness-meta">${esc(meta)}</div>` : ''}
+      ${item.description ? `<div class="harness-preview">${esc(item.description)}</div>` : ''}
+      ${workerRows}
+    </div>`;
+  }
+  if (kind === 'agent') {
+    const status = String(item.effective_status || item.status || 'idle').toLowerCase();
+    const meta = [
+      item.project_id ? `project ${item.project_id}` : '',
+      item.current_task_id ? `task ${item.current_task_id}` : '',
+      `heartbeat ${harnessFormatAge(item.heartbeat_age_seconds)}`
+    ].filter(Boolean).join(' · ');
+    return `<div class="harness-card ${esc(status)}">
+      <div class="harness-card-top">
+        <div class="harness-card-title">${esc(item.agent_id || 'worker')}</div>
+        <span class="harness-pill">${esc(item.needs_user ? harnessStatusText('needs_user') : harnessStatusText(status))}</span>
+      </div>
+      <div class="harness-meta">${esc(meta)}</div>
+      ${item.message ? `<div class="harness-preview">${esc(item.message)}</div>` : ''}
+    </div>`;
+  }
+  const status = String(item.status || '').toLowerCase();
+  const meta = [item.task_id ? `task ${item.task_id}` : '', item.agent_id ? `agent ${item.agent_id}` : ''].filter(Boolean).join(' · ');
+  return `<div class="harness-card ${esc(status)}">
+    <div class="harness-card-top">
+      <div class="harness-card-title">${esc(item.run_id || 'verified run')}</div>
+      <span class="harness-pill">${esc(harnessStatusText(item.verifier && item.verifier.status === 'passed' ? 'verified' : status))}</span>
+    </div>
+    ${meta ? `<div class="harness-meta">${esc(meta)}</div>` : ''}
+    ${item.summary || item.command ? `<div class="harness-preview">${esc(item.summary || item.command)}</div>` : ''}
+  </div>`;
+}
+
+function renderHarnessState(payload) {
+  const grid = document.getElementById('harness-grid');
+  const statusEl = document.getElementById('harness-status');
+  if (!grid || !statusEl) return;
+  const ok = payload && payload.ok !== false;
+  const tasks = Array.isArray(payload && payload.tasks) ? payload.tasks : [];
+  const agents = Array.isArray(payload && payload.agents) ? payload.agents : [];
+  const projects = Array.isArray(payload && payload.projects) ? payload.projects : [];
+  const runs = Array.isArray(payload && payload.runs) ? payload.runs : [];
+  if (!ok) {
+    statusEl.textContent = (payload && payload.error) || (_currentLang === 'zh' ? 'Harness 不可用' : 'Harness unavailable');
+    grid.innerHTML = `<div class="harness-card error"><div class="harness-preview">${esc(statusEl.textContent)}</div></div>`;
+    return;
+  }
+  const openTasks = tasks
+    .filter(t => String(t.status || '').toLowerCase() !== 'done')
+    .sort((a, b) => harnessTaskRank(a) - harnessTaskRank(b));
+  const openTaskIds = new Set(openTasks.map(task => task.task_id).filter(Boolean));
+  const visibleWorkers = agents.filter(agent => isHarnessVisibleWorker(agent, openTaskIds));
+  const needsUser = visibleWorkers.filter(a => a && a.needs_user).length;
+  const stale = visibleWorkers.filter(a => a && a.stale).length;
+  statusEl.textContent = _currentLang === 'zh'
+    ? `${openTasks.length} TODO · ${visibleWorkers.length} worker · ${needsUser} 等用户 · ${stale} 失联`
+    : `${openTasks.length} TODO · ${visibleWorkers.length} workers · ${needsUser} needs user · ${stale} stale`;
+  const cards = [];
+  const agentsByTask = new Map();
+  const projectsById = new Map();
+  projects.forEach(project => {
+    if (project && project.project_id) projectsById.set(project.project_id, project);
+  });
+  visibleWorkers.forEach(agent => {
+    const taskId = agent && (agent.current_task_id || agent.task_id);
+    if (!taskId) return;
+    if (!agentsByTask.has(taskId)) agentsByTask.set(taskId, []);
+    agentsByTask.get(taskId).push(agent);
+  });
+  const tasksByProject = new Map();
+  openTasks.forEach(task => {
+    const projectId = task.project_id || 'default';
+    if (!tasksByProject.has(projectId)) tasksByProject.set(projectId, []);
+    tasksByProject.get(projectId).push(task);
+  });
+  Array.from(tasksByProject.entries())
+    .sort((a, b) => {
+      const rankA = Math.min(...a[1].map(harnessTaskRank));
+      const rankB = Math.min(...b[1].map(harnessTaskRank));
+      return rankA - rankB || String(a[0]).localeCompare(String(b[0]));
+    })
+    .forEach(([projectId, projectTasks]) => {
+      cards.push(renderHarnessProjectGroup(projectId, projectTasks, projectsById.get(projectId), agentsByTask));
+    });
+  runs.filter(r => r && ['passed', 'verified'].includes(String(r.status || '').toLowerCase())).slice(0, 1)
+    .forEach(run => cards.push(renderHarnessCard('run', run)));
+  if (!cards.length) {
+    cards.push(`<div class="harness-card"><div class="harness-preview">${esc(_currentLang === 'zh' ? '暂无 Harness TODO。' : 'No harness TODO yet.')}</div></div>`);
+  }
+  grid.innerHTML = cards.join('');
+  grid.querySelectorAll('.harness-project-body').forEach(bindHorizontalWheelScroll);
+}
+
+async function refreshHarnessState(showToast = false) {
+  if (harnessLoading) return;
+  const btn = document.getElementById('harness-refresh');
+  harnessLoading = true;
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api('GET', '/proxy_harness_state');
+    harnessState = data;
+    renderHarnessState(data);
+    if (showToast) toast(_currentLang === 'zh' ? 'Harness 已刷新' : 'Harness refreshed', 1600);
+  } catch (e) {
+    renderHarnessState({ ok: false, error: e.message, tasks: [], agents: [], runs: [] });
+    if (showToast) toast(e.message, 3000);
+  } finally {
+    harnessLoading = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function createHarnessTodo() {
+  const title = prompt(_currentLang === 'zh' ? 'TODO 标题' : 'TODO title');
+  if (!title || !title.trim()) return;
+  const projectId = prompt(_currentLang === 'zh' ? '项目 ID（默认 default）' : 'Project ID (default)') || 'default';
+  const taskId = `task_${Date.now().toString(36)}`;
+  try {
+    await api('POST', '/proxy_harness_event', {
+      action: 'task_upsert',
+      project_id: projectId.trim() || 'default',
+      task_id: taskId,
+      title: title.trim(),
+      status: 'todo'
+    });
+    await refreshHarnessState(false);
+    toast(_currentLang === 'zh' ? 'TODO 已创建' : 'TODO created', 1600);
+  } catch (e) {
+    toast((_currentLang === 'zh' ? '创建失败: ' : 'Create failed: ') + e.message, 3000);
+  }
+}
+
 function remoteClaudeSessionKey(session) {
   return String(
     (session && (session.display_id || session.bridge_session_id || session.session_id || session.id || session.job_id)) || ''
   );
+}
+
+function loadRemoteClaudeCollapsedRemotes() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(REMOTE_CLAUDE_COLLAPSED_REMOTES_KEY) || '[]');
+    remoteClaudeCollapsedRemotes = new Set(Array.isArray(raw) ? raw.map(String) : []);
+  } catch (_) {
+    remoteClaudeCollapsedRemotes = new Set();
+  }
+}
+
+function saveRemoteClaudeCollapsedRemotes() {
+  try {
+    localStorage.setItem(REMOTE_CLAUDE_COLLAPSED_REMOTES_KEY, JSON.stringify(Array.from(remoteClaudeCollapsedRemotes)));
+  } catch (_) {}
+}
+
+loadRemoteClaudeCollapsedRemotes();
+
+function toggleRemoteClaudeComputer(encodedRemoteId) {
+  const remoteId = decodeURIComponent(String(encodedRemoteId || 'remote'));
+  if (remoteClaudeCollapsedRemotes.has(remoteId)) remoteClaudeCollapsedRemotes.delete(remoteId);
+  else remoteClaudeCollapsedRemotes.add(remoteId);
+  saveRemoteClaudeCollapsedRemotes();
+  if (window.__lastRemoteClaudePayload) renderRemoteClaudeSessions(window.__lastRemoteClaudePayload);
 }
 
 function remoteClaudeTitle(session, index) {
@@ -6438,7 +7037,7 @@ function remoteClaudeStatusText(status) {
   const zh = _currentLang === 'zh';
   if (s === 'idle') return zh ? '空闲' : 'Idle';
   if (s === 'shell') return zh ? 'Shell 中' : 'Shell';
-  if (s === 'running' || s === 'working') return zh ? '运行中' : 'Running';
+  if (s === 'running' || s === 'working' || s === 'busy') return zh ? '运行中' : 'Running';
   if (s === 'completed' || s === 'done') return zh ? '已完成' : 'Done';
   return status || (zh ? '未知' : 'Unknown');
 }
@@ -6461,24 +7060,104 @@ function remoteClaudePreviewText(message) {
   return text || (_currentLang === 'zh' ? '暂无 transcript 预览' : 'No transcript preview yet');
 }
 
+function remoteClaudeSessionKeys(session) {
+  return [
+    session && session.display_id,
+    session && session.bridge_session_id,
+    session && session.session_id,
+    session && session.id,
+    session && session.job_id
+  ].filter(Boolean).map(String);
+}
+
+function remoteClaudeLinkedContext(session) {
+  const keys = new Set(remoteClaudeSessionKeys(session));
+  const agents = Array.isArray(harnessState && harnessState.agents) ? harnessState.agents : [];
+  const tasks = Array.isArray(harnessState && harnessState.tasks) ? harnessState.tasks : [];
+  const agent = agents.find(item => item && item.session_ref && keys.has(String(item.session_ref)));
+  const task = agent ? tasks.find(item => item && item.task_id === agent.current_task_id) : null;
+  const taskIndex = task ? tasks.findIndex(item => item && item.task_id === task.task_id) : 9999;
+  return { agent: agent || null, task: task || null, taskIndex: taskIndex < 0 ? 9999 : taskIndex };
+}
+
+function renderRemoteClaudeSessionCard(session, index) {
+  const key = remoteClaudeSessionKey(session);
+  const status = String(session.status || '').toLowerCase();
+  const title = remoteClaudeTitle(session, index);
+  const idLine = session.bridge_session_id || session.session_id || session.job_id || session.id || '';
+  const cwd = session.cwd || '';
+  const time = remoteClaudeFormatTime(session.updated_at);
+  const linked = remoteClaudeLinkedContext(session);
+  const linkedLine = linked.task
+    ? `${_currentLang === 'zh' ? '绑定 TODO' : 'Linked TODO'}: ${linked.task.title || linked.task.task_id}`
+    : '';
+  return `
+    <div class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')">
+      <div class="remote-claude-card-top">
+        <div class="remote-claude-card-title">${esc(title)}</div>
+        <span class="remote-claude-pill ${esc(status)}">${esc(remoteClaudeStatusText(status))}</span>
+      </div>
+      <div class="remote-claude-card-meta">${esc(idLine)}${time ? ' · ' + esc(time) : ''}</div>
+      ${cwd ? `<div class="remote-claude-card-meta">${esc(cwd)}</div>` : ''}
+      ${linkedLine ? `<div class="remote-claude-card-meta">${esc(linkedLine)}</div>` : ''}
+      <div class="remote-claude-preview">${esc(remoteClaudePreviewText(session.last_message))}</div>
+    </div>`;
+}
+
+function renderRemoteClaudePlaceholderCard(index, text) {
+  return `
+    <div class="remote-claude-card placeholder">
+      <div class="remote-claude-card-top">
+        <div class="remote-claude-card-title">Claude Session ${index + 1}</div>
+        <span class="remote-claude-pill error">--</span>
+      </div>
+      <div class="remote-claude-preview">${esc(text)}</div>
+    </div>`;
+}
+
+function renderRemoteClaudeComputerGroup(remoteId, remoteLabel, sessions, options = {}) {
+  const placeholderText = options.placeholderText || '';
+  const collapsed = remoteClaudeCollapsedRemotes.has(remoteId);
+  const busy = sessions.filter(session => ['busy', 'running', 'working', 'shell'].includes(String(session.status || '').toLowerCase())).length;
+  const meta = [
+    `${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`,
+    busy ? `${busy} ${_currentLang === 'zh' ? '运行中' : 'running'}` : ''
+  ].filter(Boolean).join(' · ');
+  const encodedRemoteId = encodeURIComponent(remoteId || 'remote');
+  const displaySessions = sessions.slice().sort((a, b) => {
+    const ac = remoteClaudeLinkedContext(a);
+    const bc = remoteClaudeLinkedContext(b);
+    return ac.taskIndex - bc.taskIndex || String(remoteClaudeTitle(a, 0)).localeCompare(String(remoteClaudeTitle(b, 0)));
+  });
+  const cards = displaySessions.map((session, i) => renderRemoteClaudeSessionCard(session, i));
+  if (!cards.length) {
+    cards.push(renderRemoteClaudePlaceholderCard(0, placeholderText || (_currentLang === 'zh' ? '未发现 session' : 'No session found')));
+  }
+  return `<div class="remote-computer-group${collapsed ? ' collapsed' : ''}">
+    <button type="button" class="remote-computer-head" onclick="toggleRemoteClaudeComputer('${esc(encodedRemoteId)}')" aria-expanded="${collapsed ? 'false' : 'true'}">
+      <div style="min-width:0;">
+        <div class="remote-computer-name">${esc(remoteLabel || remoteId || 'Remote Claude')}</div>
+        <div class="remote-computer-meta">${esc(meta)}</div>
+      </div>
+      <span class="remote-computer-toggle">⌄</span>
+    </button>
+    <div class="remote-computer-body" data-remote-claude-computer="${esc(remoteId || 'remote')}">${cards.join('')}</div>
+  </div>`;
+}
+
 function renderRemoteClaudePlaceholders(label) {
   const grid = document.getElementById('remote-claude-grid');
   if (!grid) return;
   const text = label || (_currentLang === 'zh' ? '等待远端 Claude session' : 'Waiting for remote Claude session');
-  grid.innerHTML = [0, 1, 2].map(i => `
-    <div class="remote-claude-card placeholder">
-      <div class="remote-claude-card-top">
-        <div class="remote-claude-card-title">Claude Session ${i + 1}</div>
-        <span class="remote-claude-pill error">--</span>
-      </div>
-      <div class="remote-claude-preview">${esc(text)}</div>
-    </div>`).join('');
+  grid.innerHTML = renderRemoteClaudeComputerGroup('remote', 'Remote Claude', [], { placeholderText: text });
+  grid.querySelectorAll('.remote-computer-body').forEach(bindHorizontalWheelScroll);
 }
 
 function renderRemoteClaudeSessions(payload) {
   const grid = document.getElementById('remote-claude-grid');
   const statusEl = document.getElementById('remote-claude-status');
   if (!grid || !statusEl) return;
+  window.__lastRemoteClaudePayload = payload || {};
   const sessions = Array.isArray(payload && payload.sessions) ? payload.sessions : [];
   remoteClaudeSessions = sessions;
   if ((!payload || !payload.ok) && !sessions.length) {
@@ -6490,7 +7169,7 @@ function renderRemoteClaudeSessions(payload) {
   const remote = payload.remote || {};
   const remoteLabel = `${remote.user || ''}${remote.user ? '@' : ''}${remote.host || ''}`;
   if (payload && payload.ok) {
-    statusEl.textContent = `${remoteLabel} · ${sessions.length}/3 sessions`;
+    statusEl.textContent = `${remoteLabel} · ${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
   } else {
     const msg = (payload && payload.error) || (_currentLang === 'zh' ? '远端 Claude 不可达' : 'Remote Claude unavailable');
     statusEl.textContent = `${remoteLabel} · ${_currentLang === 'zh' ? '使用上次缓存' : 'using last-known cache'} · ${msg}`;
@@ -6499,35 +7178,21 @@ function renderRemoteClaudeSessions(payload) {
     renderRemoteClaudePlaceholders(_currentLang === 'zh' ? '远端没有可读取的 Claude session' : 'No readable remote Claude session');
     return;
   }
-  const cards = sessions.slice(0, 3).map((session, i) => {
-    const key = remoteClaudeSessionKey(session);
-    const status = String(session.status || '').toLowerCase();
-    const title = remoteClaudeTitle(session, i);
-    const idLine = session.bridge_session_id || session.session_id || session.job_id || session.id || '';
-    const cwd = session.cwd || '';
-    const time = remoteClaudeFormatTime(session.updated_at);
-    return `
-      <div class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')">
-        <div class="remote-claude-card-top">
-          <div class="remote-claude-card-title">${esc(title)}</div>
-          <span class="remote-claude-pill ${esc(status)}">${esc(remoteClaudeStatusText(status))}</span>
-        </div>
-        <div class="remote-claude-card-meta">${esc(idLine)}${time ? ' · ' + esc(time) : ''}</div>
-        ${cwd ? `<div class="remote-claude-card-meta">${esc(cwd)}</div>` : ''}
-        <div class="remote-claude-preview">${esc(remoteClaudePreviewText(session.last_message))}</div>
-      </div>`;
+  const groups = new Map();
+  sessions.forEach(session => {
+    const sessionRemote = session.remote || {};
+    const host = session.remote_host || session.host || sessionRemote.host || remote.host || '';
+    const user = session.remote_user || session.user || sessionRemote.user || remote.user || '';
+    const groupId = `${user || 'remote'}@${host || 'local'}`;
+    const groupLabel = `${user || ''}${user ? '@' : ''}${host || ''}` || (_currentLang === 'zh' ? '远端 Claude' : 'Remote Claude');
+    if (!groups.has(groupId)) groups.set(groupId, { id: groupId, label: groupLabel, sessions: [] });
+    groups.get(groupId).sessions.push(session);
   });
-  while (cards.length < 3) {
-    cards.push(`
-      <div class="remote-claude-card placeholder">
-        <div class="remote-claude-card-top">
-          <div class="remote-claude-card-title">Claude Session ${cards.length + 1}</div>
-          <span class="remote-claude-pill error">--</span>
-        </div>
-        <div class="remote-claude-preview">${esc(_currentLang === 'zh' ? '未发现第三个 session' : 'No session found')}</div>
-      </div>`);
-  }
-  grid.innerHTML = cards.join('');
+  grid.innerHTML = Array.from(groups.values())
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map(group => renderRemoteClaudeComputerGroup(group.id, group.label, group.sessions))
+    .join('');
+  grid.querySelectorAll('.remote-computer-body').forEach(bindHorizontalWheelScroll);
 }
 
 async function refreshRemoteClaudeSessions(showToast = false) {
@@ -16697,6 +17362,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       await _consumeHubReturnParams();
       await refreshGroups();
+      refreshHarnessState(false);
       refreshRemoteClaudeSessions(false);
       startGroupsPolling();
       await prefetchContactsBootstrap();
