@@ -560,6 +560,11 @@
     border-style: dashed;
     color: var(--text-hint);
   }
+  .remote-claude-card.review-placeholder {
+    cursor: default;
+    border-color: #f59e0b;
+    background: #fffbeb;
+  }
   .remote-claude-card-top {
     display: flex;
     align-items: flex-start;
@@ -594,6 +599,10 @@
   .remote-claude-pill.idle {
     background: #f1f5f9;
     color: #475569;
+  }
+  .remote-claude-pill.review {
+    background: #fef3c7;
+    color: #92400e;
   }
   .remote-claude-pill.error {
     background: #fef2f2;
@@ -7038,6 +7047,7 @@ function remoteClaudeStatusText(status) {
   if (s === 'idle') return zh ? '空闲' : 'Idle';
   if (s === 'shell') return zh ? 'Shell 中' : 'Shell';
   if (s === 'running' || s === 'working' || s === 'busy') return zh ? '运行中' : 'Running';
+  if (s === 'review') return zh ? '待审查' : 'Review';
   if (s === 'completed' || s === 'done') return zh ? '已完成' : 'Done';
   return status || (zh ? '未知' : 'Unknown');
 }
@@ -7088,11 +7098,16 @@ function renderRemoteClaudeSessionCard(session, index) {
   const cwd = session.cwd || '';
   const time = remoteClaudeFormatTime(session.updated_at);
   const linked = remoteClaudeLinkedContext(session);
+  const reviewOnly = !!session.harness_review_placeholder;
   const linkedLine = linked.task
     ? `${_currentLang === 'zh' ? '绑定 TODO' : 'Linked TODO'}: ${linked.task.title || linked.task.task_id}`
     : '';
+  const reviewLine = reviewOnly ? (_currentLang === 'zh' ? '等待审查，不自动清理' : 'Waiting for review, not auto-cleaned') : '';
+  const attrs = reviewOnly
+    ? 'class="remote-claude-card review-placeholder"'
+    : `class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')"`;
   return `
-    <div class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')">
+    <div ${attrs}>
       <div class="remote-claude-card-top">
         <div class="remote-claude-card-title">${esc(title)}</div>
         <span class="remote-claude-pill ${esc(status)}">${esc(remoteClaudeStatusText(status))}</span>
@@ -7100,6 +7115,7 @@ function renderRemoteClaudeSessionCard(session, index) {
       <div class="remote-claude-card-meta">${esc(idLine)}${time ? ' · ' + esc(time) : ''}</div>
       ${cwd ? `<div class="remote-claude-card-meta">${esc(cwd)}</div>` : ''}
       ${linkedLine ? `<div class="remote-claude-card-meta">${esc(linkedLine)}</div>` : ''}
+      ${reviewLine ? `<div class="remote-claude-card-meta">${esc(reviewLine)}</div>` : ''}
       <div class="remote-claude-preview">${esc(remoteClaudePreviewText(session.last_message))}</div>
     </div>`;
 }

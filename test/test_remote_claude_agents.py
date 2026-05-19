@@ -12,6 +12,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from integrations import remote_claude_agents as rca  # noqa: E402
+from routes.front_group_routes import _merge_review_harness_sessions  # noqa: E402
 
 
 class RemoteClaudeParserTests(unittest.TestCase):
@@ -167,6 +168,41 @@ class RemoteClaudeRouteTests(unittest.TestCase):
             resp = client.get("/proxy_remote_claude_sessions?limit=3")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json(), payload)
+
+    def test_merge_review_harness_sessions_keeps_settled_review_worker_visible(self):
+        data = {
+            "ok": True,
+            "remote": {"host": "100.112.245.1", "user": "jingxiang"},
+            "sessions": [{"display_id": "session_live"}],
+        }
+        harness_state = {
+            "tasks": [
+                {
+                    "task_id": "task_review",
+                    "title": "Review me",
+                    "status": "review",
+                    "updated_at": "2026-05-19T02:00:00+08:00",
+                }
+            ],
+            "agents": [
+                {
+                    "agent_id": "worker-review@100.112.245.1",
+                    "current_task_id": "task_review",
+                    "session_ref": "session_review",
+                    "status": "done",
+                    "message": "done, awaiting review",
+                    "updated_at": "2026-05-19T02:01:00+08:00",
+                }
+            ],
+        }
+
+        merged = _merge_review_harness_sessions(data, harness_state)
+
+        self.assertEqual(len(merged["sessions"]), 2)
+        review = merged["sessions"][1]
+        self.assertEqual(review["display_id"], "session_review")
+        self.assertEqual(review["status"], "review")
+        self.assertTrue(review["harness_review_placeholder"])
 
     def test_messages_route_returns_remote_payload(self):
         client = self.front.app.test_client()
