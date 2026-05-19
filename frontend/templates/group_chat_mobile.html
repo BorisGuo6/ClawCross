@@ -10397,19 +10397,19 @@ function openClawcrossCreator() {
 const MOBILE_CHATBOT_CHANNEL_FALLBACKS = [
   { id: 'telegram', label: 'Telegram', kind: 'nonebot', adapter: 'telegram', env_key: 'TELEGRAM_BOTS' },
   { id: 'qq', label: 'QQ', kind: 'nonebot', adapter: 'qq', env_key: 'QQ_BOTS' },
-  { id: 'onebotv11', label: 'OneBot V11', kind: 'nonebot', adapter: 'onebot.v11', env_key: 'ONEBOTV11_BOTS' },
-  { id: 'onebotv12', label: 'OneBot V12', kind: 'nonebot', adapter: 'onebot.v12', env_key: 'ONEBOTV12_BOTS' },
+  { id: 'onebotv11', label: 'OneBot V11', kind: 'nonebot', adapter: 'onebot.v11', env_key: '', requires_config: false },
+  { id: 'onebotv12', label: 'OneBot V12', kind: 'nonebot', adapter: 'onebot.v12', env_key: '', requires_config: false },
   { id: 'discord', label: 'Discord', kind: 'nonebot', adapter: 'discord', env_key: 'DISCORD_BOTS' },
-  { id: 'dingtalk', label: 'DingTalk', kind: 'nonebot', adapter: 'dingtalk', env_key: 'DINGTALK_BOTS' },
+  { id: 'dingtalk', label: 'DingTalk', kind: 'nonebot', adapter: 'ding', env_key: '', requires_config: false, required_env: ['DING_ACCESS_TOKEN'] },
   { id: 'feishu', label: 'Feishu', kind: 'nonebot', adapter: 'feishu', env_key: 'FEISHU_BOTS' },
   { id: 'kaiheila', label: 'Kaiheila / KOOK', kind: 'nonebot', adapter: 'kaiheila', env_key: 'KAIHEILA_BOTS' },
   { id: 'mail', label: 'Mail', kind: 'nonebot', adapter: 'mail', env_key: 'MAIL_BOTS' },
-  { id: 'minecraft', label: 'Minecraft', kind: 'nonebot', adapter: 'minecraft', env_key: 'MINECRAFT_BOTS' },
-  { id: 'github', label: 'GitHub', kind: 'nonebot', adapter: 'github', env_key: 'GITHUB_BOTS' },
+  { id: 'minecraft', label: 'Minecraft', kind: 'nonebot', adapter: 'minecraft', env_key: '', requires_config: false, required_env: ['MINECRAFT_WS_URLS'] },
+  { id: 'github', label: 'GitHub', kind: 'nonebot', adapter: 'github', env_key: 'GITHUB_APPS' },
   { id: 'villa', label: 'Villa', kind: 'nonebot', adapter: 'villa', env_key: 'VILLA_BOTS' },
   { id: 'yunhu', label: 'Yunhu', kind: 'nonebot', adapter: 'yunhu', env_key: 'YUNHU_BOTS' },
   { id: 'heybox', label: 'Heybox', kind: 'nonebot', adapter: 'heybox', env_key: 'HEYBOX_BOTS' },
-  { id: 'console', label: 'Console', kind: 'nonebot', adapter: 'console', env_key: 'CONSOLE_BOTS' },
+  { id: 'console', label: 'Console', kind: 'nonebot', adapter: 'console', env_key: '', requires_config: false },
   { id: 'weclaw', label: '微信 / WeClaw', kind: 'weclaw', adapter: 'weclaw', env_key: '' },
   { id: 'webhook', label: 'Custom Webhook', kind: 'webhook', adapter: 'webhook', env_key: '' },
 ];
@@ -10500,6 +10500,9 @@ function normalizeMobileChatbotChannels(rawChannels, whitelist) {
       kind: ch.kind || 'nonebot',
       adapter: ch.adapter || ch.id,
       env_key: ch.env_key || '',
+      env_aliases: Array.isArray(ch.env_aliases) ? ch.env_aliases : [],
+      requires_config: ch.requires_config !== false,
+      required_env: Array.isArray(ch.required_env) ? ch.required_env : [],
       emoji: ch.emoji || '',
       help: ch.help || '',
       fields: Array.isArray(ch.fields) ? ch.fields : [],
@@ -10580,6 +10583,10 @@ function getMobileChatbotChannelKeys(channel) {
   if (!channel) return [];
   const config = getMobileChatbotChannelConfig(channel);
   if (Array.isArray(config.fields) && config.fields.length) {
+    if (channel.env_key && config.fields.some(field => (field.target || 'bot') !== 'env')) {
+      MOBILE_CHATBOT_TEXTAREA_KEYS.add(channel.env_key);
+      MOBILE_CHATBOT_JSON_KEYS.add(channel.env_key);
+    }
     return config.fields.map(field => getMobileChatbotInputKey(channel, field)).filter(Boolean);
   }
   if (Array.isArray(config.keys) && config.keys.length) {
@@ -10611,6 +10618,9 @@ function getMobileChatbotChannelHelp(channel) {
   if (channel.kind === 'webhook') {
     return 'Webhook 渠道由 *_WEBHOOK_URL 环境变量启用；白名单 channel 名应与变量前缀小写一致。';
   }
+  if (channel.kind === 'nonebot' && channel.requires_config === false) {
+    return `NoneBot 渠道需要在 NONEBOT_ADAPTERS 加入 ${escapeHtml(channel.adapter || channel.id)}。该 adapter 使用环境变量、反向连接或自身默认配置，不使用 *_BOTS JSON。`;
+  }
   const envKey = channel.env_key || `${String(channel.adapter || channel.id).replace(/[._-]/g, '').toUpperCase()}_BOTS`;
   return `NoneBot 渠道需要两步：1) 在 NONEBOT_ADAPTERS 加入 ${escapeHtml(channel.adapter || channel.id)}；2) 在 ${escapeHtml(envKey)} 填该渠道 bot JSON 数组。还需要安装对应 nonebot-adapter 包。`;
 }
@@ -10627,6 +10637,7 @@ function renderMobileChatbotChannelSummary() {
   lines.push(`类型：${channel.kind || 'nonebot'}`);
   if (channel.adapter) lines.push(`adapter：${channel.adapter}`);
   if (channel.env_key) lines.push(`连接配置：${channel.env_key}`);
+  if (channel.kind === 'nonebot' && channel.requires_config === false && !channel.env_key) lines.push('连接配置：adapter / env-only');
   if (channel.kind === 'weclaw') {
     const enabled = String(mobileChatbotSettings.WECLAW_ENABLED || '').toLowerCase();
     lines.push(`状态：${enabled === 'true' ? '已启用（重启后生效）' : '未启用'}`);
@@ -10791,16 +10802,55 @@ function isMobileChatbotTruthy(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
+function getMobileChatbotObjectPath(field, fallbackName) {
+  return String(field?.path || fallbackName || '').split('.').filter(Boolean);
+}
+
+function getMobileChatbotNestedValue(obj, pathParts) {
+  let current = obj || {};
+  for (const part of pathParts) {
+    if (!current || typeof current !== 'object' || current[part] === undefined) return '';
+    current = current[part];
+  }
+  return current;
+}
+
+function setMobileChatbotNestedValue(obj, pathParts, value) {
+  if (!pathParts.length) return;
+  let current = obj;
+  pathParts.slice(0, -1).forEach(part => {
+    if (!current[part] || typeof current[part] !== 'object' || Array.isArray(current[part])) current[part] = {};
+    current = current[part];
+  });
+  current[pathParts[pathParts.length - 1]] = value;
+}
+
+function coerceMobileChatbotFieldValue(value, fieldMeta = {}) {
+  if (fieldMeta.type === 'boolean') return isMobileChatbotTruthy(value);
+  if (fieldMeta.type === 'number' && String(value || '').trim()) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  }
+  return value;
+}
+
+function getMobileChatbotIntentKey(target) {
+  if (target === 'bot_intent') return 'intent';
+  if (target === 'bot_intents') return 'intents';
+  return '';
+}
+
 function getMobileChatbotSettingValue(key) {
   const parsed = parseMobileChatbotInputKey(key);
   if (parsed) {
     const field = getMobileChatbotFieldMeta(key);
     const bot = getMobileChatbotFirstBot(parsed.envKey);
     let val = '';
-    if (parsed.target === 'bot_intents') {
-      val = bot.intents && bot.intents[parsed.name] !== undefined ? bot.intents[parsed.name] : '';
+    const intentKey = getMobileChatbotIntentKey(parsed.target);
+    if (intentKey) {
+      val = getMobileChatbotNestedValue(bot[intentKey] || {}, getMobileChatbotObjectPath(field, parsed.name));
     } else {
-      val = bot[parsed.name] !== undefined ? bot[parsed.name] : '';
+      val = getMobileChatbotNestedValue(bot, getMobileChatbotObjectPath(field, parsed.name));
     }
     if (val !== undefined && val !== null && String(val) !== '') return String(val);
     return field.default || '';
@@ -10891,21 +10941,25 @@ function validateMobileChatbotChannelFields() {
   const channel = getMobileChatbotChannel();
   const config = getMobileChatbotChannelConfig(channel);
   const fields = Array.isArray(config.fields) ? config.fields : [];
+  const rawBotConfigMasked = Boolean(channel?.env_key && String(mobileChatbotSettings[channel.env_key] || '').includes('****'));
   for (const field of fields) {
-    if (!field || !field.pattern) continue;
+    if (!field) continue;
     const target = field.target || (channel.kind === 'nonebot' ? 'bot' : 'env');
     let value = '';
     if (target === 'env') {
       value = String(mobileChatbotSettings[field.env_key || field.name] || '').trim();
     } else if (channel.env_key) {
       const bot = getMobileChatbotFirstBot(channel.env_key);
-      if (target === 'bot_intents') {
-        value = String((bot.intents && bot.intents[field.name] !== undefined) ? bot.intents[field.name] : '').trim();
+      const intentKey = getMobileChatbotIntentKey(target);
+      if (intentKey) {
+        value = String(getMobileChatbotNestedValue(bot[intentKey] || {}, getMobileChatbotObjectPath(field, field.name)) || '').trim();
       } else {
-        value = String(bot[field.name] || '').trim();
+        value = String(getMobileChatbotNestedValue(bot, getMobileChatbotObjectPath(field, field.name)) || '').trim();
       }
     }
+    if (field.required && !value && !(target !== 'env' && rawBotConfigMasked)) return `${field.label || field.name} 不能为空`;
     if (!value || value.includes('****')) continue;
+    if (!field.pattern) continue;
     try {
       if (!(new RegExp(field.pattern)).test(value)) {
         return field.invalid_message || `${field.label || field.name} 格式不正确`;
@@ -10947,18 +11001,20 @@ function collectMobileChatbotChannelFieldsFromDom() {
     if (fieldMeta.required && val) hasRequiredValue = true;
     if (fieldMeta.type !== 'boolean' && !val && !fieldMeta.default) return;
     touched = true;
-    if (parsed.target === 'bot_intents') {
-      bot.intents = bot.intents && typeof bot.intents === 'object' ? bot.intents : {};
-      bot.intents[parsed.name] = isMobileChatbotTruthy(val);
+    const coerced = coerceMobileChatbotFieldValue(val, fieldMeta);
+    const intentKey = getMobileChatbotIntentKey(parsed.target);
+    if (intentKey) {
+      bot[intentKey] = bot[intentKey] && typeof bot[intentKey] === 'object' ? bot[intentKey] : {};
+      setMobileChatbotNestedValue(bot[intentKey], getMobileChatbotObjectPath(fieldMeta, parsed.name), coerced);
     } else {
-      bot[parsed.name] = fieldMeta.type === 'boolean' ? isMobileChatbotTruthy(val) : val;
+      setMobileChatbotNestedValue(bot, getMobileChatbotObjectPath(fieldMeta, parsed.name), coerced);
       if (val) hasTopLevelValue = true;
     }
   });
 
   if (!touched) return;
   if (!bots.length && !hasRequiredValue && !hasTopLevelValue) return;
-  if (rawMasked && !hasRequiredValue && !Object.keys(bot).length) return;
+  if (rawMasked && !hasRequiredValue) return;
   bots[0] = bot;
   mobileChatbotSettings[channel.env_key] = JSON.stringify(bots.filter(x => x && Object.keys(x).length));
 }
@@ -11100,9 +11156,18 @@ async function stopMobileWeClaw() {
 
 function syncMobileChatbotAdapterSetting() {
   const channel = getMobileChatbotChannel();
-  if (!channel || channel.kind !== 'nonebot' || !channel.adapter || !channel.env_key) return;
-  const botConfig = (mobileChatbotSettings[channel.env_key] || '').trim();
-  if (!botConfig || botConfig.includes('****')) return;
+  if (!channel || channel.kind !== 'nonebot' || !channel.adapter) return;
+  let hasConfig = false;
+  if (channel.env_key) {
+    const botConfig = (mobileChatbotSettings[channel.env_key] || '').trim();
+    hasConfig = Boolean(botConfig && !botConfig.includes('****'));
+  } else if (channel.requires_config === false) {
+    const requiredEnv = Array.isArray(channel.required_env) ? channel.required_env : [];
+    hasConfig = requiredEnv.length
+      ? requiredEnv.every(key => String(mobileChatbotSettings[key] || '').trim())
+      : true;
+  }
+  if (!hasConfig) return;
   const adapters = String(mobileChatbotSettings.NONEBOT_ADAPTERS || '')
     .split(',')
     .map(x => x.trim())

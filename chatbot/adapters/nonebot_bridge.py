@@ -34,6 +34,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from src.utils.chatbot_channel_catalog import get_chatbot_channel, get_nonebot_adapter_meta
 from src.utils.runtime_paths import ENV_FILE
 
 load_dotenv(dotenv_path=ENV_FILE)
@@ -44,6 +45,13 @@ logger = logging.getLogger("chatbot.nonebot_bridge")
 
 # 与现有手写 adapter 冲突的 NoneBot 模块短名（目前只有 Slack 不在 NoneBot 列表）
 _OVERLAPPING_ADAPTERS: set[str] = set()
+
+
+def _preview_text(value: Any, limit: int = 160) -> str:
+    text = str(value or "").replace("\n", "\\n")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 def _looks_placeholder(value: Any) -> bool:
@@ -58,10 +66,27 @@ def _looks_placeholder(value: Any) -> bool:
     )
 
 
-def _has_real_bot_config(bots: Any) -> bool:
+def _bot_required_fields(adapter_name: str) -> list[str]:
+    channel = get_chatbot_channel(adapter_name) or {}
+    fields = []
+    for field in channel.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        target = str(field.get("target") or "bot")
+        if target in {"bot", "bot_intents"} and field.get("required"):
+            fields.append(str(field.get("name") or ""))
+    return [field for field in fields if field]
+
+
+def _has_real_bot_config(bots: Any, adapter_name: str = "") -> bool:
     items = bots if isinstance(bots, list) else [bots]
+    required_fields = _bot_required_fields(adapter_name)
     for bot in items:
         if not isinstance(bot, dict):
+            continue
+        if required_fields:
+            if all(bot.get(key) and not _looks_placeholder(bot.get(key)) for key in required_fields):
+                return True
             continue
         values = [
             bot.get("token"),
@@ -69,19 +94,46 @@ def _has_real_bot_config(bots: Any) -> bool:
             bot.get("access_token"),
             bot.get("api_key"),
             bot.get("password"),
+            bot.get("app_id"),
+            bot.get("app_secret"),
+            bot.get("bot_id"),
+            bot.get("bot_secret"),
+            bot.get("pub_key"),
+            bot.get("private_key"),
+            bot.get("private_key_path"),
+            bot.get("webhook_secret"),
+            bot.get("host"),
+            bot.get("url"),
         ]
         if any(value and not _looks_placeholder(value) for value in values):
             return True
     return False
 
 
+def _has_required_env(meta: dict[str, Any]) -> bool:
+    required_env = [str(x) for x in meta.get("required_env") or [] if str(x)]
+    if not required_env:
+        return True
+    missing = [key for key in required_env if _looks_placeholder(os.getenv(key, ""))]
+    if missing:
+        logger.warning(
+            f"跳过 NoneBot 适配器 {meta.get('adapter')}: 缺少必需环境变量 {', '.join(missing)}"
+        )
+        return False
+    return True
+
+
 def _resolve_adapter_module(name: str):
     """支持两种命名：nonebot.adapters.<name> 或 nonebot_adapter_<name>。"""
-    name = name.strip().lower()
+    meta = get_nonebot_adapter_meta(name)
+    module = str(meta.get("module") or "").strip()
+    name = str(meta.get("adapter") or name).strip().lower()
     candidates = [
+        module,
         f"nonebot.adapters.{name}",
         f"nonebot_adapter_{name.replace('.', '_').replace('-', '_')}",
     ]
+    candidates = [candidate for candidate in candidates if candidate]
     last_err = None
     for mod_path in candidates:
         try:
@@ -90,7 +142,7 @@ def _resolve_adapter_module(name: str):
             last_err = e
     raise ImportError(
         f"找不到 NoneBot 适配器 '{name}'，尝试过: {candidates}。"
-        f"请先 pip install nonebot-adapter-{name.replace('.', '-')}。原始错误: {last_err}"
+        f"请先 pip install {meta.get('package') or ('nonebot-adapter-' + name.replace('.', '-'))}。原始错误: {last_err}"
     )
 
 
@@ -209,7 +261,11 @@ class NoneBotBridgeAdapter(ChannelAdapter):
             link = await self.generate_magic_link(username)
             reply = self.format_cross_reply(link)
             try:
+                if adapter_name == "minecraft":
+                    logger.info(f"[minecraft] sending /front reply to {channel_user_id}: {_preview_text(reply)}")
                 await bot.send(event, reply)
+                if adapter_name == "minecraft":
+                    logger.info(f"[minecraft] send complete for /front reply to {channel_user_id}")
             except Exception as e:
                 logger.error(f"回复 /front 失败 ({adapter_name}): {e}")
             return
@@ -222,7 +278,11 @@ class NoneBotBridgeAdapter(ChannelAdapter):
         )
         if handled:
             try:
+                if adapter_name == "minecraft":
+                    logger.info(f"[minecraft] sending /cross reply to {channel_user_id}: {_preview_text(cli_reply or '')}")
                 await bot.send(event, cli_reply or "")
+                if adapter_name == "minecraft":
+                    logger.info(f"[minecraft] send complete for /cross reply to {channel_user_id}")
             except Exception as e:
                 logger.error(f"回复 /cross 失败 ({adapter_name}): {e}")
             return
@@ -234,7 +294,14 @@ class NoneBotBridgeAdapter(ChannelAdapter):
         reply = result.content if result.ok else f"AI 错误: {result.error}"
 
         try:
+            if adapter_name == "minecraft":
+                logger.info(
+                    f"[minecraft] sending AI reply to {channel_user_id} "
+                    f"(ok={result.ok}, len={len(str(reply or ''))}): {_preview_text(reply)}"
+                )
             await bot.send(event, reply)
+            if adapter_name == "minecraft":
+                logger.info(f"[minecraft] send complete for AI reply to {channel_user_id}")
         except Exception as e:
             logger.error(f"回复失败 ({adapter_name}): {e}")
 
@@ -342,41 +409,64 @@ class NoneBotBridgeAdapter(ChannelAdapter):
         # 需要手动从 env 读 <NAME>_BOTS（如 TELEGRAM_BOTS, QQ_BOTS）并设置到 config。
         # 带点平台（如 onebot.v11）使用 ONEBOTV11_BOTS；同时兼容旧的 ONEBOT.V11_BOTS。
         for name in self._adapter_names:
-            name_lower = name.lower().replace(' ', '')
-            std_name = name_lower.replace('-', '').replace('_', '').replace('.', '')
-            env_key = f"{std_name.upper()}_BOTS"
-            legacy_env_key = f"{name.upper()}_BOTS"
-            bots_json = os.getenv(env_key, "") or os.getenv(legacy_env_key, "")
-            if not bots_json:
+            meta = get_nonebot_adapter_meta(name)
+            adapter_name = str(meta["adapter"])
+            requires_config = bool(meta.get("requires_config", True))
+            env_keys: list[str] = []
+            if requires_config:
+                env_keys = [
+                    str(meta.get("env_key") or ""),
+                    *[str(x) for x in meta.get("env_aliases") or []],
+                ]
+                name_lower = adapter_name.lower().replace(' ', '')
+                std_name = name_lower.replace('-', '').replace('_', '').replace('.', '')
+                env_keys.extend([f"{std_name.upper()}_BOTS", f"{adapter_name.upper()}_BOTS"])
+                env_keys = [key for i, key in enumerate(env_keys) if key and key not in env_keys[:i]]
+            env_key = ""
+            bots_json = ""
+            for candidate in env_keys:
+                value = os.getenv(candidate, "")
+                if value:
+                    env_key = candidate
+                    bots_json = value
+                    break
+
+            bots = []
+            if not bots_json and not requires_config:
+                if not _has_required_env(meta):
+                    continue
+                logger.info(f"NoneBot 适配器 {adapter_name} 使用环境变量/反向连接配置，直接注册")
+            elif not bots_json:
+                logger.warning(f"跳过 NoneBot 适配器 {adapter_name}: 未找到配置 {', '.join(env_keys)}")
                 continue
+
+            if bots_json:
+                try:
+                    bots = json.loads(bots_json)
+                except Exception as e:
+                    logger.warning(f"解析 {env_key} 失败: {e}")
+                    continue
+
+                if not _has_real_bot_config(bots, adapter_name):
+                    logger.warning(f"跳过 NoneBot 适配器 {adapter_name}: {env_key} 为空或仍是模板占位值")
+                    continue
+
+                field_name = str(meta.get("config_field") or env_key.lower()).strip()
+
+                # 直接设置，不判断 hasattr（Config 有 extra='allow'，可以任意添加字段）
+                setattr(driver.config, field_name, bots)
 
             try:
-                bots = json.loads(bots_json)
-            except Exception as e:
-                logger.warning(f"解析 {env_key} 失败: {e}")
-                continue
-
-            if not _has_real_bot_config(bots):
-                logger.warning(f"跳过 NoneBot 适配器 {name}: {env_key} 为空或仍是模板占位值")
-                continue
-
-            # 标准化字段名：telegram, qq, discord, dingtalk, onebotv11, onebotv12, ...
-            field_name = f"{std_name}_bots"
-
-            # 直接设置，不判断 hasattr（Config 有 extra='allow'，可以任意添加字段）
-            setattr(driver.config, field_name, bots)
-
-            try:
-                module = _resolve_adapter_module(name)
+                module = _resolve_adapter_module(adapter_name)
                 adapter_cls = getattr(module, "Adapter", None)
                 if adapter_cls is None:
                     logger.error(f"模块 {module.__name__} 没有 Adapter 类，跳过")
                     continue
                 driver.register_adapter(adapter_cls)
-                logger.info(f"已注册 NoneBot 适配器: {name}")
+                logger.info(f"已注册 NoneBot 适配器: {adapter_name}")
 
             except Exception as e:
-                logger.error(f"加载 NoneBot 适配器 {name} 失败: {e}")
+                logger.error(f"加载 NoneBot 适配器 {adapter_name} 失败: {e}")
 
         # 注册全局 message matcher，路由到我们的 handle_message
         from nonebot import on_message
@@ -400,9 +490,15 @@ class NoneBotBridgeAdapter(ChannelAdapter):
             if adapter is None:
                 return "nonebot"
             name = adapter.get_name()
-            # NB 适配器名通常类似 "OneBot V11", "Telegram", "DingTalk"
-            # 取首单词 + 去空格作为 channel
-            return name.split()[0].replace("-", "_").lower() if name else "nonebot"
+            normalized = str(name or "").replace(" ", "").replace("-", "_").lower()
+            if not normalized:
+                return "nonebot"
+            if "onebot" in normalized and "v11" in normalized:
+                normalized = "onebotv11"
+            elif "onebot" in normalized and "v12" in normalized:
+                normalized = "onebotv12"
+            channel = get_chatbot_channel(normalized)
+            return str(channel.get("id") or normalized) if channel else normalized
         except Exception:
             return "nonebot"
 

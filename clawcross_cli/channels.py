@@ -33,10 +33,13 @@ class BotField:
     name: str                       # JSON key (bots_json) or env var name (env_vars)
     prompt: str
     password: bool = False
+    required: bool = False
     default: str = ""
     help: str = ""
     target: str = "bot"             # "bot" | "bot_intents" | "env"
     env_key: str = ""
+    path: str = ""
+    field_type: str = "text"
     pattern: str = ""
     invalid_message: str = ""
 
@@ -47,6 +50,13 @@ class ChannelInfo:
     label: str
     env_key: str                    # primary env var name; empty for env_vars-only channels
     kind: str = "bots_json"         # "bots_json" | "env_vars"
+    adapter: str = ""
+    module: str = ""
+    package: str = ""
+    config_field: str = ""
+    env_aliases: list[str] = field(default_factory=list)
+    requires_config: bool = True
+    required_env: list[str] = field(default_factory=list)
     emoji: str = ""
     setup_instructions: list[str] = field(default_factory=list)
     bot_fields: list[BotField] = field(default_factory=list)
@@ -316,10 +326,13 @@ def _channels_from_shared_catalog() -> dict[str, ChannelInfo]:
                 name=str(item.get("name") or ""),
                 prompt=str(item.get("label") or item.get("name") or ""),
                 password=field_type == "password",
+                required=bool(item.get("required", False)),
                 default=str(item.get("default") or ""),
                 help=str(item.get("help") or ""),
                 target=target,
                 env_key=str(item.get("env_key") or item.get("name") or ""),
+                path=str(item.get("path") or ""),
+                field_type=field_type,
                 pattern=str(item.get("pattern") or ""),
                 invalid_message=str(item.get("invalid_message") or ""),
             ))
@@ -328,6 +341,13 @@ def _channels_from_shared_catalog() -> dict[str, ChannelInfo]:
             label=str(raw.get("label") or channel_id),
             env_key=str(raw.get("env_key") or ""),
             kind=kind,
+            adapter=str(raw.get("adapter") or channel_id),
+            module=str(raw.get("module") or ""),
+            package=str(raw.get("package") or ""),
+            config_field=str(raw.get("config_field") or ""),
+            env_aliases=[str(x) for x in raw.get("env_aliases") or []],
+            requires_config=bool(raw.get("requires_config", True)),
+            required_env=[str(x) for x in raw.get("required_env") or []],
             emoji=str(raw.get("emoji") or ""),
             setup_instructions=[str(x) for x in raw.get("setup_instructions") or []],
             bot_fields=fields,
@@ -346,4 +366,13 @@ def list_channels() -> list[ChannelInfo]:
 
 
 def get_channel(channel_id: str) -> ChannelInfo | None:
-    return CHANNELS.get((channel_id or "").strip().lower())
+    key = (channel_id or "").strip().lower()
+    if not key:
+        return None
+    direct = CHANNELS.get(key)
+    if direct is not None:
+        return direct
+    for channel in CHANNELS.values():
+        if key == (channel.adapter or "").strip().lower():
+            return channel
+    return None

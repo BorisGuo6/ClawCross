@@ -58,6 +58,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 from src.utils.runtime_paths import ENV_FILE, PID_DIR, WORKSPACE_DIR, ensure_runtime_dirs, set_subprocess_env
+from src.utils.chatbot_channel_catalog import get_nonebot_adapter_meta, get_chatbot_channel
 ENV_FILE_PATH = str(ENV_FILE)
 ensure_runtime_dirs()
 WORKING_DIR = str(WORKSPACE_DIR)
@@ -613,9 +614,16 @@ def _looks_placeholder(value):
 
 
 def _nonebot_env_keys(name):
-    name_lower = name.lower().replace(" ", "")
+    meta = get_nonebot_adapter_meta(name)
+    keys = [
+        str(meta.get("env_key") or ""),
+        *[str(x) for x in meta.get("env_aliases") or []],
+    ]
+    adapter_name = str(meta.get("adapter") or name)
+    name_lower = adapter_name.lower().replace(" ", "")
     std_name = name_lower.replace("-", "").replace("_", "").replace(".", "")
-    return [f"{std_name.upper()}_BOTS", f"{name.upper()}_BOTS"]
+    keys.extend([f"{std_name.upper()}_BOTS", f"{adapter_name.upper()}_BOTS"])
+    return [key for i, key in enumerate(keys) if key and key not in keys[:i]]
 
 
 def _bots_json_for_nonebot_adapter(name):
@@ -626,7 +634,27 @@ def _bots_json_for_nonebot_adapter(name):
     return "", ""
 
 
+def _nonebot_required_fields(name):
+    channel = get_chatbot_channel(name) or {}
+    fields = []
+    for field in channel.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        target = str(field.get("target") or "bot")
+        if target in {"bot", "bot_intents"} and field.get("required"):
+            fields.append(str(field.get("name") or ""))
+    return [field for field in fields if field]
+
+
 def _has_real_nonebot_bots(name):
+    meta = get_nonebot_adapter_meta(name)
+    requires_config = bool(meta.get("requires_config", True))
+    if not requires_config:
+        required_env = [str(x) for x in meta.get("required_env") or [] if str(x)]
+        missing = [key for key in required_env if _looks_placeholder(os.getenv(key, ""))]
+        if missing:
+            return False
+        return True
     _key, raw = _bots_json_for_nonebot_adapter(name)
     if not raw:
         return False
@@ -637,8 +665,13 @@ def _has_real_nonebot_bots(name):
     bots = data if isinstance(data, list) else [data]
     if not bots:
         return False
+    required_fields = _nonebot_required_fields(name)
     for bot in bots:
         if not isinstance(bot, dict):
+            continue
+        if required_fields:
+            if all(bot.get(key) and not _looks_placeholder(bot.get(key)) for key in required_fields):
+                return True
             continue
         sensitive_values = [
             bot.get("token"),
@@ -646,6 +679,16 @@ def _has_real_nonebot_bots(name):
             bot.get("access_token"),
             bot.get("api_key"),
             bot.get("password"),
+            bot.get("app_id"),
+            bot.get("app_secret"),
+            bot.get("bot_id"),
+            bot.get("bot_secret"),
+            bot.get("pub_key"),
+            bot.get("private_key"),
+            bot.get("private_key_path"),
+            bot.get("webhook_secret"),
+            bot.get("host"),
+            bot.get("url"),
         ]
         if any(value and not _looks_placeholder(value) for value in sensitive_values):
             return True
@@ -675,16 +718,21 @@ def _ensure_nonebot_deps(adapter_names):
     """
     adapter_specs = []
     for n in adapter_names:
-        s = n.strip().replace("_", "-").lower()
+        s = str(get_nonebot_adapter_meta(n).get("adapter") or n).strip().replace("_", "-").lower()
         if s and s not in adapter_specs:
             adapter_specs.append(s)
 
     def _module_candidates(name):
-        dotted = name.replace("-", "_")
+        meta = get_nonebot_adapter_meta(name)
+        module = str(meta.get("module") or "").strip()
+        dotted = str(meta.get("adapter") or name).replace("-", "_")
         flat = dotted.replace(".", "_")
-        return [f"nonebot.adapters.{dotted}", f"nonebot_adapter_{flat}"]
+        return [m for m in [module, f"nonebot.adapters.{dotted}", f"nonebot_adapter_{flat}"] if m]
 
     def _package_name(name):
+        meta = get_nonebot_adapter_meta(name)
+        if meta.get("package"):
+            return str(meta["package"])
         package_base = name.split(".", 1)[0]
         return "nonebot-adapter-" + package_base.replace("_", "-").lower()
 

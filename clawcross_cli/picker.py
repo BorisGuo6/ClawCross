@@ -8,6 +8,7 @@ Color dependencies are stripped; plain text only.
 from __future__ import annotations
 
 import sys
+import unicodedata
 from typing import List
 
 
@@ -28,6 +29,34 @@ def flush_stdin() -> None:
             return
         import termios
         termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except Exception:
+        pass
+
+
+def _display_width(text: str) -> int:
+    width = 0
+    for ch in text:
+        width += 2 if unicodedata.east_asian_width(ch) in {"F", "W"} else 1
+    return width
+
+
+def _fit_display(text: str, max_width: int) -> str:
+    if max_width <= 0:
+        return ""
+    out: list[str] = []
+    used = 0
+    for ch in text:
+        ch_width = 2 if unicodedata.east_asian_width(ch) in {"F", "W"} else 1
+        if used + ch_width > max_width:
+            break
+        out.append(ch)
+        used += ch_width
+    return "".join(out)
+
+
+def _add_display_str(stdscr, y: int, x: int, text: str, max_width: int, attr=0) -> None:
+    try:
+        stdscr.addstr(y, x, _fit_display(text, max_width), attr)
     except Exception:
         pass
 
@@ -90,17 +119,17 @@ def curses_radiolist(
                     hattr = curses.A_BOLD
                     if curses.has_colors():
                         hattr |= curses.color_pair(2)
-                    stdscr.addnstr(row, 0, title, max_x - 1, hattr)
+                    _add_display_str(stdscr, row, 0, title, max_x - 1, hattr)
                     row += 1
 
                     for dline in desc_lines:
                         if row >= max_y - 2:
                             break
-                        stdscr.addnstr(row, 0, dline, max_x - 1, curses.A_NORMAL)
+                        _add_display_str(stdscr, row, 0, dline, max_x - 1, curses.A_NORMAL)
                         row += 1
 
-                    stdscr.addnstr(
-                        row, 0,
+                    _add_display_str(
+                        stdscr, row, 0,
                         "  ↑↓ move  PgUp/PgDn page  Home/End jump  ENTER select  ESC cancel",
                         max_x - 1, curses.A_DIM,
                     )
@@ -134,10 +163,7 @@ def curses_radiolist(
                         attr = curses.A_BOLD
                         if curses.has_colors():
                             attr |= curses.color_pair(1)
-                    try:
-                        stdscr.addnstr(y, 0, line, max_x - 1, attr)
-                    except curses.error:
-                        pass
+                    _add_display_str(stdscr, y, 0, line, max_x - 1, attr)
 
                 # Bottom status: "N/M" + scroll indicator
                 try:
@@ -154,8 +180,8 @@ def curses_radiolist(
                     else:
                         marker = " "
                     status = f"{pos}{marker}"
-                    sx = max(0, max_x - len(status) - 1)
-                    stdscr.addnstr(max_y - 1, sx, status, max_x - sx - 1, sattr)
+                    sx = max(0, max_x - _display_width(status) - 1)
+                    _add_display_str(stdscr, max_y - 1, sx, status, max_x - sx - 1, sattr)
                 except curses.error:
                     pass
 
