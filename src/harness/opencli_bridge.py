@@ -227,7 +227,7 @@ def _truncate(text: str, limit: int) -> tuple[str, bool]:
         return "", bool(text)
     if len(text) <= limit:
         return text, False
-    return text[:limit] + f"\n...[truncated {len(text) - limit} chars]"
+    return text[:limit] + f"\n...[truncated {len(text) - limit} chars]", True
 
 
 def _parse_json_maybe(text: str) -> Any | None:

@@ -57,6 +57,20 @@ class OpenCliBridgeTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 run_opencli_command(["external", "register", "custom"])
 
+    def test_run_returns_tuple_when_output_is_truncated(self):
+        class Completed:
+            returncode = 0
+            stdout = "x" * 1200
+            stderr = ""
+
+        with patch("harness.opencli_bridge.shutil.which", return_value="/usr/local/bin/opencli"):
+            with patch("harness.opencli_bridge.subprocess.run", return_value=Completed()):
+                result = run_opencli_command(["browser", "gmail", "state"], max_output_chars=1000)
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["truncated"])
+        self.assertIn("truncated", result["stdout"])
+
     def test_harness_opencli_routes(self):
         app = FastAPI()
         app.include_router(
