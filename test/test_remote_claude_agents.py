@@ -70,14 +70,43 @@ class RemoteClaudeParserTests(unittest.TestCase):
         }
         with TemporaryDirectory() as tmpdir:
             cache_path = str(Path(tmpdir) / "remote_cache.json")
+            config = rca.RemoteClaudeConfig(host="h", user="u")
             with mock.patch.object(rca, "_cache_path", return_value=cache_path), mock.patch.object(
-                rca, "_run_remote_python", return_value=payload
-            ):
+                rca, "load_remote_claude_configs", return_value=[config]
+            ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
                 data = rca.list_remote_claude_sessions(limit=3)
 
         self.assertTrue(data["ok"])
         self.assertEqual(data["sessions"][0]["display_id"], "session_abc")
+        self.assertEqual(data["sessions"][0]["remote_key"], "u@h::session_abc")
         self.assertEqual(data["sessions"][0]["last_message"]["content"], "latest answer")
+        self.assertEqual(data["remotes"][0]["target"], "u@h")
+
+    def test_tailscale_discovery_uses_registered_users(self):
+        status = {
+            "Self": {"TailscaleIPs": ["100.111.237.115"]},
+            "Peer": {
+                "a": {
+                    "HostName": "yuhang-B850M-C",
+                    "OS": "linux",
+                    "Online": True,
+                    "TailscaleIPs": ["100.87.220.29"],
+                },
+                "b": {
+                    "HostName": "BGUO-MC0",
+                    "OS": "macOS",
+                    "Online": True,
+                    "TailscaleIPs": ["100.111.237.115"],
+                },
+            },
+        }
+        base = rca.RemoteClaudeConfig(host="fallback", user="fallback")
+        with mock.patch.object(rca, "_run_tailscale_status", return_value=status), mock.patch.object(
+            rca, "_registered_user_map", return_value={"100.87.220.29": "feibo"}
+        ):
+            configs = rca.discover_tailscale_remote_configs(base)
+
+        self.assertEqual([(item.user, item.host, item.hostname) for item in configs], [("feibo", "100.87.220.29", "yuhang-B850M-C")])
 
     def test_list_sessions_falls_back_to_cache_when_remote_is_unreachable(self):
         with TemporaryDirectory() as tmpdir:
@@ -97,8 +126,8 @@ class RemoteClaudeParserTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with mock.patch.object(rca, "_cache_path", return_value=str(cache_path)), mock.patch.object(
-                rca, "_run_remote_python", side_effect=RuntimeError("offline")
-            ):
+                rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+            ), mock.patch.object(rca, "_run_remote_python", side_effect=RuntimeError("offline")):
                 data = rca.list_remote_claude_sessions(limit=3)
 
         self.assertFalse(data["ok"])
@@ -116,12 +145,15 @@ class RemoteClaudeParserTests(unittest.TestCase):
             "session": {"bridge_session_id": "session_abc"},
             "response": {"ok": True, "op": "reply"},
         }
-        with mock.patch.object(rca, "_run_remote_python", return_value=payload):
-            data = rca.send_remote_claude_message("session_abc", "hello")
+        with mock.patch.object(
+            rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+        ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
+            data = rca.send_remote_claude_message("u@h::session_abc", "hello")
 
         self.assertTrue(data["ok"])
         self.assertEqual(data["short"], "5dd495e1")
         self.assertEqual(data["response"]["op"], "reply")
+        self.assertEqual(data["session"]["remote_key"], "u@h::session_abc")
 
     def test_close_session_returns_archive_payload(self):
         payload = {
@@ -134,7 +166,9 @@ class RemoteClaudeParserTests(unittest.TestCase):
             "kill": {"attempted": True, "terminated": True},
             "archive": {"attempted": True, "archived": True},
         }
-        with mock.patch.object(rca, "_run_remote_python", return_value=payload):
+        with mock.patch.object(
+            rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+        ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
             data = rca.close_remote_claude_session("session_abc")
 
         self.assertTrue(data["ok"])
@@ -190,6 +224,7 @@ class RemoteClaudeRouteTests(unittest.TestCase):
                     "current_task_id": "task_review",
                     "session_ref": "session_review",
                     "status": "done",
+                    "remote_host": "jingxiang@100.112.245.1",
                     "message": "done, awaiting review",
                     "updated_at": "2026-05-19T02:01:00+08:00",
                 }
@@ -202,6 +237,8 @@ class RemoteClaudeRouteTests(unittest.TestCase):
         review = merged["sessions"][1]
         self.assertEqual(review["display_id"], "session_review")
         self.assertEqual(review["status"], "review")
+        self.assertEqual(review["remote_user"], "jingxiang")
+        self.assertEqual(review["remote_host"], "100.112.245.1")
         self.assertTrue(review["harness_review_placeholder"])
 
     def test_messages_route_returns_remote_payload(self):

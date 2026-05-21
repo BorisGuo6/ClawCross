@@ -21,6 +21,8 @@ from utils.runtime_paths import DATA_DIR
 DEFAULT_REMOTE_HOST = "100.112.245.1"
 DEFAULT_REMOTE_USER = "jingxiang"
 CACHE_FILENAME = "remote_claude_sessions_cache.json"
+TARGETS_FILENAME = "remote_claude_targets.json"
+REMOTE_KEY_SEPARATOR = "::"
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class RemoteClaudeConfig:
     ssh_binary: str = "ssh"
     timeout_sec: float = 8.0
     connect_timeout_sec: int = 4
+    hostname: str = ""
 
     @property
     def enabled(self) -> bool:
@@ -87,6 +90,263 @@ def load_remote_claude_config() -> RemoteClaudeConfig:
         timeout_sec=timeout_sec,
         connect_timeout_sec=connect_timeout_sec,
     )
+
+
+def _truthy(value: str | None) -> bool:
+    return bool(value and value.strip().lower() in {"1", "true", "yes", "on"})
+
+
+def _split_targets(value: str) -> list[str]:
+    cleaned = value.replace("\n", ",").replace(";", ",")
+    return [part.strip() for part in cleaned.split(",") if part.strip()]
+
+
+def _parse_user_map(value: str | None) -> dict[str, str]:
+    raw = (value or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, dict):
+        return {str(k).strip().lower(): str(v).strip() for k, v in parsed.items() if str(k).strip() and str(v).strip()}
+
+    users: dict[str, str] = {}
+    for part in _split_targets(raw):
+        if "=" in part:
+            host, user = part.split("=", 1)
+        elif ":" in part:
+            host, user = part.split(":", 1)
+        else:
+            continue
+        host = host.strip().lower()
+        user = user.strip()
+        if host and user:
+            users[host] = user
+    return users
+
+
+def _target_registry_path() -> str:
+    return str(DATA_DIR / TARGETS_FILENAME)
+
+
+def _load_registered_targets() -> list[dict[str, Any]]:
+    paths = [
+        os.environ.get("CLAWCROSS_REMOTE_CLAUDE_TARGETS_FILE", ""),
+        _target_registry_path(),
+    ]
+    for raw_path in paths:
+        path = str(raw_path or "").strip()
+        if not path:
+            continue
+        try:
+            with open(os.path.expanduser(path), "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception:
+            continue
+        if isinstance(payload, list):
+            return [dict(item) for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            targets = payload.get("targets")
+            if isinstance(targets, list):
+                return [dict(item) for item in targets if isinstance(item, dict)]
+    return []
+
+
+def _registered_user_map() -> dict[str, str]:
+    users = _parse_user_map(
+        os.environ.get("CLAWCROSS_REMOTE_CLAUDE_USER_BY_HOST")
+        or os.environ.get("REMOTE_CLAUDE_USER_BY_HOST")
+    )
+    for item in _load_registered_targets():
+        user = str(item.get("user") or "").strip()
+        if not user:
+            target = str(item.get("target") or item.get("remote") or "").strip()
+            if "@" in target:
+                user = target.split("@", 1)[0].strip()
+        if not user:
+            continue
+        for key in ("host", "ip", "hostname", "name", "dns_name"):
+            value = str(item.get(key) or "").strip().lower().rstrip(".")
+            if value:
+                users[value] = user
+        target = str(item.get("target") or item.get("remote") or "").strip()
+        if "@" in target:
+            host = target.rsplit("@", 1)[-1].strip().lower().rstrip(".")
+            if host:
+                users[host] = user
+    return users
+
+
+def _parse_remote_target(raw: str, base: RemoteClaudeConfig) -> RemoteClaudeConfig | None:
+    target = str(raw or "").strip()
+    if not target:
+        return None
+    if "@" in target:
+        user, host = target.rsplit("@", 1)
+        user = user.strip() or base.user
+        host = host.strip()
+    else:
+        user = base.user
+        host = target
+    if not host or not user:
+        return None
+    return RemoteClaudeConfig(
+        host=host,
+        user=user,
+        ssh_binary=base.ssh_binary,
+        timeout_sec=base.timeout_sec,
+        connect_timeout_sec=base.connect_timeout_sec,
+    )
+
+
+def _first_ipv4(values: Iterable[Any]) -> str:
+    for value in values or []:
+        text = str(value or "").strip()
+        if "." in text and ":" not in text:
+            return text
+    return ""
+
+
+def _infer_user_from_hostname(hostname: str) -> str:
+    name = str(hostname or "").strip().lower().split(".", 1)[0]
+    if not name:
+        return ""
+    for suffix in ("-pc", "-b850m-c", "-desktop", "-workstation", "-laptop"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name.split("-", 1)[0]
+
+
+def _run_tailscale_status() -> dict[str, Any]:
+    binary = (
+        os.environ.get("CLAWCROSS_TAILSCALE_BINARY")
+        or os.environ.get("TAILSCALE_BINARY")
+        or "tailscale"
+    ).strip()
+    timeout_raw = os.environ.get("CLAWCROSS_REMOTE_CLAUDE_DISCOVERY_TIMEOUT_SEC") or "4"
+    try:
+        timeout = max(1.0, float(timeout_raw))
+    except ValueError:
+        timeout = 4.0
+    proc = subprocess.run(
+        shlex.split(binary) + ["status", "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "").strip() or "tailscale status failed")
+    return json.loads(proc.stdout or "{}")
+
+
+def discover_tailscale_remote_configs(base: RemoteClaudeConfig | None = None) -> list[RemoteClaudeConfig]:
+    """Discover online Tailscale Linux peers and map them to SSH users."""
+
+    if _truthy(os.environ.get("CLAWCROSS_REMOTE_CLAUDE_DISABLE_TAILSCALE")):
+        return []
+    base = base or load_remote_claude_config()
+    try:
+        status = _run_tailscale_status()
+    except Exception:
+        return []
+
+    users = _registered_user_map()
+    include_offline = _truthy(os.environ.get("CLAWCROSS_REMOTE_CLAUDE_INCLUDE_OFFLINE"))
+    os_filter_raw = (os.environ.get("CLAWCROSS_REMOTE_CLAUDE_OS_FILTER") or "linux").strip().lower()
+    os_filter = {part.strip() for part in os_filter_raw.split(",") if part.strip()}
+    self_ips = set(status.get("Self", {}).get("TailscaleIPs") or [])
+    configs: list[RemoteClaudeConfig] = []
+    for peer in (status.get("Peer") or {}).values():
+        if not isinstance(peer, dict):
+            continue
+        if not include_offline and peer.get("Online") is False:
+            continue
+        peer_os = str(peer.get("OS") or "").strip().lower()
+        if os_filter and peer_os not in os_filter:
+            continue
+        host = _first_ipv4(peer.get("TailscaleIPs") or peer.get("AllowedIPs") or [])
+        if not host or host in self_ips:
+            continue
+        hostname = str(peer.get("HostName") or "").strip()
+        dns_name = str(peer.get("DNSName") or "").strip().rstrip(".")
+        lookup_keys = [
+            host.lower(),
+            hostname.lower(),
+            dns_name.lower(),
+            dns_name.split(".", 1)[0].lower() if dns_name else "",
+        ]
+        user = ""
+        for key in lookup_keys:
+            if key and users.get(key):
+                user = users[key]
+                break
+        if not user:
+            user = _infer_user_from_hostname(hostname or dns_name)
+        if not user:
+            continue
+        configs.append(
+            RemoteClaudeConfig(
+                host=host,
+                user=user,
+                ssh_binary=base.ssh_binary,
+                timeout_sec=base.timeout_sec,
+                connect_timeout_sec=base.connect_timeout_sec,
+                hostname=hostname or dns_name,
+            )
+        )
+    configs.sort(key=lambda item: (item.hostname or item.host).lower())
+    return configs
+
+
+def load_remote_claude_configs() -> list[RemoteClaudeConfig]:
+    """Load remote Claude SSH targets.
+
+    Tailscale discovery is the default so newly joined remote computers appear
+    automatically. Explicit target env vars and the local registry only provide
+    SSH usernames and fixed extra targets.
+    """
+
+    base = load_remote_claude_config()
+    configs: list[RemoteClaudeConfig] = []
+    if not _truthy(os.environ.get("CLAWCROSS_REMOTE_CLAUDE_DISABLE_TAILSCALE")):
+        configs.extend(discover_tailscale_remote_configs(base))
+
+    explicit_targets = (
+        os.environ.get("CLAWCROSS_REMOTE_CLAUDE_TARGETS")
+        or os.environ.get("REMOTE_CLAUDE_TARGETS")
+        or ""
+    )
+    for raw in _split_targets(explicit_targets):
+        config = _parse_remote_target(raw, base)
+        if config:
+            configs.append(config)
+
+    if not configs:
+        configs.append(base)
+
+    deduped: list[RemoteClaudeConfig] = []
+    seen: set[tuple[str, str]] = set()
+    for config in configs:
+        key = (config.user, config.host)
+        if key in seen or not config.enabled:
+            continue
+        seen.add(key)
+        deduped.append(config)
+    return deduped
+
+
+def _remote_payload(config: RemoteClaudeConfig, **extra: Any) -> dict[str, Any]:
+    payload = {
+        "host": config.host,
+        "user": config.user,
+        "hostname": config.hostname,
+        "target": config.destination,
+    }
+    payload.update({k: v for k, v in extra.items() if v not in (None, "")})
+    return payload
 
 
 def _remote_script_list_sessions(tail_lines: int) -> str:
@@ -626,7 +886,7 @@ def _summarize_last_message(lines: Iterable[str]) -> dict[str, Any] | None:
     return parsed[-1] if parsed else None
 
 
-def _normalize_session(item: dict[str, Any]) -> dict[str, Any]:
+def _normalize_session(item: dict[str, Any], *, config: RemoteClaudeConfig | None = None) -> dict[str, Any]:
     tail_lines = item.pop("tail_lines", []) or []
     last = _summarize_last_message(tail_lines)
     item["display_id"] = (
@@ -638,14 +898,49 @@ def _normalize_session(item: dict[str, Any]) -> dict[str, Any]:
     )
     item["last_message"] = last
     item["message_count_hint"] = len(tail_lines)
+    if config:
+        item["remote_host"] = config.host
+        item["remote_user"] = config.user
+        item["remote_hostname"] = config.hostname
+        item["remote"] = _remote_payload(config)
+        if item.get("display_id"):
+            item["remote_key"] = f"{config.destination}{REMOTE_KEY_SEPARATOR}{item['display_id']}"
     return item
 
 
 def list_remote_claude_sessions(*, limit: int = 3, tail_lines: int = 30) -> dict[str, Any]:
-    config = load_remote_claude_config()
-    try:
-        payload = _run_remote_python(_remote_script_list_sessions(tail_lines), config=config)
-    except Exception as exc:
+    configs = load_remote_claude_configs()
+    sessions: list[dict[str, Any]] = []
+    remotes: list[dict[str, Any]] = []
+    errors: list[str] = []
+
+    for config in configs:
+        remote_record = _remote_payload(config, ok=False, session_count=0)
+        try:
+            payload = _run_remote_python(_remote_script_list_sessions(tail_lines), config=config)
+        except Exception as exc:
+            error = str(exc)
+            remote_record["error"] = error
+            errors.append(f"{config.destination}: {error}")
+            remotes.append(remote_record)
+            continue
+        remote_sessions = [
+            _normalize_session(dict(item), config=config)
+            for item in payload.get("sessions", [])
+            if isinstance(item, dict)
+        ]
+        remote_record["ok"] = True
+        remote_record["session_count"] = len(remote_sessions)
+        remotes.append(remote_record)
+        sessions.extend(remote_sessions)
+
+    sessions.sort(key=lambda s: str(s.get("updated_at") or ""), reverse=True)
+    if limit > 0:
+        sessions = sessions[:limit]
+    if sessions:
+        _write_cached_sessions(sessions)
+
+    if not any(remote.get("ok") for remote in remotes):
         cached = _load_cached_sessions()
         if limit > 0:
             cached = cached[:limit]
@@ -653,41 +948,78 @@ def list_remote_claude_sessions(*, limit: int = 3, tail_lines: int = 30) -> dict
             return {
                 "ok": False,
                 "stale": True,
-                "error": str(exc),
-                "remote": {"host": config.host, "user": config.user},
+                "error": "; ".join(errors) or "remote Claude unavailable",
+                "remote": _remote_payload(configs[0]) if configs else {},
+                "remotes": remotes,
                 "sessions": cached,
             }
-        raise
-    sessions = [_normalize_session(dict(item)) for item in payload.get("sessions", []) if isinstance(item, dict)]
-    sessions.sort(key=lambda s: str(s.get("updated_at") or ""), reverse=True)
-    if limit > 0:
-        sessions = sessions[:limit]
-    _write_cached_sessions(sessions)
+        if errors:
+            raise RuntimeError("; ".join(errors))
+
     return {
-        "ok": True,
+        "ok": any(remote.get("ok") for remote in remotes),
         "stale": False,
-        "remote": {"host": config.host, "user": config.user},
+        "error": "; ".join(errors),
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "remotes": remotes,
         "sessions": sessions,
     }
 
 
+def _split_remote_target(target: str) -> tuple[str, str]:
+    raw = str(target or "").strip()
+    if REMOTE_KEY_SEPARATOR not in raw:
+        return "", raw
+    remote_ref, session_key = raw.split(REMOTE_KEY_SEPARATOR, 1)
+    return remote_ref.strip(), session_key.strip()
+
+
+def _config_matches_ref(config: RemoteClaudeConfig, remote_ref: str) -> bool:
+    ref = str(remote_ref or "").strip().lower()
+    if not ref:
+        return True
+    candidates = {
+        config.destination.lower(),
+        config.host.lower(),
+        (config.hostname or "").lower(),
+        f"{config.user}@{config.hostname}".lower() if config.hostname else "",
+    }
+    return ref in {item for item in candidates if item}
+
+
+def _configs_for_target(target: str) -> tuple[list[RemoteClaudeConfig], str]:
+    remote_ref, session_key = _split_remote_target(target)
+    configs = [config for config in load_remote_claude_configs() if _config_matches_ref(config, remote_ref)]
+    return configs or load_remote_claude_configs(), session_key
+
+
 def read_remote_claude_messages(target: str, *, limit: int = 120) -> dict[str, Any]:
-    config = load_remote_claude_config()
+    configs, session_key = _configs_for_target(target)
     line_limit = max(limit * 4, 80)
-    payload = _run_remote_python(_remote_script_read_messages(target, line_limit), config=config)
-    if not payload.get("found"):
+    errors: list[str] = []
+    for config in configs:
+        try:
+            payload = _run_remote_python(_remote_script_read_messages(session_key, line_limit), config=config)
+        except Exception as exc:
+            errors.append(f"{config.destination}: {exc}")
+            continue
+        if not payload.get("found"):
+            errors.append(f"{config.destination}: {payload.get('error') or 'session not found'}")
+            continue
+        session = dict(payload.get("session") or {})
+        session = _normalize_session(session, config=config)
+        messages = parse_claude_transcript_lines(payload.get("lines", []), limit=limit)
         return {
-            "ok": False,
-            "remote": {"host": config.host, "user": config.user},
-            "error": payload.get("error") or "session not found",
-            "messages": [],
+            "ok": True,
+            "remote": _remote_payload(config),
+            "session": session,
+            "messages": messages,
         }
-    messages = parse_claude_transcript_lines(payload.get("lines", []), limit=limit)
     return {
-        "ok": True,
-        "remote": {"host": config.host, "user": config.user},
-        "session": payload.get("session") or {},
-        "messages": messages,
+        "ok": False,
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "error": "; ".join(errors) or "session not found",
+        "messages": [],
     }
 
 
@@ -698,17 +1030,34 @@ def send_remote_claude_message(target: str, text: str) -> dict[str, Any]:
     if len(message) > 50000:
         raise ValueError("message is too long")
 
-    config = load_remote_claude_config()
-    payload = _run_remote_python(_remote_script_send_message(target, message), config=config)
-    response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
-    ok = bool(payload.get("found") and response.get("ok"))
+    configs, session_key = _configs_for_target(target)
+    errors: list[str] = []
+    for config in configs:
+        try:
+            payload = _run_remote_python(_remote_script_send_message(session_key, message), config=config)
+        except Exception as exc:
+            errors.append(f"{config.destination}: {exc}")
+            continue
+        response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+        if not payload.get("found"):
+            errors.append(f"{config.destination}: {payload.get('error') or 'session not found'}")
+            continue
+        ok = bool(response.get("ok"))
+        return {
+            "ok": ok,
+            "remote": _remote_payload(config),
+            "session": _normalize_session(dict(payload.get("session") or {}), config=config),
+            "short": payload.get("short") or "",
+            "response": response,
+            "error": "" if ok else (response.get("error") or payload.get("error") or "send failed"),
+        }
     return {
-        "ok": ok,
-        "remote": {"host": config.host, "user": config.user},
-        "session": payload.get("session") or {},
-        "short": payload.get("short") or "",
-        "response": response,
-        "error": "" if ok else (response.get("error") or payload.get("error") or "send failed"),
+        "ok": False,
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "session": {},
+        "short": "",
+        "response": {},
+        "error": "; ".join(errors) or "session not found",
     }
 
 
@@ -717,19 +1066,41 @@ def close_remote_claude_session(target: str, *, force: bool = True) -> dict[str,
     if not session_key:
         raise ValueError("session target is empty")
 
-    config = load_remote_claude_config()
-    payload = _run_remote_python(_remote_script_close_session(session_key, force=force), config=config)
-    ok = bool(payload.get("ok"))
+    configs, session_key = _configs_for_target(session_key)
+    errors: list[str] = []
+    for config in configs:
+        try:
+            payload = _run_remote_python(_remote_script_close_session(session_key, force=force), config=config)
+        except Exception as exc:
+            errors.append(f"{config.destination}: {exc}")
+            continue
+        if not payload.get("found"):
+            errors.append(f"{config.destination}: {payload.get('error') or 'session not found'}")
+            continue
+        ok = bool(payload.get("ok"))
+        return {
+            "ok": ok,
+            "remote": _remote_payload(config),
+            "session": _normalize_session(dict(payload.get("session") or {}), config=config),
+            "short": payload.get("short") or "",
+            "pid": payload.get("pid"),
+            "archive_path": payload.get("archive_path") or "",
+            "session_file_gone": bool(payload.get("session_file_gone")),
+            "daemon_kill": payload.get("daemon_kill") or {},
+            "kill": payload.get("kill") or {},
+            "archive": payload.get("archive") or {},
+            "error": "" if ok else (payload.get("error") or payload.get("archive", {}).get("error") or payload.get("kill", {}).get("error") or "close failed"),
+        }
     return {
-        "ok": ok,
-        "remote": {"host": config.host, "user": config.user},
-        "session": payload.get("session") or {},
-        "short": payload.get("short") or "",
-        "pid": payload.get("pid"),
-        "archive_path": payload.get("archive_path") or "",
-        "session_file_gone": bool(payload.get("session_file_gone")),
-        "daemon_kill": payload.get("daemon_kill") or {},
-        "kill": payload.get("kill") or {},
-        "archive": payload.get("archive") or {},
-        "error": "" if ok else (payload.get("error") or payload.get("archive", {}).get("error") or payload.get("kill", {}).get("error") or "close failed"),
+        "ok": False,
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "session": {},
+        "short": "",
+        "pid": None,
+        "archive_path": "",
+        "session_file_gone": False,
+        "daemon_kill": {},
+        "kill": {},
+        "archive": {},
+        "error": "; ".join(errors) or "session not found",
     }

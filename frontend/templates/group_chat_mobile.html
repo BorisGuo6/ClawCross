@@ -592,7 +592,8 @@
     font-weight: 700;
   }
   .remote-claude-pill.shell,
-  .remote-claude-pill.running {
+  .remote-claude-pill.running,
+  .remote-claude-pill.active {
     background: #ecfdf3;
     color: #166534;
   }
@@ -604,7 +605,10 @@
     background: #fef3c7;
     color: #92400e;
   }
-  .remote-claude-pill.error {
+  .remote-claude-pill.needs_user,
+  .remote-claude-pill.blocked,
+  .remote-claude-pill.error,
+  .remote-claude-pill.offline {
     background: #fef2f2;
     color: #b91c1c;
   }
@@ -6858,7 +6862,10 @@ function renderHarnessCard(kind, item) {
       item.due_at ? `due ${item.due_at}` : ''
     ].filter(Boolean).join(' · ');
     const workerRows = linkedAgents.map(agent => {
-      const workerStatus = agent.needs_user ? harnessStatusText('needs_user') : harnessStatusText(agent.effective_status || agent.status || 'idle');
+      const agentStatus = String(agent.effective_status || agent.status || 'idle').toLowerCase();
+      const workerStatus = (status === 'review' || String(agent.status || '').toLowerCase() === 'review')
+        ? harnessStatusText('review')
+        : (agent.needs_user ? harnessStatusText('needs_user') : harnessStatusText(agentStatus));
       const workerMeta = [
         workerStatus,
         `heartbeat ${harnessFormatAge(agent.heartbeat_age_seconds)}`,
@@ -6922,9 +6929,16 @@ function renderHarnessState(payload) {
     .filter(t => String(t.status || '').toLowerCase() !== 'done')
     .sort((a, b) => harnessTaskRank(a) - harnessTaskRank(b));
   const openTaskIds = new Set(openTasks.map(task => task.task_id).filter(Boolean));
+  const openTaskStatusById = new Map(openTasks.map(task => [task.task_id, String(task.status || '').toLowerCase()]));
   const visibleWorkers = agents.filter(agent => isHarnessVisibleWorker(agent, openTaskIds));
   const needsUser = visibleWorkers.filter(a => a && a.needs_user).length;
-  const stale = visibleWorkers.filter(a => a && a.stale).length;
+  const stale = visibleWorkers.filter(a => {
+    if (!a || !a.stale) return false;
+    const taskId = a.current_task_id || a.task_id || '';
+    const taskStatus = openTaskStatusById.get(taskId) || '';
+    const agentStatus = String(a.status || '').toLowerCase();
+    return taskStatus !== 'review' && agentStatus !== 'review';
+  }).length;
   statusEl.textContent = _currentLang === 'zh'
     ? `${openTasks.length} TODO · ${visibleWorkers.length} worker · ${needsUser} 等用户 · ${stale} 失联`
     : `${openTasks.length} TODO · ${visibleWorkers.length} workers · ${needsUser} needs user · ${stale} stale`;
@@ -7005,7 +7019,7 @@ async function createHarnessTodo() {
 
 function remoteClaudeSessionKey(session) {
   return String(
-    (session && (session.display_id || session.bridge_session_id || session.session_id || session.id || session.job_id)) || ''
+    (session && (session.remote_key || session.display_id || session.bridge_session_id || session.session_id || session.id || session.job_id)) || ''
   );
 }
 
@@ -7044,9 +7058,13 @@ function remoteClaudeTitle(session, index) {
 function remoteClaudeStatusText(status) {
   const s = String(status || '').trim().toLowerCase();
   const zh = _currentLang === 'zh';
+  if (s === 'active') return zh ? '进行中' : 'Active';
   if (s === 'idle') return zh ? '空闲' : 'Idle';
   if (s === 'shell') return zh ? 'Shell 中' : 'Shell';
   if (s === 'running' || s === 'working' || s === 'busy') return zh ? '运行中' : 'Running';
+  if (s === 'needs_user') return zh ? '等用户' : 'Needs user';
+  if (s === 'blocked') return zh ? '阻塞' : 'Blocked';
+  if (s === 'offline') return zh ? '离线' : 'Offline';
   if (s === 'review') return zh ? '待审查' : 'Review';
   if (s === 'completed' || s === 'done') return zh ? '已完成' : 'Done';
   return status || (zh ? '未知' : 'Unknown');
@@ -7090,22 +7108,37 @@ function remoteClaudeLinkedContext(session) {
   return { agent: agent || null, task: task || null, taskIndex: taskIndex < 0 ? 9999 : taskIndex };
 }
 
+function remoteClaudeNormalizeUserHost(user, host) {
+  let cleanUser = String(user || '').trim();
+  let cleanHost = String(host || '').trim();
+  if (cleanHost.includes('@')) {
+    const parts = cleanHost.split('@').map(part => part.trim()).filter(Boolean);
+    if (parts.length) cleanHost = parts[parts.length - 1];
+    if (!cleanUser && parts.length >= 2) cleanUser = parts[parts.length - 2];
+  }
+  return { user: cleanUser, host: cleanHost };
+}
+
 function renderRemoteClaudeSessionCard(session, index) {
   const key = remoteClaudeSessionKey(session);
-  const status = String(session.status || '').toLowerCase();
   const title = remoteClaudeTitle(session, index);
   const idLine = session.bridge_session_id || session.session_id || session.job_id || session.id || '';
   const cwd = session.cwd || '';
   const time = remoteClaudeFormatTime(session.updated_at);
   const linked = remoteClaudeLinkedContext(session);
+  const harnessStatus = linked.agent ? String(linked.agent.effective_status || linked.agent.status || '').toLowerCase() : '';
+  const taskStatus = linked.task ? String(linked.task.status || '').toLowerCase() : '';
+  const liveStatus = String(session.status || '').toLowerCase();
   const reviewOnly = !!session.harness_review_placeholder;
+  const status = reviewOnly ? 'review' : (harnessStatus || taskStatus || liveStatus);
+  const isReview = reviewOnly || harnessStatus === 'review' || taskStatus === 'review' || liveStatus === 'review';
   const linkedLine = linked.task
     ? `${_currentLang === 'zh' ? '绑定 TODO' : 'Linked TODO'}: ${linked.task.title || linked.task.task_id}`
     : '';
   const reviewLine = reviewOnly ? (_currentLang === 'zh' ? '等待审查，不自动清理' : 'Waiting for review, not auto-cleaned') : '';
   const attrs = reviewOnly
     ? 'class="remote-claude-card review-placeholder"'
-    : `class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')"`;
+    : `class="remote-claude-card${isReview ? ' review-placeholder' : ''}" onclick="openRemoteClaudeSession('${esc(key)}')"`;
   return `
     <div ${attrs}>
       <div class="remote-claude-card-top">
@@ -7175,8 +7208,9 @@ function renderRemoteClaudeSessions(payload) {
   if (!grid || !statusEl) return;
   window.__lastRemoteClaudePayload = payload || {};
   const sessions = Array.isArray(payload && payload.sessions) ? payload.sessions : [];
+  const remotes = Array.isArray(payload && payload.remotes) ? payload.remotes : [];
   remoteClaudeSessions = sessions;
-  if ((!payload || !payload.ok) && !sessions.length) {
+  if ((!payload || !payload.ok) && !sessions.length && !remotes.length) {
     const msg = (payload && payload.error) || (_currentLang === 'zh' ? '远端 Claude 不可达' : 'Remote Claude unavailable');
     statusEl.textContent = msg;
     renderRemoteClaudePlaceholders(msg);
@@ -7184,29 +7218,57 @@ function renderRemoteClaudeSessions(payload) {
   }
   const remote = payload.remote || {};
   const remoteLabel = `${remote.user || ''}${remote.user ? '@' : ''}${remote.host || ''}`;
+  const okRemoteCount = remotes.filter(item => item && item.ok).length;
+  const remoteCount = remotes.length || (remoteLabel ? 1 : 0);
   if (payload && payload.ok) {
-    statusEl.textContent = `${remoteLabel} · ${sessions.length} ${sessions.length === 1 ? 'session' : 'sessions'}`;
+    statusEl.textContent = _currentLang === 'zh'
+      ? `${remoteCount} 台电脑 · ${okRemoteCount || remoteCount} 可达 · ${sessions.length} session`
+      : `${remoteCount} computers · ${okRemoteCount || remoteCount} reachable · ${sessions.length} sessions`;
   } else {
     const msg = (payload && payload.error) || (_currentLang === 'zh' ? '远端 Claude 不可达' : 'Remote Claude unavailable');
-    statusEl.textContent = `${remoteLabel} · ${_currentLang === 'zh' ? '使用上次缓存' : 'using last-known cache'} · ${msg}`;
-  }
-  if (!sessions.length) {
-    renderRemoteClaudePlaceholders(_currentLang === 'zh' ? '远端没有可读取的 Claude session' : 'No readable remote Claude session');
-    return;
+    statusEl.textContent = remoteCount
+      ? `${remoteCount} ${_currentLang === 'zh' ? '台电脑' : 'computers'} · ${_currentLang === 'zh' ? '部分不可达' : 'partial unavailable'} · ${msg}`
+      : `${remoteLabel} · ${_currentLang === 'zh' ? '使用上次缓存' : 'using last-known cache'} · ${msg}`;
   }
   const groups = new Map();
+  remotes.forEach(remoteItem => {
+    if (!remoteItem) return;
+    const normalized = remoteClaudeNormalizeUserHost(remoteItem.user || '', remoteItem.host || remoteItem.target || '');
+    const host = normalized.host;
+    const user = normalized.user;
+    const groupId = `${user || 'remote'}@${host || remoteItem.hostname || 'local'}`;
+    const groupLabel = `${user || ''}${user ? '@' : ''}${host || remoteItem.hostname || ''}` || (_currentLang === 'zh' ? '远端 Claude' : 'Remote Claude');
+    if (!groups.has(groupId)) {
+      groups.set(groupId, {
+        id: groupId,
+        label: groupLabel,
+        sessions: [],
+        placeholderText: remoteItem.ok
+          ? (_currentLang === 'zh' ? '已连接，未发现 Claude session' : 'Connected, no Claude session found')
+          : (remoteItem.error || (_currentLang === 'zh' ? '连接失败' : 'Connection failed'))
+      });
+    }
+  });
   sessions.forEach(session => {
     const sessionRemote = session.remote || {};
-    const host = session.remote_host || session.host || sessionRemote.host || remote.host || '';
-    const user = session.remote_user || session.user || sessionRemote.user || remote.user || '';
+    const normalized = remoteClaudeNormalizeUserHost(
+      session.remote_user || session.user || sessionRemote.user || remote.user || '',
+      session.remote_host || session.host || sessionRemote.host || remote.host || ''
+    );
+    const host = normalized.host;
+    const user = normalized.user;
     const groupId = `${user || 'remote'}@${host || 'local'}`;
     const groupLabel = `${user || ''}${user ? '@' : ''}${host || ''}` || (_currentLang === 'zh' ? '远端 Claude' : 'Remote Claude');
     if (!groups.has(groupId)) groups.set(groupId, { id: groupId, label: groupLabel, sessions: [] });
     groups.get(groupId).sessions.push(session);
   });
+  if (!groups.size) {
+    renderRemoteClaudePlaceholders(_currentLang === 'zh' ? '远端没有可读取的 Claude session' : 'No readable remote Claude session');
+    return;
+  }
   grid.innerHTML = Array.from(groups.values())
     .sort((a, b) => a.label.localeCompare(b.label))
-    .map(group => renderRemoteClaudeComputerGroup(group.id, group.label, group.sessions))
+    .map(group => renderRemoteClaudeComputerGroup(group.id, group.label, group.sessions, { placeholderText: group.placeholderText }))
     .join('');
   grid.querySelectorAll('.remote-computer-body').forEach(bindHorizontalWheelScroll);
 }
@@ -7217,7 +7279,7 @@ async function refreshRemoteClaudeSessions(showToast = false) {
   if (btn) btn.disabled = true;
   if (statusEl) statusEl.textContent = _currentLang === 'zh' ? '正在连接远端 Claude agents...' : 'Connecting remote Claude agents...';
   try {
-    const data = await api('GET', '/proxy_remote_claude_sessions?limit=3');
+    const data = await api('GET', '/proxy_remote_claude_sessions?limit=24');
     renderRemoteClaudeSessions(data);
     if (showToast) {
       toast(data.ok ? (_currentLang === 'zh' ? '远端 Claude sessions 已刷新' : 'Remote Claude sessions refreshed') : (data.error || 'Remote Claude unavailable'), data.ok ? 1800 : 3500);

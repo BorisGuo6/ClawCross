@@ -16,6 +16,9 @@ from textwrap import dedent
 
 START_MARKER = "<!-- CLAWCROSS_DASHBOARD_SYNC_START -->"
 END_MARKER = "<!-- CLAWCROSS_DASHBOARD_SYNC_END -->"
+SHELL_START_MARKER = "# >>> CLAWCROSS_CLAUDE_DEFAULTS_START"
+SHELL_END_MARKER = "# <<< CLAWCROSS_CLAUDE_DEFAULTS_END"
+LOCAL_TARGETS_PATH = Path(os.getenv("CLAWCROSS_REMOTE_CLAUDE_TARGETS_FILE", "~/.clawcross/data/remote_claude_targets.json")).expanduser()
 
 REMOTE_CLIENT = r'''#!/usr/bin/env python3
 """Remote ClawCross harness client for Claude Code workers.
@@ -370,6 +373,76 @@ if __name__ == "__main__":
     main()
 '''
 
+CLAUDE_DEFAULTS_WRAPPER = r'''#!/usr/bin/env bash
+# ClawCross Claude defaults wrapper.
+#
+# Interactive Claude sessions default to maximum effort and Remote Control.
+# Claude background-agent view defaults dispatched workers to maximum effort.
+
+set -e
+
+real_claude="${CLAWCROSS_REAL_CLAUDE:-$HOME/.local/bin/claude}"
+if [[ ! -x "$real_claude" ]]; then
+  real_claude="$(command -v claude || true)"
+fi
+if [[ -z "$real_claude" || "$real_claude" == "$0" ]]; then
+  echo "clawcross-claude: could not find the real claude binary" >&2
+  exit 127
+fi
+
+has_arg() {
+  local needle="$1"
+  shift
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "$needle" || "$arg" == "$needle="* ]] && return 0
+  done
+  return 1
+}
+
+has_short_arg() {
+  local needle="$1"
+  shift
+  local arg
+  for arg in "$@"; do
+    [[ "$arg" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+first="${1:-}"
+
+if [[ "$first" == "agents" ]]; then
+  shift
+  args=(agents)
+  if ! has_arg "--effort" "$@"; then
+    args+=(--effort max)
+  fi
+  exec "$real_claude" "${args[@]}" "$@"
+fi
+
+case "$first" in
+  auth|auto-mode|doctor|install|mcp|plugin|plugins|project|setup-token|ultrareview|update|upgrade)
+    exec "$real_claude" "$@"
+    ;;
+esac
+
+args=()
+if ! has_arg "--effort" "$@"; then
+  args+=(--effort max)
+fi
+
+skip_remote_control=0
+if has_arg "--remote-control" "$@" || has_short_arg "-p" "$@" || has_arg "--print" "$@" || has_short_arg "-h" "$@" || has_arg "--help" "$@" || has_short_arg "-v" "$@" || has_arg "--version" "$@" || has_arg "--output-format" "$@" || has_arg "--input-format" "$@"; then
+  skip_remote_control=1
+fi
+if [[ "$skip_remote_control" -eq 0 ]]; then
+  args+=(--remote-control)
+fi
+
+exec "$real_claude" "${args[@]}" "$@"
+'''
+
 REMOTE_INSTALLER = r"""
 import json
 import os
@@ -407,6 +480,41 @@ if payload.get("install_client"):
     client_path.parent.mkdir(parents=True, exist_ok=True)
     client_path.write_text(payload["client"], encoding="utf-8")
     os.chmod(client_path, 0o700)
+
+claude_wrapper_path = Path(payload["claude_wrapper_path"]).expanduser()
+shell_rc_paths = [Path("~/.bashrc").expanduser(), Path("~/.zshrc").expanduser()]
+written_shell_rc = []
+if payload.get("install_claude_defaults"):
+    claude_wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+    claude_wrapper_path.write_text(payload["claude_wrapper"], encoding="utf-8")
+    os.chmod(claude_wrapper_path, 0o700)
+    real_claude_path = payload.get("real_claude_path") or "~/.local/bin/claude"
+    shell_block = "\n".join([
+        payload["shell_start_marker"],
+        "# ClawCross default: new Claude sessions use max effort and Remote Control.",
+        f'export CLAWCROSS_REAL_CLAUDE="{real_claude_path}"',
+        f'alias claude="{claude_wrapper_path}"',
+        payload["shell_end_marker"],
+    ])
+    for rc_path in shell_rc_paths:
+        rc_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_rc = rc_path.read_text(encoding="utf-8") if rc_path.exists() else ""
+        start_marker = payload["shell_start_marker"]
+        end_marker = payload["shell_end_marker"]
+        if start_marker in existing_rc and end_marker in existing_rc and existing_rc.index(start_marker) < existing_rc.index(end_marker):
+            before_rc = existing_rc[: existing_rc.index(start_marker)].rstrip()
+            after_rc = existing_rc[existing_rc.index(end_marker) + len(end_marker) :].lstrip()
+            rc_pieces = []
+            if before_rc:
+                rc_pieces.append(before_rc)
+            rc_pieces.append(shell_block)
+            if after_rc:
+                rc_pieces.append(after_rc.rstrip())
+            new_rc = "\n\n".join(rc_pieces) + "\n"
+        else:
+            new_rc = (existing_rc.rstrip() + "\n\n" if existing_rc.strip() else "") + shell_block + "\n"
+        rc_path.write_text(new_rc, encoding="utf-8")
+        written_shell_rc.append(str(rc_path))
 
 config_path = Path(payload["config_path"]).expanduser()
 if payload.get("install_config"):
@@ -471,7 +579,14 @@ if payload.get("install_settings"):
     os.chmod(settings_path, 0o600)
     written_settings.append(str(settings_path))
 
-print(json.dumps({"memory_path": str(path), "client_path": str(client_path), "config_path": str(config_path), "settings_path": ",".join(written_settings)}))
+print(json.dumps({
+    "memory_path": str(path),
+    "client_path": str(client_path),
+    "config_path": str(config_path),
+    "settings_path": ",".join(written_settings),
+    "claude_wrapper_path": str(claude_wrapper_path) if payload.get("install_claude_defaults") else "",
+    "shell_rc_path": ",".join(written_shell_rc),
+}))
 """
 
 
@@ -501,6 +616,15 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         # ClawCross Dashboard Sync Rules
 
         You are running in a remote Claude Code session on `{remote}`. Use the shared dashboard as the project/TODO source of truth.
+
+        ## Claude Session Defaults
+
+        All Claude Code sessions on this host should run at maximum effort with Remote Control enabled.
+
+        - For normal interactive work, start Claude through the configured `claude` shell alias, which expands to `claude --effort max --remote-control`.
+        - For the background agent view, start it through the configured `claude` shell alias, which expands `claude agents` to `claude agents --effort max`.
+        - If you are already inside an interactive Claude session and the user asks you to reconfigure the current session, run `/effort max` and `/remote-control`.
+        - Do not publish remote-control links, Claude session IDs, or harness runtime details to the public dashboard.
 
         ## Dashboard First
 
@@ -620,6 +744,44 @@ def load_internal_token(explicit: str) -> str:
     return ""
 
 
+def record_local_remote_target(remote: str) -> None:
+    """Remember SSH user mapping locally while still discovering hosts via Tailscale."""
+
+    target = str(remote or "").strip()
+    if "@" not in target:
+        return
+    user, host = target.rsplit("@", 1)
+    user = user.strip()
+    host = host.strip()
+    if not user or not host:
+        return
+    try:
+        LOCAL_TARGETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if LOCAL_TARGETS_PATH.exists():
+            payload = json.loads(LOCAL_TARGETS_PATH.read_text(encoding="utf-8"))
+        else:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        targets = payload.setdefault("targets", [])
+        if not isinstance(targets, list):
+            targets = []
+            payload["targets"] = targets
+        kept = [
+            item
+            for item in targets
+            if isinstance(item, dict)
+            and str(item.get("host") or item.get("ip") or "").strip() != host
+            and str(item.get("target") or item.get("remote") or "").strip().rsplit("@", 1)[-1] != host
+        ]
+        kept.append({"target": target, "user": user, "host": host})
+        payload["targets"] = kept
+        LOCAL_TARGETS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.chmod(LOCAL_TARGETS_PATH, 0o600)
+    except Exception:
+        return
+
+
 def install(args: argparse.Namespace) -> str:
     block = build_managed_block(
         remote=args.remote,
@@ -646,6 +808,12 @@ def install(args: argparse.Namespace) -> str:
         "install_settings": args.install_settings,
         "settings_path": args.settings_path,
         "local_settings_path": args.local_settings_path,
+        "install_claude_defaults": args.install_claude_defaults,
+        "claude_wrapper": CLAUDE_DEFAULTS_WRAPPER,
+        "claude_wrapper_path": args.claude_wrapper_path,
+        "real_claude_path": args.real_claude_path,
+        "shell_start_marker": SHELL_START_MARKER,
+        "shell_end_marker": SHELL_END_MARKER,
         "agent_base_url": args.agent_base_url,
         "harness_user": args.harness_user,
         "internal_token": internal_token,
@@ -667,11 +835,14 @@ def install(args: argparse.Namespace) -> str:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
         return result.stdout.strip()
+    record_local_remote_target(args.remote)
     return (
         f"memory={data.get('memory_path')} "
         f"client={data.get('client_path')} "
         f"config={data.get('config_path')} "
-        f"settings={data.get('settings_path')}"
+        f"settings={data.get('settings_path')} "
+        f"claude_wrapper={data.get('claude_wrapper_path')} "
+        f"shell_rc={data.get('shell_rc_path')}"
     )
 
 
@@ -688,6 +859,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config-path", default="~/.clawcross/harness.env")
     parser.add_argument("--settings-path", default="~/.claude/settings.json")
     parser.add_argument("--local-settings-path", default="~/.claude/settings.local.json")
+    parser.add_argument("--claude-wrapper-path", default="~/.local/bin/clawcross-claude")
+    parser.add_argument("--real-claude-path", default="~/.local/bin/claude")
     parser.add_argument("--agent-base-url", default="http://127.0.0.1:51200")
     parser.add_argument("--harness-user", default="boris")
     parser.add_argument("--internal-token", default="")
@@ -700,8 +873,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-install-client", action="store_false", dest="install_client", help="Only update CLAUDE.md; do not install the remote client.")
     parser.add_argument("--no-install-config", action="store_false", dest="install_config", help="Only update CLAUDE.md/client; do not install private harness config.")
     parser.add_argument("--no-install-settings", action="store_false", dest="install_settings", help="Do not update Claude Code permissions for dashboard/harness commands.")
+    parser.add_argument("--no-install-claude-defaults", action="store_false", dest="install_claude_defaults", help="Do not install the Claude max-effort/remote-control shell defaults.")
     parser.add_argument("--dry-run", action="store_true", help="Print the managed CLAUDE.md block without connecting.")
-    parser.set_defaults(batch_mode=True, install_client=True, install_config=True, install_settings=True)
+    parser.set_defaults(batch_mode=True, install_client=True, install_config=True, install_settings=True, install_claude_defaults=True)
     return parser
 
 

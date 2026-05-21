@@ -36,6 +36,29 @@ def _remote_session_keys(item: dict) -> set[str]:
     }
 
 
+def _split_remote_user_host(remote_host: str, *, fallback_user: str = "", fallback_host: str = "") -> tuple[str, str]:
+    """Normalize remote identity to separate user and host.
+
+    Harness events often send SSH-style targets such as ``jingxiang@100.112.245.1``
+    while the live remote payload already carries ``remote.user`` separately.  If
+    both are concatenated again in the frontend, the label becomes
+    ``jingxiang@jingxiang@100.112.245.1``.
+    """
+
+    raw = str(remote_host or "").strip()
+    user = str(fallback_user or "").strip()
+    host = str(fallback_host or "").strip()
+    if raw and "@" in raw:
+        parts = [part for part in raw.split("@") if part]
+        if parts:
+            host = parts[-1]
+        if len(parts) >= 2:
+            user = parts[-2]
+    elif raw:
+        host = raw
+    return user, host
+
+
 def _merge_review_harness_sessions(data: dict, harness_state: dict) -> dict:
     """Keep review-bound harness sessions visible even after remote daemon settles."""
 
@@ -62,6 +85,11 @@ def _merge_review_harness_sessions(data: dict, harness_state: dict) -> dict:
             continue
         if str(task.get("status") or "").lower() != "review":
             continue
+        remote_user, remote_host = _split_remote_user_host(
+            agent.get("remote_host") or "",
+            fallback_user=data.get("remote", {}).get("user") or "",
+            fallback_host=data.get("remote", {}).get("host") or "",
+        )
         sessions.append(
             {
                 "display_id": session_ref,
@@ -70,8 +98,8 @@ def _merge_review_harness_sessions(data: dict, harness_state: dict) -> dict:
                 "status": "review",
                 "cwd": agent.get("worktree") or "",
                 "updated_at": agent.get("updated_at") or task.get("updated_at") or "",
-                "remote_host": agent.get("remote_host") or data.get("remote", {}).get("host") or "",
-                "remote_user": agent.get("remote_user") or data.get("remote", {}).get("user") or "",
+                "remote_host": remote_host,
+                "remote_user": agent.get("remote_user") or remote_user,
                 "harness_review_placeholder": True,
                 "agent_id": agent.get("agent_id") or "",
                 "current_task_id": task_id,
@@ -475,7 +503,7 @@ def register_group_routes(app, *, port_agent: int, internal_token: str) -> None:
         except ValueError:
             limit = 3
         try:
-            data = list_remote_claude_sessions(limit=max(1, min(limit, 12)))
+            data = list_remote_claude_sessions(limit=max(1, min(limit, 40)))
             try:
                 r = requests.get(
                     "http://127.0.0.1:{port}/harness/state".format(port=port_agent),
