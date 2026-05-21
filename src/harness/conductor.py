@@ -1,14 +1,14 @@
 """Local conductor for keeping remote Claude workers moving.
 
-The conductor is intentionally conservative: it only sends short continuation
-messages for already-linked TODO workers, and it refuses to auto-approve risky
+The conductor is intentionally conservative: it sends short continuation or
+assignment messages to remote workers, and it refuses to auto-approve risky
 requests. Dashboard remains the task board; this module is the ClawCross-side
 control loop.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from hashlib import sha256
 import json
@@ -26,14 +26,25 @@ from harness.dashboard_sync import (
     task_has_host_verification,
 )
 from harness.store import apply_harness_event, get_harness_state
-from integrations.remote_claude_agents import close_remote_claude_session, list_remote_claude_sessions, send_remote_claude_message
-from utils.runtime_paths import DATA_DIR
+from integrations.remote_claude_agents import (
+    close_remote_claude_session,
+    list_remote_claude_sessions,
+    rename_remote_claude_session,
+    send_remote_claude_message,
+)
+from utils.runtime_paths import DATA_DIR, ENV_FILE
 
 
 CONDUCTOR_AGENT_ID = "clawcross-main@local"
 DEFAULT_COOLDOWN_SECONDS = 180
 DEFAULT_REMOTE_LIMIT = 12
 DEFAULT_PROJECT_ID = "umi-world-model"
+PROJECT_SESSION_LABELS = {
+    "image-layered-world-model": "Image-Layered WM",
+    "robotics-3d-printing": "Robotics+3D Printing",
+    "self-improving-agents": "Self-Improving Agents",
+    "umi-world-model": "UMI World Model",
+}
 
 RISKY_PATTERNS = (
     r"\bsudo\b",
@@ -75,6 +86,294 @@ SAFE_ALLOW_TEXT = (
     "禁止 sudo、删除系统/密钥、读取或外传 secrets、curl|sh/wget|sh。"
 )
 
+LLM_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+OPENCLAW_GATEWAY_BASE_URL = "http://127.0.0.1:18789/v1"
+CLAWCROSS_AGENT_COMPLETIONS_URL = "http://127.0.0.1:51200/v1/chat/completions"
+
+
+def _env_truthy(key: str, default: bool = False) -> bool:
+    raw = os.getenv(key, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _env_or_file_value(key: str) -> str:
+    value = os.getenv(key, "").strip()
+    if value:
+        return value
+    try:
+        for raw_line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            if not raw_line.startswith(f"{key}="):
+                continue
+            return raw_line.split("=", 1)[1].strip().strip("'\"")
+    except Exception:
+        return ""
+    return ""
+
+
+def _call_clawcross_agent_json(prompt: str) -> dict[str, Any]:
+    """Ask the local ClawCross Webot agent endpoint for a JSON decision."""
+
+    import urllib.error
+    import urllib.request
+
+    token = _env_or_file_value("INTERNAL_TOKEN")
+    if not token:
+        return {"error": "INTERNAL_TOKEN is not configured"}
+    user_id = (
+        os.getenv("CLAWCROSS_HARNESS_USER")
+        or os.getenv("CLAWCROSS_USER_ID")
+        or os.getenv("USER")
+        or "system"
+    )
+    url = os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_CLAWCROSS_AGENT_URL", CLAWCROSS_AGENT_COMPLETIONS_URL).strip()
+    payload = {
+        "model": os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_CLAWCROSS_AGENT_MODEL", "webot").strip() or "webot",
+        "user": user_id,
+        "session_id": os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_CLAWCROSS_AGENT_SESSION", "harness-conductor"),
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "你是 ClawCross harness conductor 的本机 Webot 决策接口。"
+                    "必须只返回一个 JSON 对象，不要解释，不要 Markdown。\n\n"
+                    + prompt
+                ),
+            }
+        ],
+        "max_tokens": 1600,
+        "enabled_tools": [],
+        "max_turns": 1,
+        "stream": False,
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}:{user_id}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return {"error": f"clawcross agent HTTP {exc.code}: {body[:500]}"}
+    except Exception as exc:
+        return {"error": str(exc)}
+    try:
+        data = json.loads(body)
+    except Exception:
+        return {"error": f"clawcross agent returned non-JSON HTTP body: {body[:500]}"}
+    choices = data.get("choices") if isinstance(data, dict) else None
+    message = (choices or [{}])[0].get("message") if isinstance(choices, list) and choices else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    parsed = _parse_llm_json(str(content or ""))
+    if not parsed:
+        return {"error": f"clawcross agent returned no JSON object: {str(content or '')[:500]}"}
+    parsed.setdefault("_llm_source", "clawcross_agent")
+    return parsed
+
+
+def _json_preview(value: Any, limit: int = 1600) -> str:
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _parse_llm_json(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"\s*```$", "", raw)
+    try:
+        value = json.loads(raw)
+    except Exception:
+        match = LLM_JSON_RE.search(raw)
+        if not match:
+            return {}
+        try:
+            value = json.loads(match.group(0))
+        except Exception:
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _call_webot_llm_json(prompt: str) -> dict[str, Any]:
+    """Ask the configured Webot/ClawCross LLM for a bounded JSON decision."""
+
+    conductor_model = os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_LLM_MODEL", "").strip()
+    conductor_api_key = os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_LLM_API_KEY", "").strip()
+    conductor_base_url = os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_LLM_BASE_URL", "").strip()
+    conductor_provider = os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_LLM_PROVIDER", "").strip()
+    attempts: list[tuple[str, dict[str, str]]] = []
+    errors: list[str] = []
+    if _env_truthy("CLAWCROSS_HARNESS_CONDUCTOR_CLAWCROSS_AGENT", True):
+        result = _call_clawcross_agent_json(prompt)
+        if not result.get("error"):
+            return result
+        errors.append(f"clawcross_agent: {result.get('error')}")
+    if conductor_model or conductor_api_key or conductor_base_url or conductor_provider:
+        attempts.append(
+            (
+                "conductor_override",
+                {
+                    "model": conductor_model,
+                    "api_key": conductor_api_key,
+                    "base_url": conductor_base_url,
+                    "provider": conductor_provider,
+                },
+            )
+        )
+    if os.getenv("LLM_MODEL", "").strip():
+        attempts.append(("webot_env", {}))
+    if _env_truthy("CLAWCROSS_HARNESS_CONDUCTOR_OPENCLAW_FALLBACK", False):
+        attempts.append(
+            (
+                "openclaw_gateway",
+                {
+                    "model": os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_OPENCLAW_MODEL", "openclaw").strip() or "openclaw",
+                    "api_key": os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_OPENCLAW_API_KEY", "openclaw").strip() or "openclaw",
+                    "base_url": os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_OPENCLAW_BASE_URL", OPENCLAW_GATEWAY_BASE_URL).strip()
+                    or OPENCLAW_GATEWAY_BASE_URL,
+                    "provider": "openai",
+                },
+            )
+        )
+
+    try:
+        from services.llm_factory import create_chat_model, extract_text
+
+        for source, overrides in attempts or [("webot_env", {})]:
+            kwargs = {k: v for k, v in overrides.items() if v}
+            try:
+                llm = create_chat_model(temperature=0.1, max_tokens=1400, timeout=45, **kwargs)
+                response = llm.invoke(prompt)
+                content = response.content if hasattr(response, "content") else str(response)
+                parsed = _parse_llm_json(extract_text(content))
+                parsed.setdefault("_llm_source", source)
+                return parsed
+            except Exception as exc:
+                errors.append(f"{source}: {exc}")
+    except Exception as exc:
+        errors.append(str(exc))
+    return {"error": "; ".join(errors) or "webot llm unavailable"}
+
+
+def _llm_choose_assignment(
+    agent: dict[str, Any],
+    session: dict[str, Any],
+    candidate_tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not candidate_tasks:
+        return {}
+    prompt = f"""
+你是 ClawCross 本机 conductor 的 Webot LLM 决策层。你只做任务调度，不执行 shell。
+
+目标：给远端 worker 选择一个最合适的 TODO，并写一段要发给该 worker 的中文指令。
+硬约束：
+- 只能选择候选 TODO 里的 task_id。
+- 只能分配给同一 project 的任务。
+- 指令必须要求 worker 先用 clawcross-harness-agent 标记 doing/active，并持续写 comment/done/needs_user。
+- 实验/评测/推理任务必须要求 run_id、git_sha、命令、日志/metrics 路径和 verifier。
+- 不要批准 sudo、删除系统文件、读取/外传 secrets、curl|sh/wget|sh。
+- 只返回 JSON，不要 Markdown。
+
+worker:
+{_json_preview(agent)}
+
+session:
+{_json_preview({k: session.get(k) for k in ("display_id", "remote_key", "status", "title", "cwd", "last_message")})}
+
+候选 TODO:
+{_json_preview([{k: t.get(k) for k in ("task_id", "project_id", "title", "description", "priority", "due_at", "status")} for t in candidate_tasks], 6000)}
+
+返回格式：
+{{"task_id":"...","message":"...","reason":"..."}}
+""".strip()
+    result = _call_webot_llm_json(prompt)
+    if result.get("error"):
+        return {"decision_source": "rules_fallback", "llm_error": str(result.get("error") or "")[:800]}
+    task_ids = {str(task.get("task_id") or "") for task in candidate_tasks}
+    task_id = str(result.get("task_id") or "").strip()
+    if task_id not in task_ids:
+        return {"decision_source": "rules_fallback", "llm_error": "webot llm returned no valid candidate task_id"}
+    message = str(result.get("message") or "").strip()
+    if not message:
+        return {
+            "task_id": task_id,
+            "reason": str(result.get("reason") or "webot selected task"),
+            "decision_source": "webot_llm",
+            "llm_source": result.get("_llm_source") or "",
+        }
+    return {
+        "task_id": task_id,
+        "message": message[:5000],
+        "reason": str(result.get("reason") or "webot selected task")[:800],
+        "decision_source": "webot_llm",
+        "llm_source": result.get("_llm_source") or "",
+    }
+
+
+def _llm_refine_decision(decision: ConductorDecision, session: dict[str, Any], state: dict[str, Any]) -> ConductorDecision:
+    task = _task_by_id(state, decision.task_id) or {}
+    agent = next((a for a in state.get("agents", []) if a.get("agent_id") == decision.agent_id), {})
+    prompt = f"""
+你是 ClawCross 本机 conductor 的 Webot LLM 决策层。你要决定如何回复一个已绑定 TODO 的远端 worker。
+
+硬约束：
+- 如果远端消息要求危险操作（sudo、rm -rf、密钥、外传 secret、curl|sh/wget|sh），返回 action=needs_user。
+- 否则返回 action=send，并写一段简短中文回复，让 worker 继续当前 TODO。
+- 回复必须提醒用 clawcross-harness-agent 更新状态/comment/done/needs_user。
+- 不要虚构结果，不要说任务完成，除非 worker 已给出 verifier/result 证据。
+- 只返回 JSON，不要 Markdown。
+
+默认规则回复:
+{decision.message}
+
+decision:
+{_json_preview(decision.__dict__)}
+
+agent:
+{_json_preview(agent)}
+
+task:
+{_json_preview({k: task.get(k) for k in ("task_id", "project_id", "title", "description", "status", "comments")}, 5000)}
+
+session:
+{_json_preview({k: session.get(k) for k in ("display_id", "remote_key", "status", "title", "cwd", "last_message")}, 3000)}
+
+返回格式：
+{{"action":"send|needs_user","message":"...","reason":"..."}}
+""".strip()
+    result = _call_webot_llm_json(prompt)
+    if result.get("error"):
+        return replace(
+            decision,
+            reason=(decision.reason + f"; webot llm fallback: {str(result.get('error') or '')[:400]}")[:800],
+            decision_source="rules_fallback",
+        )
+    action = str(result.get("action") or "").strip().lower()
+    if action == "needs_user":
+        return replace(
+            decision,
+            should_send=False,
+            manual_review=True,
+            reason=str(result.get("reason") or "webot requested manual review")[:800],
+            message="",
+            decision_source="webot_llm",
+        )
+    if action == "send" and str(result.get("message") or "").strip():
+        return replace(
+            decision,
+            message=str(result.get("message") or "").strip()[:5000],
+            reason=str(result.get("reason") or decision.reason)[:800],
+            decision_source="webot_llm",
+        )
+    return decision
+
 
 @dataclass(frozen=True)
 class ConductorDecision:
@@ -87,6 +386,7 @@ class ConductorDecision:
     message: str = ""
     manual_review: bool = False
     cache_key: str = ""
+    decision_source: str = "rules"
 
 
 def _now_ts() -> float:
@@ -120,7 +420,7 @@ def save_action_cache(cache: dict[str, Any]) -> None:
 
 
 def session_key(session: dict[str, Any]) -> str:
-    for key in ("display_id", "bridge_session_id", "session_id", "id", "job_id"):
+    for key in ("remote_key", "display_id", "bridge_session_id", "session_id", "id", "job_id"):
         value = str(session.get(key) or "").strip()
         if value:
             return value
@@ -130,7 +430,7 @@ def session_key(session: dict[str, Any]) -> str:
 def session_keys(session: dict[str, Any]) -> set[str]:
     return {
         str(session.get(key) or "").strip()
-        for key in ("display_id", "bridge_session_id", "session_id", "id", "job_id")
+        for key in ("remote_key", "display_id", "bridge_session_id", "session_id", "id", "job_id")
         if str(session.get(key) or "").strip()
     }
 
@@ -177,6 +477,101 @@ def _agent_for_session(session: dict[str, Any], state: dict[str, Any]) -> dict[s
     return None
 
 
+def _clean_agent_id_part(value: Any) -> str:
+    clean = re.sub(r"[^A-Za-z0-9_.:@-]+", "-", str(value or "").strip()).strip("-")
+    return clean or "worker"
+
+
+def _split_remote_host(value: Any) -> tuple[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return "", ""
+    if REMOTE_KEY_SEPARATOR in text:
+        text = text.split(REMOTE_KEY_SEPARATOR, 1)[0]
+    if "@" in text:
+        user, host = text.rsplit("@", 1)
+        return user.strip(), host.strip()
+    return "", text
+
+
+REMOTE_KEY_SEPARATOR = "::"
+
+
+def _session_remote_identity(session: dict[str, Any]) -> tuple[str, str]:
+    remote = session.get("remote") if isinstance(session.get("remote"), dict) else {}
+    user = str(session.get("remote_user") or session.get("user") or remote.get("user") or "").strip()
+    host = str(session.get("remote_host") or session.get("host") or remote.get("host") or "").strip()
+    if not user or not host:
+        key_user, key_host = _split_remote_host(session.get("remote_key"))
+        user = user or key_user
+        host = host or key_host
+    if "@" in host:
+        host_user, host_value = _split_remote_host(host)
+        user = user or host_user
+        host = host_value
+    return user, host
+
+
+def _remote_identity_keys(user: str, host: str) -> set[str]:
+    user = str(user or "").strip()
+    host = str(host or "").strip()
+    keys = {host} if host else set()
+    if user and host:
+        keys.add(f"{user}@{host}")
+    return {key for key in keys if key}
+
+
+def _project_by_remote_host(state: dict[str, Any]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for agent in state.get("agents", []) or []:
+        if not isinstance(agent, dict):
+            continue
+        project_id = str(agent.get("project_id") or "").strip()
+        if not project_id:
+            continue
+        user, host = _split_remote_host(agent.get("remote_host"))
+        for key in _remote_identity_keys(user, host):
+            mapping.setdefault(key, project_id)
+    return mapping
+
+
+def _project_for_unbound_session(session: dict[str, Any], state: dict[str, Any], *, project_id: str) -> str:
+    if project_id:
+        return project_id
+    user, host = _session_remote_identity(session)
+    mapping = _project_by_remote_host(state)
+    for key in _remote_identity_keys(user, host):
+        if key in mapping:
+            return mapping[key]
+    return ""
+
+
+def _agent_for_unbound_session(session: dict[str, Any], state: dict[str, Any], *, project_id: str) -> dict[str, Any] | None:
+    session_status = str(session.get("status") or "").lower()
+    if session_status not in {"idle", "done", "completed", "shell"}:
+        return None
+    key = session_key(session)
+    if not key:
+        return None
+    resolved_project_id = _project_for_unbound_session(session, state, project_id=project_id)
+    if not resolved_project_id:
+        return None
+    user, host = _session_remote_identity(session)
+    remote_host = f"{user}@{host}" if user and host else host
+    short = _fingerprint(key)[:8]
+    agent_id = f"{_clean_agent_id_part(resolved_project_id)}-{_clean_agent_id_part(user or 'remote')}@{_clean_agent_id_part(host or 'local')}-{short}"
+    return {
+        "agent_id": agent_id,
+        "agent_type": "claude-code-worker",
+        "project_id": resolved_project_id,
+        "current_task_id": "",
+        "session_ref": key,
+        "remote_host": remote_host,
+        "status": "idle",
+        "needs_user": False,
+    }
+
+
 def _task_for_agent(agent: dict[str, Any] | None, state: dict[str, Any]) -> dict[str, Any] | None:
     if not agent:
         return None
@@ -194,6 +589,37 @@ def _task_by_id(state: dict[str, Any], task_id: str) -> dict[str, Any] | None:
         if str(task.get("task_id") or "") == task_id:
             return task
     return None
+
+
+def _compact_label(value: Any, *, limit: int = 34) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return ""
+    text = re.sub(r"[^\w .:+/@-]+", "", text, flags=re.ASCII)
+    text = text.strip(" .")
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip(" .") + "..."
+
+
+def _project_label(project_id: str) -> str:
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        return "Project"
+    return PROJECT_SESSION_LABELS.get(project_id, _compact_label(project_id.replace("-", " ").title(), limit=34))
+
+
+def expected_remote_session_name(agent: dict[str, Any], task: dict[str, Any] | None, session: dict[str, Any]) -> str:
+    project_id = str((task or {}).get("project_id") or agent.get("project_id") or "").strip()
+    user, host = _session_remote_identity(session)
+    remote_label = user or _compact_label(host, limit=16) or _compact_label(agent.get("remote_host"), limit=16)
+    task_label = _compact_label((task or {}).get("title") or agent.get("current_task_id"), limit=32)
+    parts = ["ClawCross", _project_label(project_id)]
+    if remote_label:
+        parts.append(_compact_label(remote_label, limit=16))
+    if task_label:
+        parts.append(task_label)
+    return " | ".join(part for part in parts if part)[:120]
 
 
 def _task_paused_by_user(task: dict[str, Any] | None) -> bool:
@@ -328,6 +754,7 @@ def assign_next_dashboard_todos(
     *,
     project_id: str = DEFAULT_PROJECT_ID,
     dry_run: bool = False,
+    llm_mode: bool = False,
 ) -> list[dict[str, Any]]:
     open_tasks = _open_tasks_for_assignment(state, project_id=project_id)
     if not open_tasks:
@@ -337,20 +764,38 @@ def assign_next_dashboard_todos(
     for session in sessions:
         agent = _agent_for_session(session, state)
         if not agent:
+            agent = _agent_for_unbound_session(session, state, project_id=project_id)
+        if not agent:
             continue
+        agent_project_id = str(agent.get("project_id") or "").strip()
         current_task = _task_for_agent(agent, state)
         agent_status = str(agent.get("status") or "").lower()
         current_status = str((current_task or {}).get("status") or "").lower()
         current_done = current_task and current_status == "done" and task_has_host_verification(current_task, state.get("runs", []))
         if not current_done and agent_status not in {"idle", "done"}:
             continue
-        next_task = next((task for task in open_tasks if str(task.get("task_id") or "") not in used_task_ids), None)
+        candidate_tasks = [
+            task
+            for task in open_tasks
+            if str(task.get("task_id") or "") not in used_task_ids
+            and (
+                bool(project_id)
+                or not agent_project_id
+                or str(task.get("project_id") or "").strip() == agent_project_id
+            )
+        ]
+        llm_assignment = _llm_choose_assignment(agent, session, candidate_tasks) if llm_mode else {}
+        next_task = None
+        if llm_assignment.get("task_id"):
+            next_task = next((task for task in candidate_tasks if str(task.get("task_id") or "") == llm_assignment["task_id"]), None)
         if not next_task:
-            break
+            next_task = candidate_tasks[0] if candidate_tasks else None
+        if not next_task:
+            continue
         key = session_key(session)
         if not key:
             continue
-        message = _build_assignment_message(agent, next_task)
+        message = str(llm_assignment.get("message") or "").strip() or _build_assignment_message(agent, next_task)
         entry = {
             "session_key": key,
             "agent_id": agent.get("agent_id"),
@@ -358,8 +803,14 @@ def assign_next_dashboard_todos(
             "project_id": next_task.get("project_id"),
             "sent": False,
             "ok": False,
-            "reason": "assigned next dashboard TODO",
+            "reason": llm_assignment.get("reason") or ("webot llm assigned next dashboard TODO" if llm_mode else "assigned next dashboard TODO"),
+            "decision_source": llm_assignment.get("decision_source") or ("rules_fallback" if llm_mode else "rules"),
+            "llm_driven": llm_assignment.get("decision_source") == "webot_llm",
         }
+        if llm_assignment.get("llm_error"):
+            entry["llm_error"] = llm_assignment.get("llm_error")
+        if llm_assignment.get("llm_source"):
+            entry["llm_source"] = llm_assignment.get("llm_source")
         if dry_run:
             entry["ok"] = True
             entry["message"] = message
@@ -486,6 +937,51 @@ def cleanup_remote_sessions_without_todos(
                 },
             )
         entry["ok"] = close_ok
+        results.append(entry)
+    return results
+
+
+def rename_bound_remote_sessions(
+    sessions: list[dict[str, Any]],
+    state: dict[str, Any],
+    *,
+    dry_run: bool = False,
+) -> list[dict[str, Any]]:
+    """Keep Claude Desktop background-agent names aligned with ClawCross projects."""
+
+    results: list[dict[str, Any]] = []
+    for session in sessions:
+        agent = _agent_for_session(session, state)
+        if not agent:
+            continue
+        task = _task_for_agent(agent, state)
+        target = session_key(session)
+        expected = expected_remote_session_name(agent, task, session)
+        current = str(session.get("title") or session.get("name") or "").strip()
+        if not target or not expected or current == expected:
+            continue
+        entry = {
+            "session_key": target,
+            "agent_id": agent.get("agent_id"),
+            "task_id": (task or {}).get("task_id") or agent.get("current_task_id") or "",
+            "project_id": (task or {}).get("project_id") or agent.get("project_id") or "",
+            "old_name": current,
+            "name": expected,
+            "renamed": False,
+            "ok": False,
+        }
+        if dry_run:
+            entry["ok"] = True
+            results.append(entry)
+            continue
+        try:
+            response = rename_remote_claude_session(target, expected)
+        except Exception as exc:
+            response = {"ok": False, "error": str(exc)}
+        entry["response"] = response
+        entry["renamed"] = bool(response.get("ok"))
+        entry["ok"] = bool(response.get("ok"))
+        entry["error"] = response.get("error") or ""
         results.append(entry)
     return results
 
@@ -617,6 +1113,7 @@ def run_conductor_once(
     sync_dashboard: bool = True,
     dashboard_root: Path | None = None,
     project_id: str = DEFAULT_PROJECT_ID,
+    llm_mode: bool = False,
 ) -> dict[str, Any]:
     os.environ.setdefault("CLAWCROSS_REMOTE_CLAUDE_TIMEOUT_SEC", "45")
     os.environ.setdefault("CLAWCROSS_REMOTE_CLAUDE_CONNECT_TIMEOUT_SEC", "10")
@@ -634,14 +1131,17 @@ def run_conductor_once(
     results: list[dict[str, Any]] = []
     assignments: list[dict[str, Any]] = []
     cleanup: list[dict[str, Any]] = []
+    renames: list[dict[str, Any]] = []
 
     if remote.get("ok"):
+        renames = rename_bound_remote_sessions(sessions, state, dry_run=dry_run)
         assignments = assign_next_dashboard_todos(
             user_id,
             sessions,
             state,
             project_id=project_id,
             dry_run=dry_run,
+            llm_mode=llm_mode and not dry_run,
         )
         if assignments and not dry_run:
             state = get_harness_state(user_id)
@@ -661,6 +1161,8 @@ def run_conductor_once(
         decision = decide_for_session(session, state, cache, cooldown_seconds=cooldown_seconds)
         if not decision:
             continue
+        if llm_mode and not dry_run and not decision.manual_review:
+            decision = _llm_refine_decision(decision, session, state)
         entry = {
             "session_key": decision.session_key,
             "agent_id": decision.agent_id,
@@ -669,6 +1171,8 @@ def run_conductor_once(
             "sent": False,
             "manual_review": decision.manual_review,
             "ok": False,
+            "decision_source": decision.decision_source,
+            "llm_driven": decision.decision_source == "webot_llm",
         }
         if decision.manual_review:
             if not dry_run:
@@ -731,7 +1235,10 @@ def run_conductor_once(
         "dashboard_pull": pull_summary,
         "host_verify": verify_summary,
         "dashboard_push": push_summary,
+        "renames": renames,
         "assignments": assignments,
         "cleanup": cleanup,
         "actions": results,
+        "llm_mode": bool(llm_mode),
+        "conductor_driver": "webot_llm" if llm_mode else "rules",
     }

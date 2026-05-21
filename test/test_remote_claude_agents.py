@@ -108,6 +108,37 @@ class RemoteClaudeParserTests(unittest.TestCase):
 
         self.assertEqual([(item.user, item.host, item.hostname) for item in configs], [("feibo", "100.87.220.29", "yuhang-B850M-C")])
 
+    def test_list_sessions_filters_idle_daemon_spares(self):
+        payload = {
+            "sessions": [
+                {
+                    "id": "spare",
+                    "title": "be23fef0",
+                    "status": "idle",
+                    "session_id": "be23fef0-364d-48e8-b1ad-12d4cd28e409",
+                    "job_id": "be23fef0",
+                    "transcript_path": "",
+                    "tail_lines": [],
+                },
+                {
+                    "id": "real",
+                    "title": "a49f4986",
+                    "status": "busy",
+                    "bridge_session_id": "session_real",
+                    "job_id": "a49f4986",
+                },
+            ]
+        }
+        with TemporaryDirectory() as tmpdir:
+            cache_path = str(Path(tmpdir) / "remote_cache.json")
+            with mock.patch.object(rca, "_cache_path", return_value=cache_path), mock.patch.object(
+                rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+            ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
+                data = rca.list_remote_claude_sessions(limit=3)
+
+        self.assertEqual([item["display_id"] for item in data["sessions"]], ["session_real"])
+        self.assertEqual(data["remotes"][0]["session_count"], 1)
+
     def test_list_sessions_falls_back_to_cache_when_remote_is_unreachable(self):
         with TemporaryDirectory() as tmpdir:
             cache_path = Path(tmpdir) / "remote_cache.json"
@@ -153,6 +184,27 @@ class RemoteClaudeParserTests(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(data["short"], "5dd495e1")
         self.assertEqual(data["response"]["op"], "reply")
+        self.assertEqual(data["session"]["remote_key"], "u@h::session_abc")
+
+    def test_rename_session_updates_display_name(self):
+        payload = {
+            "found": True,
+            "ok": True,
+            "short": "5dd495e1",
+            "old_name": "old",
+            "name": "ClawCross | UMI World Model | jingxiang",
+            "roster_updated": True,
+            "session": {"bridge_session_id": "session_abc", "title": "ClawCross | UMI World Model | jingxiang"},
+        }
+        with mock.patch.object(
+            rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+        ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
+            data = rca.rename_remote_claude_session("u@h::session_abc", "ClawCross | UMI World Model | jingxiang")
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["old_name"], "old")
+        self.assertEqual(data["name"], "ClawCross | UMI World Model | jingxiang")
+        self.assertTrue(data["roster_updated"])
         self.assertEqual(data["session"]["remote_key"], "u@h::session_abc")
 
     def test_close_session_returns_archive_payload(self):

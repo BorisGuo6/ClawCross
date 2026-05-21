@@ -376,8 +376,8 @@ if __name__ == "__main__":
 CLAUDE_DEFAULTS_WRAPPER = r'''#!/usr/bin/env bash
 # ClawCross Claude defaults wrapper.
 #
-# Interactive Claude sessions default to maximum effort and Remote Control.
-# Claude background-agent view defaults dispatched workers to maximum effort.
+# Interactive Claude sessions default to maximum effort, auto mode, and Remote Control.
+# Claude background-agent view defaults dispatched workers to maximum effort and auto mode.
 
 set -e
 
@@ -410,15 +410,40 @@ has_short_arg() {
   return 1
 }
 
+read_clawcross_env_value() {
+  local key="$1"
+  local file="${CLAWCROSS_HARNESS_ENV:-$HOME/.clawcross/harness.env}"
+  [[ -f "$file" ]] || return 0
+  awk -F= -v k="$key" '$1 == k {gsub(/^["'\'']|["'\'']$/, "", $2); print $2; exit}' "$file" 2>/dev/null || true
+}
+
+default_session_name() {
+  local override="${CLAWCROSS_REMOTE_SESSION_NAME:-}"
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+  local project="${CLAWCROSS_PROJECT_ID:-}"
+  if [[ -z "$project" ]]; then
+    project="$(read_clawcross_env_value DEFAULT_PROJECT_ID)"
+  fi
+  [[ -n "$project" ]] || project="project"
+  local host="${CLAWCROSS_REMOTE_NAME:-$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo remote)}"
+  printf 'ClawCross | %s | %s\n' "$project" "$host"
+}
+
 first="${1:-}"
 
 if [[ "$first" == "agents" ]]; then
   shift
-  args=(agents)
+  args=()
   if ! has_arg "--effort" "$@"; then
     args+=(--effort max)
   fi
-  exec "$real_claude" "${args[@]}" "$@"
+  if ! has_arg "--permission-mode" "$@" && ! has_arg "--dangerously-skip-permissions" "$@"; then
+    args+=(--permission-mode auto)
+  fi
+  exec "$real_claude" "${args[@]}" agents "$@"
 fi
 
 case "$first" in
@@ -431,13 +456,20 @@ args=()
 if ! has_arg "--effort" "$@"; then
   args+=(--effort max)
 fi
+if ! has_arg "--permission-mode" "$@" && ! has_arg "--dangerously-skip-permissions" "$@"; then
+  args+=(--permission-mode auto)
+fi
+session_name="$(default_session_name)"
+if ! has_arg "--name" "$@" && ! has_short_arg "-n" "$@"; then
+  args+=(--name "$session_name")
+fi
 
 skip_remote_control=0
 if has_arg "--remote-control" "$@" || has_short_arg "-p" "$@" || has_arg "--print" "$@" || has_short_arg "-h" "$@" || has_arg "--help" "$@" || has_short_arg "-v" "$@" || has_arg "--version" "$@" || has_arg "--output-format" "$@" || has_arg "--input-format" "$@"; then
   skip_remote_control=1
 fi
 if [[ "$skip_remote_control" -eq 0 ]]; then
-  args+=(--remote-control)
+  args+=(--remote-control "$session_name")
 fi
 
 exec "$real_claude" "${args[@]}" "$@"
@@ -491,7 +523,7 @@ if payload.get("install_claude_defaults"):
     real_claude_path = payload.get("real_claude_path") or "~/.local/bin/claude"
     shell_block = "\n".join([
         payload["shell_start_marker"],
-        "# ClawCross default: new Claude sessions use max effort and Remote Control.",
+        "# ClawCross default: new Claude sessions use max effort, auto mode, and Remote Control.",
         f'export CLAWCROSS_REAL_CLAUDE="{real_claude_path}"',
         f'alias claude="{claude_wrapper_path}"',
         payload["shell_end_marker"],
@@ -545,6 +577,8 @@ if payload.get("install_settings"):
         settings = {}
     if not isinstance(settings, dict):
         settings = {}
+    settings["disableAutoMode"] = False
+    settings["skipAutoPermissionPrompt"] = True
     permissions = settings.setdefault("permissions", {})
     if not isinstance(permissions, dict):
         permissions = {}
@@ -619,12 +653,23 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
 
         ## Claude Session Defaults
 
-        All Claude Code sessions on this host should run at maximum effort with Remote Control enabled.
+        All Claude Code sessions on this host should run at maximum effort with auto mode and Remote Control enabled.
 
-        - For normal interactive work, start Claude through the configured `claude` shell alias, which expands to `claude --effort max --remote-control`.
-        - For the background agent view, start it through the configured `claude` shell alias, which expands `claude agents` to `claude agents --effort max`.
-        - If you are already inside an interactive Claude session and the user asks you to reconfigure the current session, run `/effort max` and `/remote-control`.
+        - For normal interactive work, start Claude through the configured `claude` shell alias, which expands to `claude --effort max --permission-mode auto --remote-control`.
+        - For the background agent view, start it through the configured `claude` shell alias, which expands `claude agents` to `claude --effort max --permission-mode auto agents`.
+        - If you are already inside an interactive Claude session and the user asks you to reconfigure the current session, run `/effort max`, `/permission-mode auto`, and `/remote-control`.
         - Do not publish remote-control links, Claude session IDs, or harness runtime details to the public dashboard.
+
+        ## Parallel Worker Policy
+
+        This host may run multiple Claude sessions in parallel. Treat each active Claude session as one worker bound to exactly one active TODO.
+
+        - Prefer 2-3 parallel sessions per computer when there are independent TODOs.
+        - Use one session per TODO. Do not have two sessions edit the same files for the same TODO unless the user explicitly asks.
+        - Choose parallel TODOs by dashboard priority and due date; `urgent` and due-soon TODOs come first.
+        - Each session must use a unique `--agent-id` in `clawcross-harness-agent`, usually `<project-or-task>-$(hostname)`.
+        - Keep `--session-ref` set for the live session so ClawCross can bind the worker card to the remote Claude session.
+        - If all open TODOs are done or waiting for human review, do not invent work; mark the session idle/review and wait for the next dashboard TODO.
 
         ## Dashboard First
 
@@ -637,6 +682,16 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         ```
 
         Use `dashboard/state/tasks.json` as the TODO queue. Choose tasks by `project_id`, `status`, `priority`, `due_at`, and project context. Default to `project_id: {default_project}` unless the user assigns another project.
+
+        ## Remote Workspace
+
+        Project repositories and working files are on this remote computer under `~/workspace`. Start there for project discovery and execution:
+
+        ```bash
+        cd ~/workspace
+        ```
+
+        Do not assume the controller machine's `/Users/boris/workspace` path exists on this host.
 
         If `clawcross-harness-agent` is available, prefer this machine-readable read path:
 

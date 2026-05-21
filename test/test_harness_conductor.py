@@ -262,6 +262,185 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 else:
                     os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
 
+    def test_all_project_assignment_matches_worker_project(self):
+        state = {
+            "tasks": [
+                {
+                    "task_id": "task_umi_next",
+                    "project_id": "umi-world-model",
+                    "title": "UMI next",
+                    "status": "todo",
+                    "priority": "high",
+                },
+                {
+                    "task_id": "task_robotics_next",
+                    "project_id": "robotics-3d-printing",
+                    "title": "Robotics next",
+                    "status": "todo",
+                    "priority": "high",
+                },
+            ],
+            "agents": [
+                {
+                    "agent_id": "robotics-shaol@100.96.228.8",
+                    "project_id": "robotics-3d-printing",
+                    "current_task_id": "",
+                    "session_ref": "session_robotics",
+                    "status": "idle",
+                }
+            ],
+            "runs": [],
+        }
+
+        assigned = conductor.assign_next_dashboard_todos(
+            "boris",
+            [{"display_id": "session_robotics", "status": "idle"}],
+            state,
+            project_id="",
+            dry_run=True,
+        )
+
+        self.assertEqual(len(assigned), 1)
+        self.assertEqual(assigned[0]["task_id"], "task_robotics_next")
+
+    def test_unbound_idle_session_uses_remote_host_project(self):
+        state = {
+            "tasks": [
+                {
+                    "task_id": "task_image_next",
+                    "project_id": "image-layered-world-model",
+                    "title": "Image next",
+                    "status": "todo",
+                    "priority": "high",
+                }
+            ],
+            "agents": [
+                {
+                    "agent_id": "image-layered-feibo@100.87.220.29",
+                    "project_id": "image-layered-world-model",
+                    "current_task_id": "task_done",
+                    "session_ref": "old_session",
+                    "remote_host": "feibo@100.87.220.29",
+                    "status": "done",
+                }
+            ],
+            "runs": [],
+        }
+
+        assigned = conductor.assign_next_dashboard_todos(
+            "boris",
+            [
+                {
+                    "remote_key": "feibo@100.87.220.29::new_session",
+                    "display_id": "new_session",
+                    "remote_user": "feibo",
+                    "remote_host": "100.87.220.29",
+                    "status": "idle",
+                }
+            ],
+            state,
+            project_id="",
+            dry_run=True,
+        )
+
+        self.assertEqual(len(assigned), 1)
+        self.assertEqual(assigned[0]["project_id"], "image-layered-world-model")
+        self.assertEqual(assigned[0]["task_id"], "task_image_next")
+        self.assertIn("image-layered-world-model", assigned[0]["agent_id"])
+
+    def test_llm_assignment_marks_webot_decision_source(self):
+        state = {
+            "tasks": [
+                {
+                    "task_id": "task_a",
+                    "project_id": "umi-world-model",
+                    "title": "Fallback task",
+                    "status": "todo",
+                    "priority": "low",
+                },
+                {
+                    "task_id": "task_b",
+                    "project_id": "umi-world-model",
+                    "title": "Webot selected task",
+                    "status": "todo",
+                    "priority": "low",
+                },
+            ],
+            "agents": [
+                {
+                    "agent_id": "umi-worker",
+                    "project_id": "umi-world-model",
+                    "current_task_id": "",
+                    "session_ref": "session_abc",
+                    "status": "idle",
+                }
+            ],
+            "runs": [],
+        }
+
+        with mock.patch.object(
+            conductor,
+            "_call_webot_llm_json",
+            return_value={"task_id": "task_b", "message": "Webot message", "reason": "better match"},
+        ):
+            assigned = conductor.assign_next_dashboard_todos(
+                "boris",
+                [{"display_id": "session_abc", "status": "idle"}],
+                state,
+                project_id="umi-world-model",
+                dry_run=True,
+                llm_mode=True,
+            )
+
+        self.assertEqual(len(assigned), 1)
+        self.assertEqual(assigned[0]["task_id"], "task_b")
+        self.assertEqual(assigned[0]["decision_source"], "webot_llm")
+        self.assertTrue(assigned[0]["llm_driven"])
+        self.assertEqual(assigned[0]["message"], "Webot message")
+
+    def test_rename_bound_remote_sessions_uses_project_and_task(self):
+        state = {
+            "tasks": [
+                {
+                    "task_id": "task_pod",
+                    "project_id": "robotics-3d-printing",
+                    "title": "Benchmark photo / text-to-3D engines",
+                    "status": "active",
+                }
+            ],
+            "agents": [
+                {
+                    "agent_id": "robotics-printing-shaol@100.96.228.8",
+                    "project_id": "robotics-3d-printing",
+                    "current_task_id": "task_pod",
+                    "session_ref": "session_robotics",
+                    "remote_host": "shaol@100.96.228.8",
+                    "status": "running",
+                }
+            ],
+        }
+
+        with mock.patch.object(conductor, "rename_remote_claude_session", return_value={"ok": True}) as rename_mock:
+            renamed = conductor.rename_bound_remote_sessions(
+                [
+                    {
+                        "display_id": "session_robotics",
+                        "title": "old name",
+                        "remote_user": "shaol",
+                        "remote_host": "100.96.228.8",
+                    }
+                ],
+                state,
+            )
+
+        self.assertEqual(len(renamed), 1)
+        self.assertTrue(renamed[0]["ok"])
+        self.assertEqual(renamed[0]["project_id"], "robotics-3d-printing")
+        rename_mock.assert_called_once_with(
+            "session_robotics",
+            "ClawCross | Robotics+3D Printing | shaol | Benchmark photo / text-to-3D...",
+        )
+
     def test_cleanup_closes_paused_todo_session_and_deletes_agent(self):
         with TemporaryDirectory() as tmpdir:
             old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")

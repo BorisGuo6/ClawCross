@@ -47,9 +47,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--interval", type=float, default=float(os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_INTERVAL", "25")))
     parser.add_argument("--cooldown", type=int, default=int(os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_COOLDOWN", "180")))
     parser.add_argument("--remote-limit", type=int, default=int(os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_REMOTE_LIMIT", "12")))
-    parser.add_argument("--project-id", default=os.getenv("CLAWCROSS_HARNESS_PROJECT_ID", "umi-world-model"))
+    parser.add_argument(
+        "--project-id",
+        default=os.getenv("CLAWCROSS_HARNESS_PROJECT_ID", ""),
+        help="Dashboard project to sync. Empty means all projects.",
+    )
     parser.add_argument("--dashboard-root", default=os.getenv("CLAWCROSS_HARNESS_DASHBOARD_ROOT", ""))
     parser.add_argument("--no-dashboard-sync", action="store_true")
+    parser.add_argument(
+        "--llm-mode",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("CLAWCROSS_HARNESS_CONDUCTOR_LLM", True),
+        help="Use the configured Webot/ClawCross LLM to choose assignments and draft replies.",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -62,7 +72,11 @@ def main() -> None:
         return
     args = build_parser().parse_args()
     user_id = args.user_id or os.getenv("CLAWCROSS_HARNESS_USER") or os.getenv("CLAWCROSS_USER_ID") or os.getenv("USER") or "default"
-    print(f"[harness-conductor] started user={user_id} interval={args.interval}s cooldown={args.cooldown}s", flush=True)
+    driver = "webot_llm" if args.llm_mode else "rules"
+    print(
+        f"[harness-conductor] started user={user_id} interval={args.interval}s cooldown={args.cooldown}s driver={driver}",
+        flush=True,
+    )
 
     while True:
         try:
@@ -74,6 +88,7 @@ def main() -> None:
                 sync_dashboard=not args.no_dashboard_sync,
                 dashboard_root=Path(args.dashboard_root).expanduser() if args.dashboard_root else None,
                 project_id=args.project_id,
+                llm_mode=bool(args.llm_mode),
             )
             actions = result.get("actions") or []
             if actions or not result.get("remote_ok"):

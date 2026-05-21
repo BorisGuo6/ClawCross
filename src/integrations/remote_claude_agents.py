@@ -587,6 +587,99 @@ print(json.dumps({{"found": True, "session": matched, "short": short, "response"
 """
 
 
+def _remote_script_rename_session(target: str, name: str) -> str:
+    target_json = json.dumps(str(target))
+    name_json = json.dumps(str(name))
+    return f"""
+import glob, json, os, time
+
+target = {target_json}
+name = {name_json}
+base = os.path.expanduser("~/.claude/sessions")
+matched = None
+session_path = ""
+
+for path in sorted(glob.glob(os.path.join(base, "*.json"))):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        continue
+    keys = [
+        os.path.splitext(os.path.basename(path))[0],
+        data.get("sessionId") or data.get("session_id") or data.get("localSessionId") or "",
+        data.get("bridgeSessionId") or data.get("bridge_session_id") or data.get("remoteSessionId") or "",
+        data.get("jobId") or data.get("job_id") or "",
+    ]
+    if target not in [str(k) for k in keys if k]:
+        continue
+    matched = dict(data)
+    matched["id"] = os.path.splitext(os.path.basename(path))[0]
+    session_path = path
+    break
+
+if not matched:
+    print(json.dumps({{"found": False, "ok": False, "error": "session not found"}}, ensure_ascii=False))
+    raise SystemExit(0)
+
+old_name = matched.get("name") or matched.get("title") or ""
+now_ms = int(time.time() * 1000)
+matched["name"] = name
+matched["title"] = name
+matched["updatedAt"] = max(int(matched.get("updatedAt") or 0), now_ms)
+tmp_path = session_path + ".tmp"
+with open(tmp_path, "w", encoding="utf-8") as fh:
+    json.dump(matched, fh, ensure_ascii=False, indent=2)
+    fh.write("\\n")
+os.replace(tmp_path, session_path)
+
+short = str(matched.get("jobId") or matched.get("job_id") or "").strip()
+roster_updated = False
+roster_error = ""
+if short:
+    roster_path = os.path.expanduser("~/.claude/daemon/roster.json")
+    try:
+        with open(roster_path, "r", encoding="utf-8") as fh:
+            roster = json.load(fh)
+        worker = (roster.get("workers") or {{}}).get(short)
+        if isinstance(worker, dict):
+            dispatch = worker.setdefault("dispatch", {{}})
+            seed = dispatch.setdefault("seed", {{}})
+            if isinstance(seed, dict):
+                seed["name"] = name
+            worker["name"] = name
+            roster_tmp = roster_path + ".tmp"
+            with open(roster_tmp, "w", encoding="utf-8") as fh:
+                json.dump(roster, fh, ensure_ascii=False, indent=2)
+                fh.write("\\n")
+            os.replace(roster_tmp, roster_path)
+            roster_updated = True
+    except Exception as exc:
+        roster_error = str(exc)
+
+session = {{
+    "id": matched.get("id") or os.path.splitext(os.path.basename(session_path))[0],
+    "title": matched.get("title") or matched.get("name") or "",
+    "status": matched.get("status") or matched.get("state") or "",
+    "session_id": matched.get("sessionId") or matched.get("session_id") or matched.get("localSessionId") or "",
+    "bridge_session_id": matched.get("bridgeSessionId") or matched.get("bridge_session_id") or matched.get("remoteSessionId") or "",
+    "job_id": matched.get("jobId") or matched.get("job_id") or "",
+    "cwd": matched.get("cwd") or matched.get("workingDirectory") or "",
+    "session_file": session_path,
+}}
+print(json.dumps({{
+    "found": True,
+    "ok": True,
+    "old_name": old_name,
+    "name": name,
+    "session": session,
+    "short": short,
+    "roster_updated": roster_updated,
+    "roster_error": roster_error,
+}}, ensure_ascii=False))
+"""
+
+
 def _remote_script_close_session(target: str, *, force: bool) -> str:
     target_json = json.dumps(str(target))
     force_json = "True" if force else "False"
@@ -908,6 +1001,18 @@ def _normalize_session(item: dict[str, Any], *, config: RemoteClaudeConfig | Non
     return item
 
 
+def _is_daemon_spare_session(item: dict[str, Any]) -> bool:
+    """Hide Claude agents daemon spare workers that are not real conversations."""
+
+    status = str(item.get("status") or "").strip().lower()
+    if status != "idle":
+        return False
+    has_bridge = bool(str(item.get("bridge_session_id") or item.get("bridgeSessionId") or "").strip())
+    has_transcript = bool(str(item.get("transcript_path") or item.get("transcript") or item.get("transcriptPath") or "").strip())
+    has_tail = bool(item.get("tail_lines"))
+    return not has_bridge and not has_transcript and not has_tail
+
+
 def list_remote_claude_sessions(*, limit: int = 3, tail_lines: int = 30) -> dict[str, Any]:
     configs = load_remote_claude_configs()
     sessions: list[dict[str, Any]] = []
@@ -927,7 +1032,7 @@ def list_remote_claude_sessions(*, limit: int = 3, tail_lines: int = 30) -> dict
         remote_sessions = [
             _normalize_session(dict(item), config=config)
             for item in payload.get("sessions", [])
-            if isinstance(item, dict)
+            if isinstance(item, dict) and not _is_daemon_spare_session(item)
         ]
         remote_record["ok"] = True
         remote_record["session_count"] = len(remote_sessions)
@@ -1057,6 +1162,52 @@ def send_remote_claude_message(target: str, text: str) -> dict[str, Any]:
         "session": {},
         "short": "",
         "response": {},
+        "error": "; ".join(errors) or "session not found",
+    }
+
+
+def rename_remote_claude_session(target: str, name: str) -> dict[str, Any]:
+    session_key = str(target or "").strip()
+    clean_name = " ".join(str(name or "").split())
+    if not session_key:
+        raise ValueError("session target is empty")
+    if not clean_name:
+        raise ValueError("session name is empty")
+    if len(clean_name) > 120:
+        clean_name = clean_name[:117].rstrip() + "..."
+
+    configs, session_key = _configs_for_target(session_key)
+    errors: list[str] = []
+    for config in configs:
+        try:
+            payload = _run_remote_python(_remote_script_rename_session(session_key, clean_name), config=config)
+        except Exception as exc:
+            errors.append(f"{config.destination}: {exc}")
+            continue
+        if not payload.get("found"):
+            errors.append(f"{config.destination}: {payload.get('error') or 'session not found'}")
+            continue
+        ok = bool(payload.get("ok"))
+        return {
+            "ok": ok,
+            "remote": _remote_payload(config),
+            "session": _normalize_session(dict(payload.get("session") or {}), config=config),
+            "short": payload.get("short") or "",
+            "old_name": payload.get("old_name") or "",
+            "name": payload.get("name") or clean_name,
+            "roster_updated": bool(payload.get("roster_updated")),
+            "roster_error": payload.get("roster_error") or "",
+            "error": "" if ok else (payload.get("error") or payload.get("roster_error") or "rename failed"),
+        }
+    return {
+        "ok": False,
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "session": {},
+        "short": "",
+        "old_name": "",
+        "name": clean_name,
+        "roster_updated": False,
+        "roster_error": "",
         "error": "; ".join(errors) or "session not found",
     }
 
