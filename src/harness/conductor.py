@@ -63,7 +63,7 @@ RISKY_PATTERNS = (
     r"\b\.ssh\b",
     r"\b\.aws\b",
     r"\b\.config/gcloud\b",
-    r"\b.env\b",
+    r"(?<![\w.-])\.env(?:\.[A-Za-z0-9_-]+)?(?![\w-])",
     r"\bapi[_-]?key\b",
     r"\bsecret\b",
     r"\btoken\b",
@@ -427,11 +427,36 @@ def session_key(session: dict[str, Any]) -> str:
     return ""
 
 
+def _equivalent_session_refs(value: Any) -> set[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return set()
+    refs = {raw}
+    if "::" in raw:
+        refs.add(raw.rsplit("::", 1)[-1].strip())
+    return {ref for ref in refs if ref}
+
+
 def session_keys(session: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    for key in ("remote_key", "display_id", "bridge_session_id", "session_id", "id", "job_id"):
+        refs.update(_equivalent_session_refs(session.get(key)))
+    remote_key = str(session.get("remote_key") or "").strip()
+    remote_prefix = remote_key.rsplit("::", 1)[0].strip() if "::" in remote_key else ""
+    if remote_prefix:
+        refs.update(
+            f"{remote_prefix}::{ref}"
+            for ref in list(refs)
+            if ref and "::" not in ref
+        )
+    return refs
+
+
+def agent_session_refs(agent: dict[str, Any]) -> set[str]:
     return {
-        str(session.get(key) or "").strip()
-        for key in ("remote_key", "display_id", "bridge_session_id", "session_id", "id", "job_id")
-        if str(session.get(key) or "").strip()
+        ref
+        for key in ("session_ref", "bridge_session_id", "session_id", "job_id")
+        for ref in _equivalent_session_refs(agent.get(key))
     }
 
 
@@ -462,6 +487,28 @@ def looks_waiting_for_input(text: str) -> bool:
     return _contains_any(text, WAITING_PATTERNS)
 
 
+def looks_like_active_tool_command(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+    lowered = stripped.lower()
+    has_command_key = "'command':" in lowered or '"command":' in lowered
+    has_tool_metadata = any(
+        marker in lowered
+        for marker in (
+            "'description':",
+            '"description":',
+            "'timeout':",
+            '"timeout":',
+            "'stdout':",
+            '"stdout":',
+            "'stderr':",
+            '"stderr":',
+        )
+    )
+    return has_command_key and (has_tool_metadata or lowered.startswith(("{'command':", '{"command":')))
+
+
 def _fingerprint(*parts: Any) -> str:
     body = "\n".join(str(part or "") for part in parts)
     return sha256(body.encode("utf-8", errors="replace")).hexdigest()[:20]
@@ -472,7 +519,7 @@ def _agent_for_session(session: dict[str, Any], state: dict[str, Any]) -> dict[s
     if not keys:
         return None
     for agent in state.get("agents", []) or []:
-        if str(agent.get("session_ref") or "").strip() in keys:
+        if agent_session_refs(agent) & keys:
             return agent
     return None
 
@@ -1035,6 +1082,9 @@ def decide_for_session(
     text_role = last_message_role(session)
     text_from_worker = text_role not in {"user", "human"}
     session_status = str(session.get("status") or "").lower()
+    active_tool_command = text_from_worker and looks_like_active_tool_command(text)
+    if session_status in {"busy", "running", "working"} and active_tool_command and not is_risky_request(text):
+        return None
     needs_user = bool(agent.get("needs_user")) or str(agent.get("status") or "").lower() == "needs_user"
 
     reason = ""

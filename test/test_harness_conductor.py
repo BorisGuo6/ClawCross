@@ -75,6 +75,61 @@ class HarnessConductorDecisionTests(unittest.TestCase):
         self.assertFalse(decision.should_send)
         self.assertTrue(decision.manual_review)
 
+    def test_busy_tool_invocation_does_not_prompt_manual_review(self):
+        decision = conductor.decide_for_session(
+            {
+                "display_id": "session_abc",
+                "status": "busy",
+                "last_message": {
+                    "content": "{'command': 'cd ~/workspace/image-layered-world-model && .venv/bin/pip install --quiet --no-cache-dir torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128', 'description': 'Install torch 2.9.1 cu128', 'timeout': 600000}",
+                },
+            },
+            sample_state(),
+            {"sent": {}},
+            cooldown_seconds=30,
+        )
+
+        self.assertIsNone(decision)
+
+    def test_busy_risky_tool_invocation_still_requires_manual_review(self):
+        decision = conductor.decide_for_session(
+            {
+                "display_id": "session_abc",
+                "status": "busy",
+                "last_message": {
+                    "content": "{'command': 'sudo rm -rf /tmp/something', 'description': 'Dangerous cleanup', 'timeout': 600000}",
+                },
+            },
+            sample_state(),
+            {"sent": {}},
+            cooldown_seconds=30,
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertTrue(decision.manual_review)
+
+    def test_decision_matches_remote_qualified_job_id(self):
+        state = sample_state()
+        state["agents"][0]["session_ref"] = "feibo@100.87.220.29::8a5f7c95"
+        state["agents"][0]["agent_id"] = "image-layered-feibo@100.87.220.29"
+        state["agents"][0]["project_id"] = "image-layered-world-model"
+        state["tasks"][0]["project_id"] = "image-layered-world-model"
+        decision = conductor.decide_for_session(
+            {
+                "remote_key": "feibo@100.87.220.29::session_014xgjW9Tj25dnXYDNUYg8NJ",
+                "display_id": "session_014xgjW9Tj25dnXYDNUYg8NJ",
+                "job_id": "8a5f7c95",
+                "status": "busy",
+                "last_message": {"content": "Need user confirmation before continuing."},
+            },
+            state,
+            {"sent": {}},
+            cooldown_seconds=30,
+        )
+
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.agent_id, "image-layered-feibo@100.87.220.29")
+
     def test_mark_sent_prevents_immediate_duplicate_reply(self):
         session = {
             "display_id": "session_abc",

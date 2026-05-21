@@ -6873,7 +6873,9 @@ function harnessWorkerCountLabel(liveCount, boundCount) {
 function harnessAgentMatchesRemoteSession(agent, session) {
   const ref = harnessWorkerSessionRef(agent);
   if (!ref || !session) return false;
-  return remoteClaudeSessionKeys(session).includes(ref);
+  const refs = remoteClaudeEquivalentKeys(ref);
+  const sessionRefs = remoteClaudeSessionKeys(session).flatMap(remoteClaudeEquivalentKeys);
+  return sessionRefs.some(key => refs.includes(key));
 }
 
 function harnessTaskEvidenceAuthors(item) {
@@ -7303,11 +7305,24 @@ function remoteClaudeSessionKeys(session) {
   ].filter(Boolean).map(String);
 }
 
+function remoteClaudeEquivalentKeys(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  const keys = [raw];
+  if (raw.includes('::')) {
+    keys.push(raw.split('::').pop());
+  }
+  return Array.from(new Set(keys.filter(Boolean)));
+}
+
 function remoteClaudeLinkedContext(session) {
-  const keys = new Set(remoteClaudeSessionKeys(session));
+  const keys = new Set(remoteClaudeSessionKeys(session).flatMap(remoteClaudeEquivalentKeys));
   const agents = Array.isArray(harnessState && harnessState.agents) ? harnessState.agents : [];
   const tasks = Array.isArray(harnessState && harnessState.tasks) ? harnessState.tasks : [];
-  const agent = agents.find(item => item && item.session_ref && keys.has(String(item.session_ref)));
+  const agent = agents.find(item => {
+    if (!item || !item.session_ref) return false;
+    return remoteClaudeEquivalentKeys(item.session_ref).some(key => keys.has(key));
+  });
   const task = agent ? tasks.find(item => item && item.task_id === agent.current_task_id) : null;
   const taskIndex = task ? tasks.findIndex(item => item && item.task_id === task.task_id) : 9999;
   return { agent: agent || null, task: task || null, taskIndex: taskIndex < 0 ? 9999 : taskIndex };
