@@ -577,7 +577,9 @@ if payload.get("install_settings"):
         settings = {}
     if not isinstance(settings, dict):
         settings = {}
-    settings["disableAutoMode"] = False
+    # Newer Claude Code versions reject boolean disableAutoMode. Omit the key
+    # entirely so auto mode remains available and can be enabled by defaults.
+    settings.pop("disableAutoMode", None)
     settings["skipAutoPermissionPrompt"] = True
     permissions = settings.setdefault("permissions", {})
     if not isinstance(permissions, dict):
