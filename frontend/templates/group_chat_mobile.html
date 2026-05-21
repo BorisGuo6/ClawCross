@@ -7336,15 +7336,14 @@ function renderRemoteClaudeSessionCard(session, index) {
   const liveStatus = String(session.status || '').toLowerCase();
   const reviewOnly = !!session.harness_review_placeholder;
   const placeholderOnly = reviewOnly || !!session.harness_worker_placeholder || !key;
-  const status = reviewOnly ? 'review' : (harnessStatus || taskStatus || liveStatus);
-  const isReview = reviewOnly || harnessStatus === 'review' || taskStatus === 'review' || liveStatus === 'review';
+  const status = reviewOnly ? 'review' : (liveStatus || harnessStatus || taskStatus || 'idle');
   const linkedLine = linked.task
-    ? `${_currentLang === 'zh' ? '绑定 TODO' : 'Linked TODO'}: ${linked.task.title || linked.task.task_id}`
+    ? `${_currentLang === 'zh' ? '绑定 TODO' : 'Linked TODO'}: ${linked.task.title || linked.task.task_id}${taskStatus ? ' · ' + harnessStatusText(taskStatus) : ''}`
     : '';
   const reviewLine = reviewOnly ? (_currentLang === 'zh' ? '等待审查，不自动清理' : 'Waiting for review, not auto-cleaned') : '';
   const attrs = placeholderOnly
     ? `class="remote-claude-card ${reviewOnly ? 'review-placeholder' : 'placeholder'}"`
-    : `class="remote-claude-card${isReview ? ' review-placeholder' : ''}" onclick="openRemoteClaudeSession('${esc(key)}')"`;
+    : `class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')"`;
   return `
     <div ${attrs}>
       <div class="remote-claude-card-top">
