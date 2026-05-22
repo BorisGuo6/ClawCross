@@ -601,6 +601,8 @@ def _project_for_unbound_session(session: dict[str, Any], state: dict[str, Any],
 
 
 def _agent_for_unbound_session(session: dict[str, Any], state: dict[str, Any], *, project_id: str) -> dict[str, Any] | None:
+    if not _env_truthy("CLAWCROSS_HARNESS_AUTOBIND_UNBOUND_SESSIONS"):
+        return None
     session_status = str(session.get("status") or "").lower()
     if session_status not in {"idle", "done", "completed", "shell"}:
         return None
@@ -699,7 +701,9 @@ def _project_label(project_id: str) -> str:
 def expected_remote_session_name(agent: dict[str, Any], task: dict[str, Any] | None, session: dict[str, Any]) -> str:
     project_id = str((task or {}).get("project_id") or agent.get("project_id") or "").strip()
     user, host = _session_remote_identity(session)
-    remote_label = user or _compact_label(host, limit=16) or _compact_label(agent.get("remote_host"), limit=16)
+    remote = session.get("remote") if isinstance(session.get("remote"), dict) else {}
+    hostname = str(session.get("remote_hostname") or remote.get("hostname") or "").strip()
+    remote_label = _compact_label(hostname, limit=22) or user or _compact_label(host, limit=16) or _compact_label(agent.get("remote_host"), limit=16)
     task_label = _compact_label((task or {}).get("title") or agent.get("current_task_id"), limit=32)
     parts = ["ClawCross", _project_label(project_id)]
     if remote_label:

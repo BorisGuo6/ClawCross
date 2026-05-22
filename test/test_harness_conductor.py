@@ -447,7 +447,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
         self.assertEqual(len(assigned), 1)
         self.assertEqual(assigned[0]["task_id"], "task_robotics_next")
 
-    def test_unbound_idle_session_uses_remote_host_project(self):
+    def test_unbound_idle_session_is_not_auto_adopted_by_default(self):
         state = {
             "tasks": [
                 {
@@ -486,6 +486,49 @@ class HarnessConductorLoopTests(unittest.TestCase):
             project_id="",
             dry_run=True,
         )
+
+        self.assertEqual(assigned, [])
+
+    def test_unbound_idle_session_can_be_autobound_when_explicitly_enabled(self):
+        state = {
+            "tasks": [
+                {
+                    "task_id": "task_image_next",
+                    "project_id": "image-layered-world-model",
+                    "title": "Image next",
+                    "status": "todo",
+                    "priority": "high",
+                }
+            ],
+            "agents": [
+                {
+                    "agent_id": "image-layered-feibo@100.87.220.29",
+                    "project_id": "image-layered-world-model",
+                    "current_task_id": "task_done",
+                    "session_ref": "old_session",
+                    "remote_host": "feibo@100.87.220.29",
+                    "status": "done",
+                }
+            ],
+            "runs": [],
+        }
+
+        with mock.patch.dict(os.environ, {"CLAWCROSS_HARNESS_AUTOBIND_UNBOUND_SESSIONS": "1"}):
+            assigned = conductor.assign_next_dashboard_todos(
+                "boris",
+                [
+                    {
+                        "remote_key": "feibo@100.87.220.29::new_session",
+                        "display_id": "new_session",
+                        "remote_user": "feibo",
+                        "remote_host": "100.87.220.29",
+                        "status": "idle",
+                    }
+                ],
+                state,
+                project_id="",
+                dry_run=True,
+            )
 
         self.assertEqual(len(assigned), 1)
         self.assertEqual(assigned[0]["project_id"], "image-layered-world-model")

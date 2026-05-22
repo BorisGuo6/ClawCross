@@ -6471,6 +6471,8 @@ let currentGroupMuteAllAgents = false;
 let senderNameMap = {};   // sender key -> display name 映射
 let remoteClaudeSessions = [];
 let remoteClaudePayload = null;
+let remoteClaudeLoaded = false;
+let remoteClaudeLoading = false;
 let openRemoteClaudeSessionId = '';
 let remoteClaudeSending = false;
 let harnessState = null;
@@ -6867,7 +6869,10 @@ function harnessUniqueAgents(agents) {
   return unique;
 }
 
-function harnessWorkerCountLabel(liveCount, boundCount) {
+function harnessWorkerCountLabel(liveCount, boundCount, remoteReady = true) {
+  if (!remoteReady && boundCount > 0) {
+    return _currentLang === 'zh' ? `${boundCount} worker 连接中` : `${boundCount} worker connecting`;
+  }
   const suffix = _currentLang === 'zh' ? 'worker 在线' : 'worker online';
   if (boundCount > liveCount) return `${liveCount}/${boundCount} ${suffix}`;
   return `${liveCount} ${suffix}`;
@@ -6941,9 +6946,9 @@ function harnessSessionTaskId(session) {
   return (linked.task && linked.task.task_id) || (linked.agent && linked.agent.current_task_id) || session.current_task_id || '';
 }
 
-function harnessPlaceholderSessionFromAgent(agent, tasksById) {
+function harnessPlaceholderSessionFromAgent(agent, tasksById, statusOverride = '') {
   const task = tasksById.get(agent.current_task_id || agent.task_id || '');
-  const status = String(agent.effective_status || agent.status || 'idle').toLowerCase();
+  const status = String(statusOverride || agent.effective_status || agent.status || 'idle').toLowerCase();
   const title = task ? (task.title || task.task_id) : (agent.agent_id || 'worker');
   return {
     display_id: agent.session_ref || agent.agent_id || '',
@@ -6966,7 +6971,7 @@ function harnessPlaceholderSessionFromAgent(agent, tasksById) {
   };
 }
 
-function renderHarnessTaskCard(item, linkedAgents = [], linkedSessions = []) {
+function renderHarnessTaskCard(item, linkedAgents = [], linkedSessions = [], remoteReady = true) {
   const status = String(item.status || 'todo').toLowerCase();
   const linkedCount = linkedSessions.length;
   const boundAgents = harnessUniqueAgents(linkedAgents.filter(agent => harnessWorkerSessionRef(agent)));
@@ -6976,7 +6981,9 @@ function renderHarnessTaskCard(item, linkedAgents = [], linkedSessions = []) {
   if (linkedCount) {
     bindingState = `${_currentLang === 'zh' ? '绑定' : 'linked'} ${linkedCount} worker`;
   } else if (boundAgents.length) {
-    bindingState = `${_currentLang === 'zh' ? '绑定' : 'linked'} 0/${boundAgents.length} worker${_currentLang === 'zh' ? ' 在线' : ' online'}`;
+    bindingState = remoteReady
+      ? `${_currentLang === 'zh' ? '绑定' : 'linked'} 0/${boundAgents.length} worker${_currentLang === 'zh' ? ' 在线' : ' online'}`
+      : `${_currentLang === 'zh' ? '绑定' : 'linked'} ${boundAgents.length} worker ${_currentLang === 'zh' ? '连接中' : 'connecting'}`;
   } else if (hasReviewEvidence) {
     bindingState = _currentLang === 'zh' ? '已提交，待你审查' : 'submitted for review';
   }
@@ -6989,7 +6996,7 @@ function renderHarnessTaskCard(item, linkedAgents = [], linkedSessions = []) {
     .map((session, index) => remoteClaudeTitle(session, index))
     .filter(Boolean);
   const missingAgentNames = !sessionNames.length
-    ? boundAgents.map(agent => `${harnessAgentLabel(agent)} · ${_currentLang === 'zh' ? 'session 不在线' : 'session offline'}`)
+    ? boundAgents.map(agent => `${harnessAgentLabel(agent)} · ${remoteReady ? (_currentLang === 'zh' ? 'session 不在线' : 'session offline') : (_currentLang === 'zh' ? 'session 连接中' : 'session connecting')}`)
     : [];
   const evidenceNames = !sessionNames.length && !missingAgentNames.length && hasReviewEvidence
     ? evidenceAuthors.map(author => `${_currentLang === 'zh' ? '提交' : 'submitted by'}: ${author}`)
@@ -7006,7 +7013,7 @@ function renderHarnessTaskCard(item, linkedAgents = [], linkedSessions = []) {
   </div>`;
 }
 
-function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sessions, projectAgents = []) {
+function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sessions, projectAgents = [], remoteReady = true) {
   const collapsed = harnessCollapsedProjects.has(projectId);
   const tasksById = new Map(tasks.map(task => [task.task_id, task]));
   const boundAgents = harnessUniqueAgents(projectAgents.filter(agent => harnessWorkerSessionRef(agent)));
@@ -7016,17 +7023,17 @@ function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sess
   const remoteLabel = harnessProjectRemoteLabel(tasks, agentsByTask, sessions, projectAgents);
   const meta = [
     `${tasks.length} TODO`,
-    harnessWorkerCountLabel(sessions.length, boundAgents.length),
+    harnessWorkerCountLabel(sessions.length, boundAgents.length, remoteReady),
     remoteLabel ? `remote ${remoteLabel}` : ''
   ].filter(Boolean).join(' · ');
   const encodedProjectId = encodeURIComponent(projectId || 'default');
   const todoCards = tasks.map(task => {
     const taskSessions = sessions.filter(session => harnessSessionTaskId(session) === task.task_id);
-    return renderHarnessTaskCard(task, agentsByTask.get(task.task_id) || [], taskSessions);
+    return renderHarnessTaskCard(task, agentsByTask.get(task.task_id) || [], taskSessions, remoteReady);
   }).join('') || `<div class="harness-empty-row">${esc(_currentLang === 'zh' ? '暂无 TODO' : 'No TODO')}</div>`;
   const boundPlaceholders = boundAgents
     .filter(agent => !sessions.some(session => harnessAgentMatchesRemoteSession(agent, session)))
-    .map(agent => harnessPlaceholderSessionFromAgent(agent, tasksById));
+    .map(agent => harnessPlaceholderSessionFromAgent(agent, tasksById, remoteReady ? '' : 'loading'));
   const workerCards = sessions.concat(boundPlaceholders);
   const sessionCards = workerCards
     .slice()
@@ -7051,7 +7058,7 @@ function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sess
         <div class="harness-project-row-track">${todoCards}</div>
       </div>
       <div class="harness-project-row">
-        <div class="harness-project-row-head"><span>${esc(_currentLang === 'zh' ? 'Workers' : 'Workers')}</span><span>${esc(harnessWorkerCountLabel(sessions.length, boundAgents.length))}</span></div>
+        <div class="harness-project-row-head"><span>${esc(_currentLang === 'zh' ? 'Workers' : 'Workers')}</span><span>${esc(harnessWorkerCountLabel(sessions.length, boundAgents.length, remoteReady))}</span></div>
         <div class="harness-project-row-track">${sessionCards}</div>
       </div>
     </div>
@@ -7116,6 +7123,7 @@ function renderHarnessState(payload) {
   const visibleWorkers = agents.filter(agent => isHarnessVisibleWorker(agent, openTaskIds, projectsById));
   const sessionRefWorkers = agents.filter(agent => isHarnessSessionBackedWorker(agent, openTaskIds, projectsById));
   const remotePayload = remoteClaudePayload || window.__lastRemoteClaudePayload || {};
+  const remoteReady = remoteClaudeLoaded || !!(remotePayload && (Array.isArray(remotePayload.sessions) || Array.isArray(remotePayload.remotes)));
   const remotes = Array.isArray(remotePayload && remotePayload.remotes) ? remotePayload.remotes : [];
   const liveSessions = Array.isArray(remotePayload && remotePayload.sessions) ? remotePayload.sessions : remoteClaudeSessions;
   const realLiveSessions = liveSessions.filter(session => (
@@ -7148,11 +7156,14 @@ function renderHarnessState(payload) {
   sessionRefWorkers.forEach(agent => {
     if (agent && agent.project_id) projectIdsWithRows.add(agent.project_id);
   });
+  openTasks.forEach(task => {
+    projectIdsWithRows.add(task.project_id || 'default');
+  });
   const displayedOpenTasks = openTasks.filter(task => projectIdsWithRows.has(task.project_id || 'default'));
   const okRemoteCount = remotes.filter(item => item && item.ok).length;
   statusEl.textContent = _currentLang === 'zh'
-    ? `${projectIdsWithRows.size} 项目 · ${displayedOpenTasks.length} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount)} · ${needsUser} 等用户 · ${stale} 失联${remotes.length ? ` · ${okRemoteCount || remotes.length}/${remotes.length} 电脑可达` : ''}`
-    : `${projectIdsWithRows.size} projects · ${displayedOpenTasks.length} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount)} · ${needsUser} needs user · ${stale} stale${remotes.length ? ` · ${okRemoteCount || remotes.length}/${remotes.length} computers` : ''}`;
+    ? `${projectIdsWithRows.size} 项目 · ${displayedOpenTasks.length} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount, remoteReady)} · ${needsUser} 等用户 · ${remoteReady ? stale : 0} 失联${remoteReady && remotes.length ? ` · ${okRemoteCount || remotes.length}/${remotes.length} 电脑可达` : remoteClaudeLoading ? ' · 正在连接远端' : ''}`
+    : `${projectIdsWithRows.size} projects · ${displayedOpenTasks.length} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount, remoteReady)} · ${needsUser} needs user · ${remoteReady ? stale : 0} stale${remoteReady && remotes.length ? ` · ${okRemoteCount || remotes.length}/${remotes.length} computers` : remoteClaudeLoading ? ' · connecting remotes' : ''}`;
   const cards = [];
   const agentsByTask = new Map();
   sessionRefWorkers.forEach(agent => {
@@ -7185,7 +7196,7 @@ function renderHarnessState(payload) {
       return rankA - rankB || String(a[0]).localeCompare(String(b[0]));
     })
     .forEach(([projectId, row]) => {
-      cards.push(renderHarnessProjectGroup(projectId, row.tasks, projectsById.get(projectId), agentsByTask, row.sessions, row.agents));
+      cards.push(renderHarnessProjectGroup(projectId, row.tasks, projectsById.get(projectId), agentsByTask, row.sessions, row.agents, remoteReady));
     });
   if (!cards.length) {
     cards.push(`<div class="harness-card"><div class="harness-preview">${esc(_currentLang === 'zh' ? '暂无项目 TODO 或 worker session。' : 'No project TODO or worker session yet.')}</div></div>`);
@@ -7274,6 +7285,7 @@ function remoteClaudeTitle(session, index) {
 function remoteClaudeStatusText(status) {
   const s = String(status || '').trim().toLowerCase();
   const zh = _currentLang === 'zh';
+  if (s === 'loading' || s === 'connecting') return zh ? '连接中' : 'Connecting';
   if (s === 'active') return zh ? '进行中' : 'Active';
   if (s === 'idle') return zh ? '空闲' : 'Idle';
   if (s === 'shell') return zh ? 'Shell 中' : 'Shell';
@@ -7366,6 +7378,9 @@ function renderRemoteClaudeSessionCard(session, index) {
     ? `${_currentLang === 'zh' ? '绑定 TODO' : 'Linked TODO'}: ${linked.task.title || linked.task.task_id}${taskStatus ? ' · ' + harnessStatusText(taskStatus) : ''}`
     : '';
   const reviewLine = reviewOnly ? (_currentLang === 'zh' ? '等待审查，不自动清理' : 'Waiting for review, not auto-cleaned') : '';
+  const unmanagedLine = (!linked.agent && !reviewOnly && !session.harness_worker_placeholder)
+    ? (_currentLang === 'zh' ? '未接管：不会自动分配 TODO 或自动发送' : 'Unmanaged: no automatic TODO assignment or messages')
+    : '';
   const attrs = placeholderOnly
     ? `class="remote-claude-card ${reviewOnly ? 'review-placeholder' : 'placeholder'}"`
     : `class="remote-claude-card" onclick="openRemoteClaudeSession('${esc(key)}')"`;
@@ -7379,6 +7394,7 @@ function renderRemoteClaudeSessionCard(session, index) {
       ${cwd ? `<div class="remote-claude-card-meta">${esc(cwd)}</div>` : ''}
       ${linkedLine ? `<div class="remote-claude-card-meta">${esc(linkedLine)}</div>` : ''}
       ${reviewLine ? `<div class="remote-claude-card-meta">${esc(reviewLine)}</div>` : ''}
+      ${unmanagedLine ? `<div class="remote-claude-card-meta">${esc(unmanagedLine)}</div>` : ''}
       <div class="remote-claude-preview">${esc(remoteClaudePreviewText(session.last_message))}</div>
     </div>`;
 }
@@ -7509,17 +7525,22 @@ async function refreshRemoteClaudeSessions(showToast = false) {
   const btn = document.getElementById('remote-claude-refresh');
   const statusEl = document.getElementById('remote-claude-status');
   if (btn) btn.disabled = true;
+  remoteClaudeLoading = true;
+  if (harnessState) renderHarnessState(harnessState);
   if (statusEl) statusEl.textContent = _currentLang === 'zh' ? '正在连接远端 Claude agents...' : 'Connecting remote Claude agents...';
   try {
     const data = await api('GET', '/proxy_remote_claude_sessions?limit=24');
+    remoteClaudeLoaded = true;
     renderRemoteClaudeSessions(data);
     if (showToast) {
       toast(data.ok ? (_currentLang === 'zh' ? '远端 Claude sessions 已刷新' : 'Remote Claude sessions refreshed') : (data.error || 'Remote Claude unavailable'), data.ok ? 1800 : 3500);
     }
   } catch (e) {
+    remoteClaudeLoaded = true;
     renderRemoteClaudeSessions({ ok: false, error: e.message, sessions: [] });
     if (showToast) toast(e.message, 3500);
   } finally {
+    remoteClaudeLoading = false;
     if (btn) btn.disabled = false;
   }
 }

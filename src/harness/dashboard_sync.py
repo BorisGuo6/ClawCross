@@ -203,6 +203,7 @@ def dashboard_comment_kind(kind: str) -> str:
     clean = str(kind or "comment").strip().lower() or "comment"
     aliases = {
         "artifact": "comment",
+        "host_progress": "comment",
         "review": "comment",
     }
     return aliases.get(clean, clean)
@@ -264,6 +265,7 @@ def sync_harness_to_dashboard(
                     "status": status,
                     "priority": harness_task.get("priority") or "medium",
                     "assignee": harness_task.get("assignee") or None,
+                    "due_at": harness_task.get("due_at") or "",
                     "result": None,
                     "comments": [],
                     "updated_at": harness_task.get("updated_at") or now_iso(),
@@ -293,6 +295,16 @@ def sync_harness_to_dashboard(
                 dashboard_task["completed_at"] = str(harness_task.get("updated_at") or now_iso()).split("T", 1)[0]
             summary["status_updates"] += 1
             changed = True
+
+        for field in ("title", "description", "priority", "assignee", "due_at"):
+            value = harness_task.get(field)
+            if field == "assignee" and not value:
+                value = None
+            if value is None and field != "assignee":
+                continue
+            if dashboard_task.get(field) != value:
+                dashboard_task[field] = value
+                changed = True
 
         comments = dashboard_task.setdefault("comments", [])
         if not isinstance(comments, list):
