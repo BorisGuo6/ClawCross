@@ -11,6 +11,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from harness.store import apply_harness_event, get_harness_state
@@ -55,6 +56,10 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
 
 def dashboard_tasks_path(dashboard_root: Path | None = None) -> Path:
     return (dashboard_root or default_dashboard_root()) / "state" / "tasks.json"
+
+
+def dashboard_repo_root(dashboard_root: Path | None = None) -> Path:
+    return (dashboard_root or default_dashboard_root()).resolve().parent
 
 
 def task_has_host_verification(task: dict[str, Any], runs: list[dict[str, Any]] | None = None) -> bool:
@@ -320,4 +325,164 @@ def sync_harness_to_dashboard(
             write_json(path, doc)
     summary["changed"] = changed
     summary["target"] = str(path)
+    return summary
+
+
+def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def publish_dashboard_tasks(
+    *,
+    dashboard_root: Path | None = None,
+    message: str = "Update dashboard task status from ClawCross harness",
+    push: bool = True,
+) -> dict[str, Any]:
+    """Commit and push task-state changes from the dashboard repo, if any.
+
+    The harness deliberately publishes only dashboard/state/tasks.json so Claude
+    configuration, runtime wiring, and any unrelated dashboard edits stay out of
+    this automated path.
+    """
+
+    path = dashboard_tasks_path(dashboard_root).resolve()
+    repo_root = dashboard_repo_root(dashboard_root)
+    git_dir = repo_root / ".git"
+    summary: dict[str, Any] = {
+        "ok": False,
+        "published": False,
+        "pushed": False,
+        "repo": str(repo_root),
+        "target": str(path),
+    }
+    if not git_dir.exists():
+        summary["reason"] = "not_git_repo"
+        return summary
+    if not path.exists():
+        summary["reason"] = "missing_tasks_json"
+        return summary
+    try:
+        rel_path = str(path.relative_to(repo_root))
+    except ValueError:
+        summary["reason"] = "target_outside_repo"
+        return summary
+
+    status = _run_git(repo_root, ["status", "--porcelain", "--", rel_path])
+    if status.returncode != 0:
+        summary["reason"] = "status_failed"
+        summary["error"] = (status.stderr or status.stdout or "").strip()
+        return summary
+    if not (status.stdout or "").strip():
+        summary["ok"] = True
+        summary["reason"] = "no_changes"
+        return summary
+
+    add = _run_git(repo_root, ["add", "--", rel_path])
+    if add.returncode != 0:
+        summary["reason"] = "add_failed"
+        summary["error"] = (add.stderr or add.stdout or "").strip()
+        return summary
+
+    diff = _run_git(repo_root, ["diff", "--cached", "--quiet", "--", rel_path])
+    if diff.returncode == 0:
+        summary["ok"] = True
+        summary["reason"] = "no_staged_changes"
+        return summary
+    if diff.returncode not in {0, 1}:
+        summary["reason"] = "diff_failed"
+        summary["error"] = (diff.stderr or diff.stdout or "").strip()
+        return summary
+
+    commit = _run_git(repo_root, ["commit", "-m", message, "--", rel_path])
+    if commit.returncode != 0:
+        summary["reason"] = "commit_failed"
+        summary["error"] = (commit.stderr or commit.stdout or "").strip()
+        return summary
+    summary["published"] = True
+    rev = _run_git(repo_root, ["rev-parse", "--short", "HEAD"])
+    if rev.returncode == 0:
+        summary["commit"] = (rev.stdout or "").strip()
+
+    if push:
+        pushed = _run_git(repo_root, ["push"])
+        if pushed.returncode != 0:
+            summary["reason"] = "push_failed"
+            summary["error"] = (pushed.stderr or pushed.stdout or "").strip()
+            return summary
+        summary["pushed"] = True
+
+    summary["ok"] = True
+    summary["reason"] = "published"
+    return summary
+
+
+def sync_dashboard_to_supabase(
+    *,
+    dashboard_root: Path | None = None,
+    project_id: str = "",
+    timeout_sec: int = 180,
+) -> dict[str, Any]:
+    """Push dashboard/state/*.json into the Supabase-backed dashboard tables."""
+
+    repo_root = dashboard_repo_root(dashboard_root)
+    script = repo_root / "scripts" / "sync-dashboard-to-supabase.mjs"
+    env_file = repo_root / ".env"
+    summary: dict[str, Any] = {
+        "ok": False,
+        "synced": False,
+        "repo": str(repo_root),
+        "script": str(script),
+    }
+    if not script.exists():
+        summary["reason"] = "missing_sync_script"
+        return summary
+    if not env_file.exists():
+        summary["reason"] = "missing_dashboard_env"
+        return summary
+
+    command = ["npm", "run", "supabase:sync", "--", "--once"]
+    if project_id:
+        command.extend(["--project-id", project_id])
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(repo_root),
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=max(10, int(timeout_sec)),
+        )
+    except subprocess.TimeoutExpired as exc:
+        summary["reason"] = "timeout"
+        summary["error"] = str(exc)
+        return summary
+
+    output = "\n".join(part.strip() for part in (proc.stdout, proc.stderr) if part and part.strip())
+    summary["output"] = output[-4000:] if output else ""
+    if proc.returncode != 0:
+        summary["reason"] = "sync_failed"
+        summary["error"] = summary["output"]
+        return summary
+
+    parsed: dict[str, Any] = {}
+    for line in reversed((proc.stdout or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            parsed = json.loads(line)
+            break
+        except json.JSONDecodeError:
+            continue
+    summary.update(parsed)
+    summary["ok"] = True
+    summary["synced"] = True
+    summary.setdefault("reason", "synced")
     return summary

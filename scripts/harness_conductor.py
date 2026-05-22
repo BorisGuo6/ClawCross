@@ -55,10 +55,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dashboard-root", default=os.getenv("CLAWCROSS_HARNESS_DASHBOARD_ROOT", ""))
     parser.add_argument("--no-dashboard-sync", action="store_true")
     parser.add_argument(
+        "--dashboard-publish",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("CLAWCROSS_HARNESS_DASHBOARD_PUBLISH", True),
+        help="Commit and push dashboard/state/tasks.json when the conductor changes dashboard task state.",
+    )
+    parser.add_argument(
+        "--dashboard-supabase-sync",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("CLAWCROSS_HARNESS_DASHBOARD_SUPABASE_SYNC", True),
+        help="Sync dashboard/state/*.json into Supabase when the conductor changes dashboard task state.",
+    )
+    parser.add_argument(
         "--llm-mode",
         action=argparse.BooleanOptionalAction,
         default=_env_bool("CLAWCROSS_HARNESS_CONDUCTOR_LLM", True),
         help="Use the configured Webot/ClawCross LLM to choose assignments and draft replies.",
+    )
+    parser.add_argument(
+        "--codex-review",
+        action=argparse.BooleanOptionalAction,
+        default=_env_bool("CLAWCROSS_HARNESS_CONDUCTOR_CODEX_REVIEW", True),
+        help="Use local Codex exec to inspect and resolve review/待审查 TODOs before surfacing them to the user.",
+    )
+    parser.add_argument(
+        "--codex-review-limit",
+        type=int,
+        default=int(os.getenv("CLAWCROSS_HARNESS_CONDUCTOR_CODEX_REVIEW_LIMIT", "1")),
+        help="Maximum review TODOs local Codex may inspect per conductor tick.",
     )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -89,6 +113,10 @@ def main() -> None:
                 dashboard_root=Path(args.dashboard_root).expanduser() if args.dashboard_root else None,
                 project_id=args.project_id,
                 llm_mode=bool(args.llm_mode),
+                codex_review=bool(args.codex_review),
+                codex_review_limit=max(0, args.codex_review_limit),
+                publish_dashboard=bool(args.dashboard_publish) and not args.no_dashboard_sync,
+                sync_supabase=bool(args.dashboard_supabase_sync) and not args.no_dashboard_sync,
             )
             actions = result.get("actions") or []
             if actions or not result.get("remote_ok"):

@@ -15,13 +15,17 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 from typing import Any
 
 from harness.dashboard_sync import (
     HOST_VERIFIED_COMMENT_KIND,
     has_result_comment,
     import_dashboard_todos,
+    publish_dashboard_tasks,
     requires_machine_verifier,
+    sync_dashboard_to_supabase,
     sync_harness_to_dashboard,
     task_has_host_verification,
 )
@@ -45,6 +49,7 @@ PROJECT_SESSION_LABELS = {
     "self-improving-agents": "Self-Improving Agents",
     "umi-world-model": "UMI World Model",
 }
+TERMINAL_PROJECT_STATUSES = {"done", "completed", "closed", "archived", "cancelled"}
 
 RISKY_PATTERNS = (
     r"\bsudo\b",
@@ -89,6 +94,8 @@ SAFE_ALLOW_TEXT = (
 LLM_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 OPENCLAW_GATEWAY_BASE_URL = "http://127.0.0.1:18789/v1"
 CLAWCROSS_AGENT_COMPLETIONS_URL = "http://127.0.0.1:51200/v1/chat/completions"
+CODEX_REVIEW_ACTIONS = {"accept", "reopen", "needs_user", "skip"}
+CODEX_REVIEW_STATUSES = {"active", "blocked", "needs_user", "review"}
 
 
 def _env_truthy(key: str, default: bool = False) -> bool:
@@ -638,6 +645,39 @@ def _task_by_id(state: dict[str, Any], task_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _project_by_id(state: dict[str, Any], project_id: str) -> dict[str, Any] | None:
+    for project in state.get("projects", []) or []:
+        if str(project.get("project_id") or "") == project_id:
+            return project
+    return None
+
+
+def _project_is_active(state: dict[str, Any], project_id: str) -> bool:
+    if not project_id:
+        return False
+    project = _project_by_id(state, project_id)
+    if not project:
+        return False
+    status = str(project.get("status") or "active").strip().lower().replace("-", "_")
+    return status not in TERMINAL_PROJECT_STATUSES
+
+
+def _session_counts_by_project(sessions: list[dict[str, Any]], state: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    seen: set[str] = set()
+    for session in sessions:
+        agent = _agent_for_session(session, state)
+        if not agent:
+            continue
+        project_id = str(agent.get("project_id") or "").strip()
+        key = session_key(session)
+        if not project_id or not key or key in seen:
+            continue
+        seen.add(key)
+        counts[project_id] = counts.get(project_id, 0) + 1
+    return counts
+
+
 def _compact_label(value: Any, *, limit: int = 34) -> str:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     if not text:
@@ -698,10 +738,25 @@ def verify_finished_tasks(user_id: str, *, project_id: str = DEFAULT_PROJECT_ID)
         if project_id and task.get("project_id") != project_id:
             skipped += 1
             continue
-        if str(task.get("status") or "").lower() != "done":
+        task_status = str(task.get("status") or "").lower()
+        if _has_host_verified_comment(task):
+            if task_status != "done":
+                apply_harness_event(
+                    user_id,
+                    {
+                        "action": "task_status",
+                        "agent_id": CONDUCTOR_AGENT_ID,
+                        "project_id": task.get("project_id") or project_id,
+                        "task_id": task.get("task_id"),
+                        "status": "done",
+                        "message": "Host verification already exists; restoring TODO to done.",
+                    },
+                )
+                accepted += 1
+                continue
             skipped += 1
             continue
-        if _has_host_verified_comment(task):
+        if task_status != "done":
             skipped += 1
             continue
 
@@ -740,6 +795,312 @@ def verify_finished_tasks(user_id: str, *, project_id: str = DEFAULT_PROJECT_ID)
         )
         moved_to_review += 1
     return {"accepted": accepted, "moved_to_review": moved_to_review, "skipped": skipped}
+
+
+def _task_review_fingerprint(task: dict[str, Any]) -> str:
+    comments = [comment for comment in task.get("comments", []) or [] if isinstance(comment, dict)]
+    last = comments[-1] if comments else {}
+    return _fingerprint(
+        task.get("task_id"),
+        task.get("project_id"),
+        task.get("status"),
+        task.get("updated_at"),
+        task.get("run_id"),
+        len(comments),
+        last.get("kind"),
+        last.get("created_at"),
+        last.get("body") or last.get("message"),
+    )
+
+
+def _review_task_candidates(state: dict[str, Any], *, project_id: str) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    for task in state.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        if project_id and task.get("project_id") != project_id:
+            continue
+        if str(task.get("status") or "").lower() != "review":
+            continue
+        if _has_host_verified_comment(task):
+            continue
+        tasks.append(task)
+    return sorted(tasks, key=lambda item: (str(item.get("updated_at") or ""), str(item.get("task_id") or "")))
+
+
+def _codex_review_prompt(task: dict[str, Any], state: dict[str, Any], sessions: list[dict[str, Any]]) -> str:
+    task_id = str(task.get("task_id") or "")
+    project_id = str(task.get("project_id") or "")
+    related_agents = [
+        agent
+        for agent in state.get("agents", []) or []
+        if isinstance(agent, dict)
+        and (
+            str(agent.get("current_task_id") or "") == task_id
+            or str(agent.get("project_id") or "") == project_id
+        )
+    ]
+    related_sessions = [
+        {k: session.get(k) for k in ("remote_key", "display_id", "job_id", "title", "status", "cwd", "last_message", "remote_user", "remote_host")}
+        for session in sessions
+        if isinstance(session, dict)
+        and (
+            project_id.lower() in str(session.get("title") or "").lower()
+            or any(agent_session_refs(agent) & session_keys(session) for agent in related_agents)
+        )
+    ]
+    return f"""
+你是本机 Codex reviewer，由 ClawCross harness conductor 调用来处理 dashboard 里 `待你审查/review` 的 TODO。
+
+目标：判断这个 review TODO 能否由本机自动验收，或应该退回远端 worker 继续处理。
+
+硬约束：
+- 你可以检查本机文件、dashboard、harness state，也可以通过已有 SSH 连接读取远端 worker 工作区并运行非破坏性验证命令。
+- 不要修改代码、dashboard、harness state 或远端文件；不要提交 git；不要安装依赖；不要调用商业付费 API；不要访问或外传 secrets。
+- 只有证据足够时才 accept。实验/评测/推理/benchmark/code 任务必须有可复现命令、结果文件、测试/verifier 或明确的 blocker。
+- 如果 worker 结果不满足 TODO 范围，返回 reopen，并说明下一步要 worker 做什么。
+- 如果需要用户提供密钥/账号/硬件/真实安全决策，返回 needs_user。
+- 如果无法判断，返回 skip。
+- 只返回一个 JSON 对象，不要 Markdown，不要解释性正文。
+
+JSON 格式：
+{{
+  "action": "accept|reopen|needs_user|skip",
+  "confidence": 0.0,
+  "summary": "一句话结论",
+  "evidence": ["检查过的文件/命令/指标"],
+  "commands": ["实际运行过的验证命令"],
+  "reason": "为什么这么判定",
+  "new_status": "active|blocked|needs_user|review",
+  "worker_message": "如果 reopen/needs_user，要发给 worker 或展示给用户的下一步"
+}}
+
+当前 TODO:
+{_json_preview({k: task.get(k) for k in ("task_id", "project_id", "title", "description", "status", "priority", "due_at", "updated_at", "comments", "run_id")}, 9000)}
+
+相关 agents:
+{_json_preview(related_agents, 5000)}
+
+相关远端 sessions:
+{_json_preview(related_sessions, 5000)}
+
+Dashboard state path: /Users/boris/workspace/BorisGuo6.github.io/dashboard/state/tasks.json
+ClawCross repo path: /Users/boris/workspace/ClawCross
+""".strip()
+
+
+def _call_local_codex_review(task: dict[str, Any], state: dict[str, Any], sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    binary = (os.getenv("CLAWCROSS_HARNESS_CODEX_BINARY") or "codex").strip()
+    timeout_raw = os.getenv("CLAWCROSS_HARNESS_CODEX_REVIEW_TIMEOUT_SEC") or "900"
+    try:
+        timeout = max(30.0, float(timeout_raw))
+    except ValueError:
+        timeout = 900.0
+    sandbox = (os.getenv("CLAWCROSS_HARNESS_CODEX_REVIEW_SANDBOX") or "read-only").strip() or "read-only"
+    model = (os.getenv("CLAWCROSS_HARNESS_CODEX_REVIEW_MODEL") or "").strip()
+    profile = (os.getenv("CLAWCROSS_HARNESS_CODEX_REVIEW_PROFILE") or "").strip()
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = Path(tempfile.NamedTemporaryFile(prefix="codex-review-", suffix=".txt", dir=DATA_DIR, delete=False).name)
+    prompt = _codex_review_prompt(task, state, sessions)
+    cmd = [
+        binary,
+        "exec",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--cd",
+        str(Path(__file__).resolve().parents[2]),
+        "--sandbox",
+        sandbox,
+        "--output-last-message",
+        str(out_path),
+    ]
+    if model:
+        cmd.extend(["--model", model])
+    if profile:
+        cmd.extend(["--profile", profile])
+    cmd.append("-")
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=prompt,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            env=os.environ.copy(),
+        )
+    except Exception as exc:
+        return {"error": str(exc), "action": "skip"}
+    try:
+        content = out_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        content = ""
+    try:
+        out_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or content or "").strip()
+        return {"error": f"codex exec failed with code {proc.returncode}: {detail[:1200]}", "action": "skip"}
+    parsed = _parse_llm_json(content or proc.stdout)
+    if not parsed:
+        return {"error": f"codex returned no JSON object: {(content or proc.stdout or '')[:1200]}", "action": "skip"}
+    parsed.setdefault("_review_source", "local_codex")
+    return parsed
+
+
+def _format_codex_review_message(result: dict[str, Any]) -> str:
+    summary = str(result.get("summary") or result.get("reason") or "").strip()
+    evidence = result.get("evidence") if isinstance(result.get("evidence"), list) else []
+    commands = result.get("commands") if isinstance(result.get("commands"), list) else []
+    parts = []
+    if summary:
+        parts.append(summary)
+    if evidence:
+        parts.append("Evidence: " + "; ".join(str(item).strip() for item in evidence[:8] if str(item).strip()))
+    if commands:
+        parts.append("Commands: " + "; ".join(str(item).strip() for item in commands[:6] if str(item).strip()))
+    reason = str(result.get("reason") or "").strip()
+    if reason and reason != summary:
+        parts.append("Reason: " + reason)
+    return "\n".join(parts).strip()[:5000] or "Local Codex review completed."
+
+
+def review_pending_tasks_with_codex(
+    user_id: str,
+    state: dict[str, Any],
+    sessions: list[dict[str, Any]],
+    cache: dict[str, Any],
+    *,
+    project_id: str = DEFAULT_PROJECT_ID,
+    dry_run: bool = False,
+    limit: int = 1,
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+    tasks = _review_task_candidates(state, project_id=project_id)
+    if not tasks:
+        return []
+    review_cache = cache.setdefault("codex_review", {})
+    results: list[dict[str, Any]] = []
+    for task in tasks:
+        if len(results) >= limit:
+            break
+        task_id = str(task.get("task_id") or "")
+        fingerprint = _task_review_fingerprint(task)
+        cached = review_cache.get(task_id) if isinstance(review_cache.get(task_id), dict) else {}
+        if cached.get("fingerprint") == fingerprint:
+            continue
+        entry = {
+            "task_id": task_id,
+            "project_id": task.get("project_id") or project_id,
+            "ok": False,
+            "action": "",
+        }
+        if dry_run:
+            entry.update({"ok": True, "action": "dry_run", "fingerprint": fingerprint})
+            results.append(entry)
+            continue
+        result = _call_local_codex_review(task, state, sessions)
+        action = str(result.get("action") or "skip").strip().lower()
+        if action not in CODEX_REVIEW_ACTIONS:
+            action = "skip"
+        entry.update(
+            {
+                "ok": not bool(result.get("error")),
+                "action": action,
+                "confidence": result.get("confidence"),
+                "summary": str(result.get("summary") or result.get("reason") or "")[:500],
+                "error": str(result.get("error") or "")[:1200],
+            }
+        )
+        review_cache[task_id] = {
+            "fingerprint": fingerprint,
+            "action": action,
+            "ok": entry["ok"],
+            "reviewed_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "summary": entry["summary"],
+            "error": entry["error"],
+        }
+        if result.get("error"):
+            results.append(entry)
+            continue
+
+        message = _format_codex_review_message(result)
+        if action == "accept":
+            apply_harness_event(
+                user_id,
+                {
+                    "action": "task_comment",
+                    "agent_id": CONDUCTOR_AGENT_ID,
+                    "project_id": task.get("project_id") or project_id,
+                    "task_id": task_id,
+                    "kind": HOST_VERIFIED_COMMENT_KIND,
+                    "message": "Local Codex host review accepted this TODO.\n" + message,
+                },
+            )
+            apply_harness_event(
+                user_id,
+                {
+                    "action": "task_status",
+                    "agent_id": CONDUCTOR_AGENT_ID,
+                    "project_id": task.get("project_id") or project_id,
+                    "task_id": task_id,
+                    "status": "done",
+                    "message": "Local Codex review accepted and closed this TODO.",
+                },
+            )
+        elif action == "reopen":
+            new_status = str(result.get("new_status") or "active").strip().lower()
+            if new_status not in CODEX_REVIEW_STATUSES:
+                new_status = "active"
+            worker_message = str(result.get("worker_message") or "").strip()
+            apply_harness_event(
+                user_id,
+                {
+                    "action": "task_comment",
+                    "agent_id": CONDUCTOR_AGENT_ID,
+                    "project_id": task.get("project_id") or project_id,
+                    "task_id": task_id,
+                    "kind": "review",
+                    "message": "Local Codex host review reopened this TODO.\n" + (worker_message or message),
+                },
+            )
+            apply_harness_event(
+                user_id,
+                {
+                    "action": "task_status",
+                    "agent_id": CONDUCTOR_AGENT_ID,
+                    "project_id": task.get("project_id") or project_id,
+                    "task_id": task_id,
+                    "status": new_status,
+                    "message": worker_message or "Local Codex review found the TODO is not ready to close.",
+                },
+            )
+        elif action == "needs_user":
+            apply_harness_event(
+                user_id,
+                {
+                    "action": "task_status",
+                    "agent_id": CONDUCTOR_AGENT_ID,
+                    "project_id": task.get("project_id") or project_id,
+                    "task_id": task_id,
+                    "status": "needs_user",
+                    "message": str(result.get("worker_message") or message or "Local Codex review requires user input.")[:5000],
+                },
+            )
+            apply_harness_event(
+                user_id,
+                {
+                    "action": "needs_user",
+                    "agent_id": CONDUCTOR_AGENT_ID,
+                    "project_id": task.get("project_id") or project_id,
+                    "task_id": task_id,
+                    "message": str(result.get("worker_message") or message or "Local Codex review requires user input.")[:5000],
+                },
+            )
+        results.append(entry)
+    return results
 
 
 def _priority_rank(task: dict[str, Any]) -> int:
@@ -913,6 +1274,7 @@ def cleanup_remote_sessions_without_todos(
     """Close ClawCross-managed remote sessions once they no longer own a live TODO."""
 
     results: list[dict[str, Any]] = []
+    project_session_counts = _session_counts_by_project(sessions, state)
     for session in sessions:
         agent = _agent_for_session(session, state)
         if not agent:
@@ -937,16 +1299,46 @@ def cleanup_remote_sessions_without_todos(
         if not key:
             continue
         agent_id = str(agent.get("agent_id") or "").strip()
+        agent_project_id = str(agent.get("project_id") or project_id or "").strip()
         entry = {
             "session_key": key,
             "agent_id": agent_id,
             "task_id": task_id,
-            "project_id": agent.get("project_id") or project_id,
+            "project_id": agent_project_id,
             "reason": reason,
             "closed": False,
             "deleted_agent": False,
+            "kept": False,
             "ok": False,
         }
+        if (
+            agent_project_id
+            and _project_is_active(state, agent_project_id)
+            and project_session_counts.get(agent_project_id, 0) <= 1
+        ):
+            entry["kept"] = True
+            entry["ok"] = True
+            entry["reason"] = f"{reason}; kept because project is still active and this is its last session"
+            if not dry_run:
+                apply_harness_event(
+                    user_id,
+                    {
+                        "action": "heartbeat",
+                        "agent_id": agent_id,
+                        "agent_type": agent.get("agent_type") or "claude-code-worker",
+                        "project_id": agent_project_id,
+                        "current_task_id": "",
+                        "status": "idle",
+                        "needs_user": False,
+                        "session_ref": key,
+                        "remote_host": agent.get("remote_host") or "",
+                        "worktree": agent.get("worktree") or "",
+                        "message": "项目仍在进行中；当前暂无可自动清理的绑定 TODO，保留为 standby worker。",
+                        "metadata": {"clawcross": {"standby": True, "standby_reason": reason}},
+                    },
+                )
+            results.append(entry)
+            continue
         if dry_run:
             entry["ok"] = True
             results.append(entry)
@@ -965,7 +1357,7 @@ def cleanup_remote_sessions_without_todos(
                 {
                     "action": "agent_delete",
                     "agent_id": agent_id,
-                    "project_id": agent.get("project_id") or project_id,
+                    "project_id": agent_project_id,
                     "task_id": task_id,
                     "message": f"ClawCross closed remote session {key}: {reason}.",
                 },
@@ -977,7 +1369,7 @@ def cleanup_remote_sessions_without_todos(
                 {
                     "action": "blocked",
                     "agent_id": agent_id,
-                    "project_id": agent.get("project_id") or project_id,
+                    "project_id": agent_project_id,
                     "task_id": task_id,
                     "session_ref": key,
                     "message": f"ClawCross tried to close remote session {key} but failed: {close_response.get('error') or 'unknown error'}",
@@ -1073,7 +1465,7 @@ def decide_for_session(
     if not key or not agent or not task:
         return None
     task_status = str(task.get("status") or "").lower()
-    if task_status in {"done", "review"}:
+    if task_status in {"done", "review", "needs_user"}:
         return None
     agent_id = str(agent.get("agent_id") or "").strip()
     task_id = str(task.get("task_id") or "").strip()
@@ -1164,12 +1556,18 @@ def run_conductor_once(
     dashboard_root: Path | None = None,
     project_id: str = DEFAULT_PROJECT_ID,
     llm_mode: bool = False,
+    codex_review: bool = True,
+    codex_review_limit: int = 1,
+    publish_dashboard: bool = False,
+    sync_supabase: bool = False,
 ) -> dict[str, Any]:
     os.environ.setdefault("CLAWCROSS_REMOTE_CLAUDE_TIMEOUT_SEC", "45")
     os.environ.setdefault("CLAWCROSS_REMOTE_CLAUDE_CONNECT_TIMEOUT_SEC", "10")
     pull_summary: dict[str, Any] = {}
     verify_summary: dict[str, Any] = {}
     push_summary: dict[str, Any] = {}
+    publish_summary: dict[str, Any] = {}
+    supabase_summary: dict[str, Any] = {}
     if sync_dashboard and not dry_run:
         pull_summary = import_dashboard_todos(user_id, dashboard_root=dashboard_root, project_id=project_id)
         verify_summary = verify_finished_tasks(user_id, project_id=project_id)
@@ -1182,6 +1580,20 @@ def run_conductor_once(
     assignments: list[dict[str, Any]] = []
     cleanup: list[dict[str, Any]] = []
     renames: list[dict[str, Any]] = []
+    codex_reviews: list[dict[str, Any]] = []
+
+    if sync_dashboard and codex_review and not dry_run:
+        codex_reviews = review_pending_tasks_with_codex(
+            user_id,
+            state,
+            sessions,
+            cache,
+            project_id=project_id,
+            dry_run=dry_run,
+            limit=max(0, int(codex_review_limit)),
+        )
+        if codex_reviews:
+            state = get_harness_state(user_id)
 
     if remote.get("ok"):
         renames = rename_bound_remote_sessions(sessions, state, dry_run=dry_run)
@@ -1277,6 +1689,10 @@ def run_conductor_once(
         save_action_cache(cache)
         if sync_dashboard:
             push_summary = sync_harness_to_dashboard(user_id, dashboard_root=dashboard_root, project_id=project_id)
+            if publish_dashboard:
+                publish_summary = publish_dashboard_tasks(dashboard_root=dashboard_root)
+            if sync_supabase and push_summary.get("changed"):
+                supabase_summary = sync_dashboard_to_supabase(dashboard_root=dashboard_root, project_id=project_id)
     return {
         "ok": True,
         "remote_ok": bool(remote.get("ok")),
@@ -1285,6 +1701,9 @@ def run_conductor_once(
         "dashboard_pull": pull_summary,
         "host_verify": verify_summary,
         "dashboard_push": push_summary,
+        "dashboard_publish": publish_summary,
+        "dashboard_supabase_sync": supabase_summary,
+        "codex_reviews": codex_reviews,
         "renames": renames,
         "assignments": assignments,
         "cleanup": cleanup,

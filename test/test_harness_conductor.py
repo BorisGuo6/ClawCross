@@ -12,7 +12,13 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from harness import conductor  # noqa: E402
-from harness.dashboard_sync import import_dashboard_todos, should_sync_dashboard_comment, sync_harness_to_dashboard  # noqa: E402
+from harness.dashboard_sync import (  # noqa: E402
+    import_dashboard_todos,
+    publish_dashboard_tasks,
+    should_sync_dashboard_comment,
+    sync_dashboard_to_supabase,
+    sync_harness_to_dashboard,
+)
 from harness.store import apply_harness_event, get_harness_state  # noqa: E402
 
 
@@ -58,6 +64,22 @@ class HarnessConductorDecisionTests(unittest.TestCase):
         self.assertTrue(decision.should_send)
         self.assertIn("ClawCross 本机主控确认", decision.message)
         self.assertIn("task_umi_eval", decision.message)
+
+    def test_decision_does_not_auto_continue_task_waiting_for_user(self):
+        state = sample_state()
+        state["tasks"][0]["status"] = "needs_user"
+        decision = conductor.decide_for_session(
+            {
+                "display_id": "session_abc",
+                "status": "idle",
+                "last_message": {"content": "Waiting for your choice."},
+            },
+            state,
+            {"sent": {}},
+            cooldown_seconds=30,
+        )
+
+        self.assertIsNone(decision)
 
     def test_decision_blocks_risky_request_for_manual_review(self):
         decision = conductor.decide_for_session(
@@ -161,6 +183,73 @@ class HarnessConductorDecisionTests(unittest.TestCase):
                 }
             )
         )
+
+    def test_dashboard_publish_only_targets_tasks_json(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            dashboard = repo / "dashboard"
+            repo_resolved = repo.resolve()
+            (repo / ".git").mkdir()
+            (dashboard / "state").mkdir(parents=True)
+            (dashboard / "state" / "tasks.json").write_text('{"tasks": []}\n', encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(cmd)
+                if cmd[3] == "status":
+                    return mock.Mock(returncode=0, stdout=" M dashboard/state/tasks.json\n", stderr="")
+                if cmd[3:6] == ["diff", "--cached", "--quiet"]:
+                    return mock.Mock(returncode=1, stdout="", stderr="")
+                if cmd[3:5] == ["rev-parse", "--short"]:
+                    return mock.Mock(returncode=0, stdout="abc123\n", stderr="")
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with mock.patch("harness.dashboard_sync.subprocess.run", side_effect=fake_run):
+                result = publish_dashboard_tasks(dashboard_root=dashboard)
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["published"])
+            self.assertTrue(result["pushed"])
+            self.assertIn(["git", "-C", str(repo_resolved), "add", "--", "dashboard/state/tasks.json"], calls)
+            self.assertIn(
+                [
+                    "git",
+                    "-C",
+                    str(repo_resolved),
+                    "commit",
+                    "-m",
+                    "Update dashboard task status from ClawCross harness",
+                    "--",
+                    "dashboard/state/tasks.json",
+                ],
+                calls,
+            )
+
+    def test_dashboard_supabase_sync_runs_dashboard_script(self):
+        with TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            dashboard = repo / "dashboard"
+            script = repo / "scripts" / "sync-dashboard-to-supabase.mjs"
+            script.parent.mkdir()
+            dashboard.mkdir()
+            script.write_text("console.log('ok')\n", encoding="utf-8")
+            (repo / ".env").write_text("SUPABASE_URL=https://example.supabase.co\n", encoding="utf-8")
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **kwargs):
+                calls.append(cmd)
+                return mock.Mock(returncode=0, stdout='{"ok":true,"tasks":2}\n', stderr="")
+
+            with mock.patch("harness.dashboard_sync.subprocess.run", side_effect=fake_run):
+                result = sync_dashboard_to_supabase(dashboard_root=dashboard, project_id="umi-world-model")
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["synced"])
+            self.assertEqual(result["tasks"], 2)
+            self.assertEqual(
+                calls[0],
+                ["npm", "run", "supabase:sync", "--", "--once", "--project-id", "umi-world-model"],
+            )
 
 
 class HarnessConductorLoopTests(unittest.TestCase):
@@ -524,6 +613,28 @@ class HarnessConductorLoopTests(unittest.TestCase):
                         "status": "idle",
                     },
                 )
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_upsert",
+                        "project_id": "umi-world-model",
+                        "task_id": "task_active",
+                        "title": "Active TODO",
+                        "status": "active",
+                    },
+                )
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "heartbeat",
+                        "agent_id": "worker-active@100.112.245.1",
+                        "project_id": "umi-world-model",
+                        "task_id": "task_active",
+                        "current_task_id": "task_active",
+                        "session_ref": "session_active",
+                        "status": "running",
+                    },
+                )
 
                 state = get_harness_state("boris")
                 with mock.patch.object(
@@ -533,7 +644,10 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 ) as close_mock:
                     cleaned = conductor.cleanup_remote_sessions_without_todos(
                         "boris",
-                        [{"display_id": "session_paused", "status": "idle"}],
+                        [
+                            {"display_id": "session_paused", "status": "idle"},
+                            {"display_id": "session_active", "status": "busy"},
+                        ],
                         state,
                         project_id="umi-world-model",
                     )
@@ -541,7 +655,251 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 self.assertEqual(len(cleaned), 1)
                 self.assertTrue(cleaned[0]["deleted_agent"])
                 close_mock.assert_called_once_with("session_paused", force=True)
-                self.assertEqual(get_harness_state("boris")["counts"]["agents"], 0)
+                self.assertEqual(get_harness_state("boris")["counts"]["agents"], 1)
+            finally:
+                if old_state is None:
+                    os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
+                else:
+                    os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
+
+    def test_cleanup_keeps_last_session_for_active_project_as_standby(self):
+        with TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
+            os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
+            try:
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_upsert",
+                        "project_id": "umi-world-model",
+                        "task_id": "task_done",
+                        "title": "Done TODO",
+                        "status": "done",
+                    },
+                )
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_comment",
+                        "agent_id": conductor.CONDUCTOR_AGENT_ID,
+                        "project_id": "umi-world-model",
+                        "task_id": "task_done",
+                        "kind": "host_verified",
+                        "message": "verified",
+                    },
+                )
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "heartbeat",
+                        "agent_id": "worker-last@100.112.245.1",
+                        "project_id": "umi-world-model",
+                        "task_id": "task_done",
+                        "current_task_id": "task_done",
+                        "session_ref": "session_last",
+                        "status": "done",
+                    },
+                )
+
+                state = get_harness_state("boris")
+                with mock.patch.object(conductor, "close_remote_claude_session") as close_mock:
+                    cleaned = conductor.cleanup_remote_sessions_without_todos(
+                        "boris",
+                        [{"display_id": "session_last", "status": "idle"}],
+                        state,
+                        project_id="umi-world-model",
+                    )
+
+                self.assertEqual(len(cleaned), 1)
+                self.assertTrue(cleaned[0]["kept"])
+                close_mock.assert_not_called()
+                agents = get_harness_state("boris")["agents"]
+                self.assertEqual(len(agents), 1)
+                self.assertEqual(agents[0]["status"], "idle")
+                self.assertEqual(agents[0]["current_task_id"], "")
+            finally:
+                if old_state is None:
+                    os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
+                else:
+                    os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
+
+    def test_codex_review_accepts_review_task_and_marks_done(self):
+        with TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
+            os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
+            try:
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_upsert",
+                        "project_id": "umi-world-model",
+                        "task_id": "task_review_me",
+                        "title": "Reviewable result",
+                        "status": "review",
+                    },
+                )
+                state = get_harness_state("boris")
+                cache = {"sent": {}}
+                with mock.patch.object(
+                    conductor,
+                    "_call_local_codex_review",
+                    return_value={
+                        "action": "accept",
+                        "confidence": 0.91,
+                        "summary": "Verifier passed.",
+                        "evidence": ["pytest 3/3"],
+                        "commands": ["pytest -q"],
+                        "reason": "Enough evidence.",
+                    },
+                ):
+                    reviewed = conductor.review_pending_tasks_with_codex(
+                        "boris",
+                        state,
+                        [],
+                        cache,
+                        project_id="umi-world-model",
+                        limit=1,
+                    )
+
+                self.assertEqual(len(reviewed), 1)
+                self.assertEqual(reviewed[0]["action"], "accept")
+                final = get_harness_state("boris")
+                task = final["tasks"][0]
+                self.assertEqual(task["status"], "done")
+                self.assertTrue(any(c.get("kind") == "host_verified" for c in task.get("comments", [])))
+                self.assertIn("task_review_me", cache["codex_review"])
+            finally:
+                if old_state is None:
+                    os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
+                else:
+                    os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
+
+    def test_codex_review_reopens_review_task(self):
+        with TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
+            os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
+            try:
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_upsert",
+                        "project_id": "umi-world-model",
+                        "task_id": "task_review_more",
+                        "title": "Needs more scale",
+                        "status": "review",
+                    },
+                )
+                state = get_harness_state("boris")
+                cache = {"sent": {}}
+                with mock.patch.object(
+                    conductor,
+                    "_call_local_codex_review",
+                    return_value={
+                        "action": "reopen",
+                        "new_status": "active",
+                        "summary": "Only 44 clips were verified.",
+                        "worker_message": "Scale to 100 clips or report a blocker.",
+                    },
+                ):
+                    reviewed = conductor.review_pending_tasks_with_codex(
+                        "boris",
+                        state,
+                        [],
+                        cache,
+                        project_id="umi-world-model",
+                        limit=1,
+                    )
+
+                self.assertEqual(len(reviewed), 1)
+                self.assertEqual(reviewed[0]["action"], "reopen")
+                task = get_harness_state("boris")["tasks"][0]
+                self.assertEqual(task["status"], "active")
+                self.assertTrue(any("Scale to 100" in c.get("body", "") for c in task.get("comments", [])))
+            finally:
+                if old_state is None:
+                    os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
+                else:
+                    os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
+
+    def test_codex_review_needs_user_updates_task_status(self):
+        with TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
+            os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
+            try:
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_upsert",
+                        "project_id": "image-layered-world-model",
+                        "task_id": "task_photoshop",
+                        "title": "Prototype Photoshop PSD layer pipeline",
+                        "status": "review",
+                    },
+                )
+                state = get_harness_state("boris")
+                cache = {"sent": {}}
+                with mock.patch.object(
+                    conductor,
+                    "_call_local_codex_review",
+                    return_value={
+                        "action": "needs_user",
+                        "confidence": 0.94,
+                        "summary": "Scope change requires user decision.",
+                        "worker_message": "Pick original Photoshop route or approve the Linux substitute.",
+                    },
+                ):
+                    reviewed = conductor.review_pending_tasks_with_codex(
+                        "boris",
+                        state,
+                        [],
+                        cache,
+                        project_id="image-layered-world-model",
+                        limit=1,
+                    )
+
+                self.assertEqual(len(reviewed), 1)
+                self.assertEqual(reviewed[0]["action"], "needs_user")
+                task = get_harness_state("boris")["tasks"][0]
+                self.assertEqual(task["status"], "needs_user")
+                self.assertTrue(any(c.get("kind") == "needs_user" for c in task.get("comments", [])))
+            finally:
+                if old_state is None:
+                    os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
+                else:
+                    os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
+
+    def test_verify_finished_restores_host_verified_review_task_to_done(self):
+        with TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
+            os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
+            try:
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_upsert",
+                        "project_id": "image-layered-world-model",
+                        "task_id": "task_verified_review",
+                        "title": "Already accepted",
+                        "status": "review",
+                    },
+                )
+                apply_harness_event(
+                    "boris",
+                    {
+                        "action": "task_comment",
+                        "agent_id": conductor.CONDUCTOR_AGENT_ID,
+                        "project_id": "image-layered-world-model",
+                        "task_id": "task_verified_review",
+                        "kind": "host_verified",
+                        "message": "Accepted earlier.",
+                    },
+                )
+
+                result = conductor.verify_finished_tasks("boris", project_id="image-layered-world-model")
+
+                self.assertEqual(result["accepted"], 1)
+                task = get_harness_state("boris")["tasks"][0]
+                self.assertEqual(task["status"], "done")
             finally:
                 if old_state is None:
                     os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)

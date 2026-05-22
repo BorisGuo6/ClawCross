@@ -412,6 +412,8 @@ for path in sorted(glob.glob(os.path.join(base, "*.json"))):
         "session_id": data.get("sessionId") or data.get("session_id") or data.get("localSessionId") or "",
         "bridge_session_id": data.get("bridgeSessionId") or data.get("bridge_session_id") or data.get("remoteSessionId") or "",
         "job_id": data.get("jobId") or data.get("job_id") or "",
+        "pid": data.get("pid") or "",
+        "kind": data.get("kind") or "",
         "cwd": data.get("cwd") or data.get("workingDirectory") or "",
         "transcript_path": transcript,
         "updated_at": data.get("updatedAt") or data.get("updated_at") or (stat.st_mtime if stat else None),
@@ -505,7 +507,7 @@ def _remote_script_send_message(target: str, text: str) -> str:
     target_json = json.dumps(str(target))
     text_json = json.dumps(str(text))
     return f"""
-import glob, json, os, socket
+import glob, json, os, socket, subprocess
 
 target = {target_json}
 text = {text_json}
@@ -533,6 +535,8 @@ for path in sorted(glob.glob(os.path.join(base, "*.json"))):
         "session_id": data.get("sessionId") or data.get("session_id") or data.get("localSessionId") or "",
         "bridge_session_id": data.get("bridgeSessionId") or data.get("bridge_session_id") or data.get("remoteSessionId") or "",
         "job_id": data.get("jobId") or data.get("job_id") or "",
+        "pid": data.get("pid") or "",
+        "kind": data.get("kind") or "",
         "cwd": data.get("cwd") or data.get("workingDirectory") or "",
         "session_file": path,
     }}
@@ -544,7 +548,44 @@ if not matched:
 
 short = str(matched.get("job_id") or "").strip()
 if not short:
-    print(json.dumps({{"found": True, "session": matched, "response": {{"ok": False, "error": "session has no daemon job id", "code": "ENOJOB"}}}}, ensure_ascii=False))
+    pane_target = ""
+    pane_error = ""
+    pid = str(matched.get("pid") or matched.get("id") or "").strip()
+    if pid:
+        try:
+            proc = subprocess.run(
+                ["tmux", "list-panes", "-a", "-F", "#{{session_name}}\\t#{{pane_id}}\\t#{{pane_pid}}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=4,
+            )
+            if proc.returncode == 0:
+                for raw in (proc.stdout or "").splitlines():
+                    parts = raw.split("\\t")
+                    if len(parts) >= 3 and parts[2].strip() == pid:
+                        pane_target = parts[1].strip()
+                        break
+            else:
+                pane_error = (proc.stderr or proc.stdout or "").strip()
+        except Exception as exc:
+            pane_error = str(exc)
+    if pane_target:
+        try:
+            load = subprocess.run(["tmux", "load-buffer", "-"], input=text, text=True, capture_output=True, timeout=4)
+            if load.returncode != 0:
+                raise RuntimeError((load.stderr or load.stdout or "tmux load-buffer failed").strip())
+            paste = subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=False, capture_output=True, text=True, timeout=4)
+            if paste.returncode != 0:
+                raise RuntimeError((paste.stderr or paste.stdout or "tmux paste-buffer failed").strip())
+            enter = subprocess.run(["tmux", "send-keys", "-t", pane_target, "C-m"], check=False, capture_output=True, text=True, timeout=4)
+            if enter.returncode != 0:
+                raise RuntimeError((enter.stderr or enter.stdout or "tmux send-keys failed").strip())
+            print(json.dumps({{"found": True, "session": matched, "response": {{"ok": True, "via": "tmux", "pane": pane_target}}}}, ensure_ascii=False))
+            raise SystemExit(0)
+        except Exception as exc:
+            pane_error = str(exc)
+    print(json.dumps({{"found": True, "session": matched, "response": {{"ok": False, "error": "session has no daemon job id" + (": " + pane_error if pane_error else ""), "code": "ENOJOB"}}}}, ensure_ascii=False))
     raise SystemExit(0)
 
 try:

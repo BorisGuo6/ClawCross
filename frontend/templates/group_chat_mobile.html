@@ -6836,20 +6836,23 @@ function harnessAgentLabel(agent) {
   return `${id} @ ${remote}`;
 }
 
-function isHarnessVisibleWorker(agent, visibleTaskIds = null) {
+function isHarnessVisibleWorker(agent, visibleTaskIds = null, projectsById = null) {
   if (!agent) return false;
   if (agent.remote_host && String(agent.agent_id || '') === String(agent.remote_host)) return false;
   const taskId = agent.current_task_id || agent.task_id || '';
-  if (!taskId) return false;
-  return !visibleTaskIds || visibleTaskIds.has(taskId);
+  if (taskId && (!visibleTaskIds || visibleTaskIds.has(taskId))) return true;
+  const projectId = agent.project_id || '';
+  const project = projectsById && projectsById.get ? projectsById.get(projectId) : null;
+  const status = String(agent.effective_status || agent.status || '').toLowerCase();
+  return !!harnessWorkerSessionRef(agent) && projectId && harnessProjectIsActive(project) && status !== 'error';
 }
 
 function harnessWorkerSessionRef(agent) {
   return String((agent && agent.session_ref) || '').trim();
 }
 
-function isHarnessSessionBackedWorker(agent, visibleTaskIds = null) {
-  return isHarnessVisibleWorker(agent, visibleTaskIds) && !!harnessWorkerSessionRef(agent);
+function isHarnessSessionBackedWorker(agent, visibleTaskIds = null, projectsById = null) {
+  return isHarnessVisibleWorker(agent, visibleTaskIds, projectsById) && !!harnessWorkerSessionRef(agent);
 }
 
 function harnessUniqueAgents(agents) {
@@ -6868,6 +6871,11 @@ function harnessWorkerCountLabel(liveCount, boundCount) {
   const suffix = _currentLang === 'zh' ? 'worker 在线' : 'worker online';
   if (boundCount > liveCount) return `${liveCount}/${boundCount} ${suffix}`;
   return `${liveCount} ${suffix}`;
+}
+
+function harnessProjectIsActive(project) {
+  const status = String((project && project.status) || 'active').toLowerCase().replace(/-/g, '_');
+  return !['done', 'completed', 'closed', 'archived', 'cancelled'].includes(status);
 }
 
 function harnessAgentMatchesRemoteSession(agent, session) {
@@ -6905,9 +6913,9 @@ function harnessTaskHasReviewEvidence(item) {
   });
 }
 
-function harnessProjectRemoteLabel(tasks, agentsByTask, sessions = []) {
-  const agents = [];
-  tasks.forEach(task => (agentsByTask.get(task.task_id) || []).forEach(agent => agents.push(agent)));
+function harnessProjectRemoteLabel(tasks, agentsByTask, sessions = [], projectAgents = []) {
+  const agents = projectAgents.length ? projectAgents.slice() : [];
+  if (!agents.length) tasks.forEach(task => (agentsByTask.get(task.task_id) || []).forEach(agent => agents.push(agent)));
   const remote = agents.map(agent => agent.remote_host).find(Boolean);
   if (remote) return remote;
   const sessionRemote = sessions.map(session => {
@@ -6998,16 +7006,14 @@ function renderHarnessTaskCard(item, linkedAgents = [], linkedSessions = []) {
   </div>`;
 }
 
-function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sessions) {
+function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sessions, projectAgents = []) {
   const collapsed = harnessCollapsedProjects.has(projectId);
   const tasksById = new Map(tasks.map(task => [task.task_id, task]));
-  const boundAgents = harnessUniqueAgents(
-    tasks.flatMap(task => (agentsByTask.get(task.task_id) || []).filter(agent => harnessWorkerSessionRef(agent)))
-  );
+  const boundAgents = harnessUniqueAgents(projectAgents.filter(agent => harnessWorkerSessionRef(agent)));
   const projectTitle = projectId === '__unbound__'
     ? (_currentLang === 'zh' ? '未绑定 Sessions' : 'Unbound Sessions')
     : ((project && (project.title || project.name)) || projectId || 'default');
-  const remoteLabel = harnessProjectRemoteLabel(tasks, agentsByTask, sessions);
+  const remoteLabel = harnessProjectRemoteLabel(tasks, agentsByTask, sessions, projectAgents);
   const meta = [
     `${tasks.length} TODO`,
     harnessWorkerCountLabel(sessions.length, boundAgents.length),
@@ -7093,6 +7099,10 @@ function renderHarnessState(payload) {
   const tasks = Array.isArray(payload && payload.tasks) ? payload.tasks : [];
   const agents = Array.isArray(payload && payload.agents) ? payload.agents : [];
   const projects = Array.isArray(payload && payload.projects) ? payload.projects : [];
+  const projectsById = new Map();
+  projects.forEach(project => {
+    if (project && project.project_id) projectsById.set(project.project_id, project);
+  });
   if (!ok) {
     statusEl.textContent = (payload && payload.error) || (_currentLang === 'zh' ? 'Harness 不可用' : 'Harness unavailable');
     grid.innerHTML = `<div class="harness-card error"><div class="harness-preview">${esc(statusEl.textContent)}</div></div>`;
@@ -7103,8 +7113,8 @@ function renderHarnessState(payload) {
     .sort((a, b) => harnessTaskRank(a) - harnessTaskRank(b));
   const openTaskIds = new Set(openTasks.map(task => task.task_id).filter(Boolean));
   const openTaskStatusById = new Map(openTasks.map(task => [task.task_id, String(task.status || '').toLowerCase()]));
-  const visibleWorkers = agents.filter(agent => isHarnessVisibleWorker(agent, openTaskIds));
-  const sessionRefWorkers = agents.filter(agent => isHarnessSessionBackedWorker(agent, openTaskIds));
+  const visibleWorkers = agents.filter(agent => isHarnessVisibleWorker(agent, openTaskIds, projectsById));
+  const sessionRefWorkers = agents.filter(agent => isHarnessSessionBackedWorker(agent, openTaskIds, projectsById));
   const remotePayload = remoteClaudePayload || window.__lastRemoteClaudePayload || {};
   const remotes = Array.isArray(remotePayload && remotePayload.remotes) ? remotePayload.remotes : [];
   const liveSessions = Array.isArray(remotePayload && remotePayload.sessions) ? remotePayload.sessions : remoteClaudeSessions;
@@ -7116,7 +7126,7 @@ function renderHarnessState(payload) {
   realLiveSessions.forEach(session => {
     const linked = remoteClaudeLinkedContext(session);
     const agent = linked.agent;
-    if (!agent || !isHarnessVisibleWorker(agent, openTaskIds) || !harnessAgentMatchesRemoteSession(agent, session)) return;
+    if (!agent || !isHarnessVisibleWorker(agent, openTaskIds, projectsById) || !harnessAgentMatchesRemoteSession(agent, session)) return;
     const key = remoteClaudeSessionKey(session) || harnessWorkerSessionRef(agent);
     if (key && pairedKeys.has(key)) return;
     if (key) pairedKeys.add(key);
@@ -7145,10 +7155,6 @@ function renderHarnessState(payload) {
     : `${projectIdsWithRows.size} projects · ${displayedOpenTasks.length} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount)} · ${needsUser} needs user · ${stale} stale${remotes.length ? ` · ${okRemoteCount || remotes.length}/${remotes.length} computers` : ''}`;
   const cards = [];
   const agentsByTask = new Map();
-  const projectsById = new Map();
-  projects.forEach(project => {
-    if (project && project.project_id) projectsById.set(project.project_id, project);
-  });
   sessionRefWorkers.forEach(agent => {
     const taskId = agent && (agent.current_task_id || agent.task_id);
     if (!taskId) return;
@@ -7158,9 +7164,13 @@ function renderHarnessState(payload) {
   const projectRows = new Map();
   const ensureProjectRow = (projectId) => {
     const id = projectId || 'default';
-    if (!projectRows.has(id)) projectRows.set(id, { tasks: [], sessions: [] });
+    if (!projectRows.has(id)) projectRows.set(id, { tasks: [], sessions: [], agents: [] });
     return projectRows.get(id);
   };
+  sessionRefWorkers.forEach(agent => {
+    const row = ensureProjectRow(agent.project_id || 'default');
+    if (!row.agents.some(item => harnessWorkerSessionRef(item) === harnessWorkerSessionRef(agent))) row.agents.push(agent);
+  });
   displayedOpenTasks.forEach(task => {
     const projectId = task.project_id || 'default';
     ensureProjectRow(projectId).tasks.push(task);
@@ -7175,7 +7185,7 @@ function renderHarnessState(payload) {
       return rankA - rankB || String(a[0]).localeCompare(String(b[0]));
     })
     .forEach(([projectId, row]) => {
-      cards.push(renderHarnessProjectGroup(projectId, row.tasks, projectsById.get(projectId), agentsByTask, row.sessions));
+      cards.push(renderHarnessProjectGroup(projectId, row.tasks, projectsById.get(projectId), agentsByTask, row.sessions, row.agents));
     });
   if (!cards.length) {
     cards.push(`<div class="harness-card"><div class="harness-preview">${esc(_currentLang === 'zh' ? '暂无项目 TODO 或 worker session。' : 'No project TODO or worker session yet.')}</div></div>`);

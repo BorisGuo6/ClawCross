@@ -186,6 +186,26 @@ class RemoteClaudeParserTests(unittest.TestCase):
         self.assertEqual(data["response"]["op"], "reply")
         self.assertEqual(data["session"]["remote_key"], "u@h::session_abc")
 
+    def test_send_message_accepts_tmux_interactive_payload(self):
+        payload = {
+            "found": True,
+            "session": {
+                "bridge_session_id": "session_abc",
+                "session_id": "uuid-abc",
+                "pid": 1234,
+                "kind": "interactive",
+            },
+            "response": {"ok": True, "via": "tmux", "pane": "%0"},
+        }
+        with mock.patch.object(
+            rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+        ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
+            data = rca.send_remote_claude_message("u@h::session_abc", "hello")
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["response"]["via"], "tmux")
+        self.assertEqual(data["session"]["remote_key"], "u@h::session_abc")
+
     def test_rename_session_updates_display_name(self):
         payload = {
             "found": True,
