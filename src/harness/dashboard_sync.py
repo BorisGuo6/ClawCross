@@ -186,6 +186,8 @@ def dashboard_author(kind: str) -> str:
     clean = str(kind or "").strip().lower()
     if clean == "result":
         return "Result"
+    if clean == "artifact":
+        return "Artifact"
     if clean == "blocker":
         return "Blocker"
     if clean == "needs_user":
@@ -195,6 +197,15 @@ def dashboard_author(kind: str) -> str:
     if clean == "review":
         return "Review"
     return "Progress"
+
+
+def dashboard_comment_kind(kind: str) -> str:
+    clean = str(kind or "comment").strip().lower() or "comment"
+    aliases = {
+        "artifact": "comment",
+        "review": "comment",
+    }
+    return aliases.get(clean, clean)
 
 
 def should_sync_dashboard_comment(comment: dict[str, Any]) -> bool:
@@ -288,6 +299,13 @@ def sync_harness_to_dashboard(
             comments = []
             dashboard_task["comments"] = comments
             changed = True
+        for item in comments:
+            if isinstance(item, dict):
+                existing_kind = str(item.get("kind") or "comment").strip()
+                normalized_kind = dashboard_comment_kind(existing_kind)
+                if normalized_kind != existing_kind:
+                    item["kind"] = normalized_kind
+                    changed = True
         seen_ids = {str(item.get("comment_id") or "").strip() for item in comments if isinstance(item, dict)}
         seen_bodies = {str(item.get("body") or "").strip() for item in comments if isinstance(item, dict)}
         for comment in harness_task.get("comments", []) or []:
@@ -299,6 +317,7 @@ def sync_harness_to_dashboard(
             kind = str(comment.get("kind") or "comment").strip() or "comment"
             if kind == "status_change":
                 continue
+            dashboard_kind = dashboard_comment_kind(kind)
             comment_id = dashboard_comment_id(task_id, comment)
             if not body or comment_id in seen_ids or body in seen_bodies:
                 continue
@@ -308,7 +327,7 @@ def sync_harness_to_dashboard(
                     "author": dashboard_author(kind),
                     "body": body,
                     "created_at": comment.get("created_at") or now_iso(),
-                    "kind": kind,
+                    "kind": dashboard_kind,
                 }
             )
             seen_ids.add(comment_id)
