@@ -21,6 +21,7 @@ from api.group_models import (
     GroupAddMemberRequest,
     GroupMuteMemberRequest,
     GroupMuteAllRequest,
+    GroupSetPrimaryRequest,
 )
 from api.group_service import GroupService, init_group_db
 
@@ -95,6 +96,14 @@ def create_group_router(
     @router.post("/groups/{group_id}/mute_all")
     async def mute_all_group_agents(group_id: str, req: GroupMuteAllRequest, authorization: str | None = Header(None)):
         return await service.mute_all_group_agents(group_id, req, authorization)
+
+    @router.post("/groups/{group_id}/primary")
+    async def set_primary_agent(group_id: str, req: GroupSetPrimaryRequest, authorization: str | None = Header(None)):
+        return await service.set_primary_agent(group_id, req, authorization)
+
+    @router.delete("/groups/{group_id}/primary")
+    async def clear_primary_agent(group_id: str, authorization: str | None = Header(None)):
+        return await service.clear_primary_agent(group_id, authorization)
 
     @router.get("/groups/{group_id}/typing")
     async def group_typing_status(group_id: str, authorization: str | None = Header(None)):

@@ -11491,19 +11491,26 @@ async function loadTeamMembers() {
             const safeName = escapeHtml(m.name || '-');
             const safeTag = escapeHtml(m.tag || '-');
             const safeGlobalName = escapeHtml(m.global_name || '-');
-            
+            const isPrimary = !!m.is_primary;
+            const isAgentRow = (m.type === 'oasis' || m.type === 'ext');
+            const primaryBtn = isAgentRow
+                ? `<button onclick="toggleTeamMemberPrimary('${m.type}', '${escapeHtml(m.global_name)}', ${isPrimary ? 'false' : 'true'})" class="${isPrimary ? 'text-amber-700 bg-amber-50 border border-amber-300 hover:bg-amber-100' : 'text-gray-500 hover:text-amber-600 hover:bg-amber-50'} text-xs px-2 py-1 rounded" title="${isPrimary ? '点击取消团队主 agent' : '设为团队主 agent（创群时自动作为主 agent）'}">${isPrimary ? '取消主' : '设为主'}</button>`
+                : '';
+            const primaryBadge = isPrimary ? ' <span class="text-xs text-amber-600" title="团队主 agent">· 主 agent</span>' : '';
+
             // For openclaw type, use the full orchestration config modal (files/tools/channels)
             const configBtn = m.tag === 'openclaw'
                 ? `<button onclick="orchShowAgentConfigModal('${escapeHtml(m.global_name)}')" class="text-purple-500 hover:text-purple-700 text-xs px-2 py-1 rounded hover:bg-purple-50" title="OpenClaw 配置 (Files / Tools / Channels)">🦞⚙️</button>`
                 : `<button onclick="showAgentConfigModal('${m.type}', '${escapeHtml(m.global_name)}', '${escapeHtml(m.name)}', '${escapeHtml(m.tag || '')}', '${escapeHtml(apiUrl)}', '${escapeHtml(apiKey)}', '${escapeHtml(model)}', '${escapeHtml(typeof headers === 'object' ? JSON.stringify(headers).replace(/"/g, '&quot;').replace(/'/g, "\\'") : headers)}', '${escapeHtml(m.platform || '')}')" class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50" title="配置">⚙️</button>`;
-            
+
             return `
                 <tr>
-                    <td class="team-member-cell font-medium text-gray-800" title="${safeName}">${safeName}</td>
+                    <td class="team-member-cell font-medium text-gray-800" title="${safeName}">${safeName}${primaryBadge}</td>
                     <td>${typeBadge}</td>
                     <td class="team-member-cell" title="${safeTag}">${safeTag}</td>
                     <td class="team-member-cell team-member-cell--mono" title="${safeGlobalName}">${safeGlobalName}</td>
                     <td class="team-member-cell team-member-cell--actions">
+                        ${primaryBtn}
                         ${configBtn}
                         <button onclick="deleteTeamMember('${m.type}', '${escapeHtml(m.global_name)}', '${escapeHtml(m.name)}', '${escapeHtml(m.tag || '')}', '${escapeHtml(m.platform || '')}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50" title="${deleteTitle}">🗑️</button>
                     </td>
@@ -11512,6 +11519,47 @@ async function loadTeamMembers() {
     } catch (e) {
         console.error('Failed to load team members:', e);
         tbody.innerHTML = '<tr><td colspan="5" class="text-center text-red-400 py-8">加载失败: ' + e.message + '</td></tr>';
+    }
+}
+
+/**
+ * Toggle the "team primary agent" marker on a team member.
+ * Backend enforces at-most-one primary per team file via preemption.
+ *   - oasis: PUT /internal_agents/<sid>?team=<team>  body={meta:{is_primary}}
+ *   - ext:   PUT /teams/<team>/members/external     body={global_name, is_primary}
+ */
+async function toggleTeamMemberPrimary(type, globalName, makePrimary) {
+    if (!currentGroupId || !globalName) return;
+    try {
+        let resp;
+        if (type === 'oasis') {
+            const url = `/internal_agents/${encodeURIComponent(globalName)}?team=${encodeURIComponent(currentGroupId)}`;
+            resp = await fetch(url, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ meta: { is_primary: !!makePrimary } }),
+            });
+        } else {
+            resp = await fetch(`/teams/${encodeURIComponent(currentGroupId)}/members/external`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ global_name: globalName, is_primary: !!makePrimary }),
+            });
+        }
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            if (typeof orchToast === 'function') orchToast('设置失败: ' + (data.error || resp.statusText));
+            else alert('设置失败: ' + (data.error || resp.statusText));
+            return;
+        }
+        if (typeof orchToast === 'function') {
+            orchToast(makePrimary ? '✅ 已设为团队主 agent' : '✅ 已取消团队主 agent');
+        }
+        await loadTeamMembers();
+    } catch (e) {
+        console.error('Toggle primary failed:', e);
+        if (typeof orchToast === 'function') orchToast('设置失败: ' + e.message);
+        else alert('设置失败: ' + e.message);
     }
 }
 

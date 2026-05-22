@@ -63,3 +63,8 @@ class GroupMuteMemberRequest(BaseModel):
 class GroupMuteAllRequest(BaseModel):
     """全员禁言/解禁（仅 agent）"""
     muted: bool = True
+
+
+class GroupSetPrimaryRequest(BaseModel):
+    """设置群主 agent（主 agent 之外的 agent 发消息只投递给主 agent + 被 @ 的人）"""
+    global_id: str
