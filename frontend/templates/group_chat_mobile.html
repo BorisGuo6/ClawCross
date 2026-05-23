@@ -3995,6 +3995,16 @@
       max-width: min(560px, calc(100vw - var(--desktop-rail-w) - var(--desktop-list-w) - 64px));
       border-radius: 14px;
     }
+    .tc-sheet:not(.show) {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(calc(100% + 96px));
+    }
+    .tc-sheet.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
     .drawer:not(.side-drawer),
     .settings-modal-overlay,
     .agent-detail-overlay,
