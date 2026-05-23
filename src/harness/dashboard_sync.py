@@ -205,6 +205,7 @@ def dashboard_comment_kind(kind: str) -> str:
         "artifact": "comment",
         "host_progress": "comment",
         "review": "comment",
+        "route": "comment",
     }
     return aliases.get(clean, clean)
 
