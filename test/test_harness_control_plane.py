@@ -27,9 +27,9 @@ class HarnessStoreTests(unittest.TestCase):
                     "alice",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_umi_eval",
-                        "title": "Run UMI verifier",
+                        "title": "Run Project Alpha verifier",
                         "status": "active",
                     },
                 )
@@ -39,7 +39,7 @@ class HarnessStoreTests(unittest.TestCase):
                         "action": "heartbeat",
                         "agent_id": "claude-umi-01",
                         "agent_type": "claude-code-worker",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_umi_eval",
                         "status": "running",
                         "message": "running verifier",
@@ -50,7 +50,7 @@ class HarnessStoreTests(unittest.TestCase):
                     {
                         "action": "run",
                         "agent_id": "claude-umi-01",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_umi_eval",
                         "run_id": "run_20260518_umi_eval",
                         "status": "verified",
@@ -84,7 +84,7 @@ class HarnessStoreTests(unittest.TestCase):
                         {
                             "action": "run",
                             "agent_id": "claude-umi-01",
-                            "project_id": "umi-world-model",
+                            "project_id": "project-alpha",
                             "task_id": "task_umi_eval",
                             "run_id": "run_20260518_bad",
                             "status": "verified",
@@ -110,7 +110,7 @@ class HarnessStoreTests(unittest.TestCase):
                     {
                         "action": "heartbeat",
                         "agent_id": "claude-umi-01",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "status": "idle",
                     },
                 )
@@ -121,7 +121,7 @@ class HarnessStoreTests(unittest.TestCase):
                     {
                         "action": "agent_delete",
                         "agent_id": "claude-umi-01",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                     },
                 )
 
@@ -153,7 +153,7 @@ class HarnessRouteTests(unittest.TestCase):
                             "user_id": "alice",
                             "action": "needs_user",
                             "agent_id": "remote-claude-01",
-                            "project_id": "umi-world-model",
+                            "project_id": "project-alpha",
                             "task_id": "task_remote_help",
                             "message": "permission prompt",
                         },
@@ -190,7 +190,7 @@ class HarnessRouteTests(unittest.TestCase):
                             "user_id": "alice",
                             "action": "heartbeat",
                             "agent_id": "remote-claude-01",
-                            "project_id": "umi-world-model",
+                            "project_id": "project-alpha",
                             "task_id": "task_vbench",
                             "current_task_id": "task_vbench",
                             "status": "running",
@@ -203,7 +203,7 @@ class HarnessRouteTests(unittest.TestCase):
                             "user_id": "alice",
                             "action": "heartbeat",
                             "agent_id": "remote-claude-01",
-                            "project_id": "umi-world-model",
+                            "project_id": "project-alpha",
                             "status": "running",
                             "message": "plain heartbeat",
                         },

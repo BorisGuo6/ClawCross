@@ -42,13 +42,7 @@ from utils.runtime_paths import DATA_DIR, ENV_FILE
 CONDUCTOR_AGENT_ID = "clawcross-main@local"
 DEFAULT_COOLDOWN_SECONDS = 180
 DEFAULT_REMOTE_LIMIT = 12
-DEFAULT_PROJECT_ID = "umi-world-model"
-PROJECT_SESSION_LABELS = {
-    "image-layered-world-model": "Image-Layered WM",
-    "robotics-3d-printing": "Robotics+3D Printing",
-    "self-improving-agents": "Self-Improving Agents",
-    "umi-world-model": "UMI World Model",
-}
+DEFAULT_PROJECT_ID = os.getenv("CLAWCROSS_HARNESS_PROJECT_ID", "").strip()
 TERMINAL_PROJECT_STATUSES = {"done", "completed", "closed", "archived", "cancelled"}
 
 RISKY_PATTERNS = (
@@ -103,6 +97,26 @@ def _env_truthy(key: str, default: bool = False) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+
+def _env_csv_set(key: str) -> set[str]:
+    raw = os.getenv(key, "").strip()
+    if not raw:
+        return set()
+    return {item.strip() for item in raw.replace(";", ",").split(",") if item.strip()}
+
+
+def _env_json_mapping(key: str) -> dict[str, str]:
+    raw = os.getenv(key, "").strip()
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {str(k).strip(): str(v).strip() for k, v in value.items() if str(k).strip() and str(v).strip()}
 
 
 def _env_or_file_value(key: str) -> str:
@@ -531,6 +545,47 @@ def _agent_for_session(session: dict[str, Any], state: dict[str, Any]) -> dict[s
     return None
 
 
+def _agent_clawcross_metadata(agent: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(agent, dict):
+        return {}
+    metadata = agent.get("metadata") if isinstance(agent.get("metadata"), dict) else {}
+    clawcross = metadata.get("clawcross") if isinstance(metadata.get("clawcross"), dict) else {}
+    return clawcross
+
+
+def _agent_is_survey_pool(agent: dict[str, Any] | None) -> bool:
+    clawcross = _agent_clawcross_metadata(agent)
+    capabilities = agent.get("capabilities") if isinstance(agent, dict) and isinstance(agent.get("capabilities"), list) else []
+    return bool(clawcross.get("survey_pool")) or "survey-pool" in {str(item) for item in capabilities}
+
+
+def _survey_project_ids_from_state(state: dict[str, Any]) -> set[str]:
+    survey_statuses = _env_csv_set("CLAWCROSS_HARNESS_SURVEY_PROJECT_STATUSES") or {"survey"}
+    project_ids = set(_env_csv_set("CLAWCROSS_HARNESS_SURVEY_PROJECT_IDS"))
+    for project in state.get("projects", []) or []:
+        if not isinstance(project, dict):
+            continue
+        status = str(project.get("status") or "").strip().lower().replace("-", "_")
+        project_id = str(project.get("project_id") or "").strip()
+        if project_id and status in survey_statuses:
+            project_ids.add(project_id)
+    return project_ids
+
+
+def _agent_supported_project_ids(agent: dict[str, Any] | None, state: dict[str, Any] | None = None) -> set[str]:
+    if not isinstance(agent, dict):
+        return set()
+    project_ids = {str(agent.get("project_id") or "").strip()}
+    clawcross = _agent_clawcross_metadata(agent)
+    for key in ("project_ids", "accepted_project_ids", "survey_pool_project_ids"):
+        values = clawcross.get(key)
+        if isinstance(values, list):
+            project_ids.update(str(item or "").strip() for item in values)
+    if _agent_is_survey_pool(agent):
+        project_ids.update(_survey_project_ids_from_state(state or {}))
+    return {project_id for project_id in project_ids if project_id}
+
+
 def _clean_agent_id_part(value: Any) -> str:
     clean = re.sub(r"[^A-Za-z0-9_.:@-]+", "-", str(value or "").strip()).strip("-")
     return clean or "worker"
@@ -695,7 +750,10 @@ def _project_label(project_id: str) -> str:
     project_id = str(project_id or "").strip()
     if not project_id:
         return "Project"
-    return PROJECT_SESSION_LABELS.get(project_id, _compact_label(project_id.replace("-", " ").title(), limit=34))
+    return _env_json_mapping("CLAWCROSS_HARNESS_PROJECT_LABELS").get(
+        project_id,
+        _compact_label(project_id.replace("-", " ").title(), limit=34),
+    )
 
 
 def expected_remote_session_name(agent: dict[str, Any], task: dict[str, Any] | None, session: dict[str, Any]) -> str:
@@ -705,7 +763,8 @@ def expected_remote_session_name(agent: dict[str, Any], task: dict[str, Any] | N
     hostname = str(session.get("remote_hostname") or remote.get("hostname") or "").strip()
     remote_label = _compact_label(hostname, limit=22) or user or _compact_label(host, limit=16) or _compact_label(agent.get("remote_host"), limit=16)
     task_label = _compact_label((task or {}).get("title") or agent.get("current_task_id"), limit=32)
-    parts = ["ClawCross", _project_label(project_id)]
+    project_label = "Survey Pool" if _agent_is_survey_pool(agent) else _project_label(project_id)
+    parts = ["ClawCross", project_label]
     if remote_label:
         parts.append(_compact_label(remote_label, limit=16))
     if task_label:
@@ -853,6 +912,12 @@ def _codex_review_prompt(task: dict[str, Any], state: dict[str, Any], sessions: 
             or any(agent_session_refs(agent) & session_keys(session) for agent in related_agents)
         )
     ]
+    dashboard_root = (
+        os.getenv("CLAWCROSS_DASHBOARD_ROOT")
+        or os.getenv("DASHBOARD_ROOT")
+        or "<configured dashboard root>"
+    )
+    clawcross_repo = Path(__file__).resolve().parents[2]
     return f"""
 你是本机 Codex reviewer，由 ClawCross harness conductor 调用来处理 dashboard 里 `待你审查/review` 的 TODO。
 
@@ -888,8 +953,8 @@ JSON 格式：
 相关远端 sessions:
 {_json_preview(related_sessions, 5000)}
 
-Dashboard state path: /Users/boris/workspace/BorisGuo6.github.io/dashboard/state/tasks.json
-ClawCross repo path: /Users/boris/workspace/ClawCross
+Dashboard state path: {dashboard_root}/state/tasks.json
+ClawCross repo path: {clawcross_repo}
 """.strip()
 
 
@@ -1193,7 +1258,7 @@ def assign_next_dashboard_todos(
             and (
                 bool(project_id)
                 or not agent_project_id
-                or str(task.get("project_id") or "").strip() == agent_project_id
+                or str(task.get("project_id") or "").strip() in _agent_supported_project_ids(agent, state)
             )
         ]
         llm_assignment = _llm_choose_assignment(agent, session, candidate_tasks) if llm_mode else {}

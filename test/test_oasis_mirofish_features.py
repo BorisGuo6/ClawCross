@@ -25,7 +25,7 @@ def _seed_topic() -> DiscussionForum:
 
     forum = DiscussionForum(
         topic_id="topic-mirofish",
-        question="UMI World Model 下一步该如何验证？",
+        question="Project Alpha 下一步该如何验证？",
         user_id="alice",
         max_rounds=3,
     )

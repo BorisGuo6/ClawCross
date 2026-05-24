@@ -10,9 +10,11 @@ from __future__ import annotations
 from datetime import datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Any
+import urllib.request
 
 from harness.store import apply_harness_event, get_harness_state
 
@@ -34,7 +36,19 @@ def now_iso() -> str:
 
 
 def default_dashboard_root() -> Path:
-    return Path(__file__).resolve().parents[3] / "BorisGuo6.github.io" / "dashboard"
+    for key in ("CLAWCROSS_DASHBOARD_ROOT", "DASHBOARD_ROOT"):
+        value = os.getenv(key, "").strip()
+        if value:
+            return Path(value).expanduser()
+    raise RuntimeError("dashboard root is not configured; set CLAWCROSS_DASHBOARD_ROOT or pass --dashboard-root")
+
+
+def default_dashboard_url() -> str:
+    for key in ("CLAWCROSS_DASHBOARD_URL", "DASHBOARD_URL"):
+        value = os.getenv(key, "").strip().rstrip("/")
+        if value:
+            return value
+    raise RuntimeError("dashboard URL is not configured; set CLAWCROSS_DASHBOARD_URL or DASHBOARD_URL")
 
 
 def clean_status(value: Any) -> str:
@@ -56,6 +70,20 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
 
 def dashboard_tasks_path(dashboard_root: Path | None = None) -> Path:
     return (dashboard_root or default_dashboard_root()) / "state" / "tasks.json"
+
+
+def load_dashboard_tasks_doc(dashboard_root: Path | None = None) -> tuple[dict[str, Any], str]:
+    if dashboard_root is not None:
+        path = dashboard_tasks_path(dashboard_root)
+        return load_json(path), str(path)
+    try:
+        path = dashboard_tasks_path(None)
+        return load_json(path), str(path)
+    except RuntimeError:
+        url = f"{default_dashboard_url()}/state/tasks.json"
+        with urllib.request.urlopen(url, timeout=20) as response:
+            body = response.read().decode("utf-8", errors="replace")
+        return json.loads(body), url
 
 
 def dashboard_repo_root(dashboard_root: Path | None = None) -> Path:
@@ -113,13 +141,12 @@ def import_dashboard_todos(
     user_id: str,
     *,
     dashboard_root: Path | None = None,
-    project_id: str = "umi-world-model",
+    project_id: str = "",
     write: bool = True,
 ) -> dict[str, Any]:
     """Import open dashboard TODOs into the local harness task queue."""
 
-    path = dashboard_tasks_path(dashboard_root)
-    doc = load_json(path)
+    doc, source = load_dashboard_tasks_doc(dashboard_root)
     tasks = doc.get("tasks")
     if not isinstance(tasks, list):
         raise ValueError("dashboard/state/tasks.json must contain a tasks list")
@@ -171,7 +198,7 @@ def import_dashboard_todos(
         if write:
             apply_harness_event(user_id, payload)
 
-    return {"created": created, "updated": updated, "skipped": skipped, "source": str(path)}
+    return {"created": created, "updated": updated, "skipped": skipped, "source": source}
 
 
 def dashboard_comment_id(task_id: str, comment: dict[str, Any]) -> str:
@@ -226,7 +253,7 @@ def sync_harness_to_dashboard(
     user_id: str,
     *,
     dashboard_root: Path | None = None,
-    project_id: str = "umi-world-model",
+    project_id: str = "",
     create_missing: bool = False,
     write: bool = True,
 ) -> dict[str, Any]:
@@ -246,7 +273,14 @@ def sync_harness_to_dashboard(
     }
     existing_ids = {str(task.get("task_id")) for task in dashboard_tasks if isinstance(task, dict)}
     changed = False
-    summary = {"status_updates": 0, "comments_added": 0, "created": 0, "skipped": 0, "changed": False}
+    summary = {
+        "status_updates": 0,
+        "project_updates": 0,
+        "comments_added": 0,
+        "created": 0,
+        "skipped": 0,
+        "changed": False,
+    }
 
     if create_missing:
         for task_id, harness_task in sorted(harness_tasks.items()):
@@ -287,6 +321,7 @@ def sync_harness_to_dashboard(
             summary["skipped"] += 1
             continue
 
+        task_changed = False
         status = clean_status(harness_task.get("status"))
         if status == "done" and not task_has_host_verification(harness_task, runs):
             status = "review"
@@ -295,9 +330,10 @@ def sync_harness_to_dashboard(
             if status == "done" and not dashboard_task.get("completed_at"):
                 dashboard_task["completed_at"] = str(harness_task.get("updated_at") or now_iso()).split("T", 1)[0]
             summary["status_updates"] += 1
+            task_changed = True
             changed = True
 
-        for field in ("title", "description", "priority", "assignee", "due_at"):
+        for field in ("project_id", "title", "description", "priority", "assignee", "due_at"):
             value = harness_task.get(field)
             if field == "assignee" and not value:
                 value = None
@@ -305,12 +341,16 @@ def sync_harness_to_dashboard(
                 continue
             if dashboard_task.get(field) != value:
                 dashboard_task[field] = value
+                if field == "project_id":
+                    summary["project_updates"] += 1
+                task_changed = True
                 changed = True
 
         comments = dashboard_task.setdefault("comments", [])
         if not isinstance(comments, list):
             comments = []
             dashboard_task["comments"] = comments
+            task_changed = True
             changed = True
         for item in comments:
             if isinstance(item, dict):
@@ -318,6 +358,7 @@ def sync_harness_to_dashboard(
                 normalized_kind = dashboard_comment_kind(existing_kind)
                 if normalized_kind != existing_kind:
                     item["kind"] = normalized_kind
+                    task_changed = True
                     changed = True
         seen_ids = {str(item.get("comment_id") or "").strip() for item in comments if isinstance(item, dict)}
         seen_bodies = {str(item.get("body") or "").strip() for item in comments if isinstance(item, dict)}
@@ -346,9 +387,10 @@ def sync_harness_to_dashboard(
             seen_ids.add(comment_id)
             seen_bodies.add(body)
             summary["comments_added"] += 1
+            task_changed = True
             changed = True
 
-        if changed:
+        if task_changed:
             dashboard_task["updated_at"] = harness_task.get("updated_at") or now_iso()
 
     if changed:

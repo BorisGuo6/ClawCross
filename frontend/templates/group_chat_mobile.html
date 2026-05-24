@@ -7628,6 +7628,14 @@ function harnessAgentLabel(agent) {
   return `${id} @ ${remote}`;
 }
 
+function harnessAgentIsSurveyPool(agent) {
+  if (!agent || typeof agent !== 'object') return false;
+  const caps = Array.isArray(agent.capabilities) ? agent.capabilities.map(item => String(item || '').toLowerCase()) : [];
+  const metadata = agent.metadata && typeof agent.metadata === 'object' ? agent.metadata : {};
+  const clawcross = metadata.clawcross && typeof metadata.clawcross === 'object' ? metadata.clawcross : {};
+  return !!clawcross.survey_pool || caps.includes('survey-pool') || String(agent.agent_id || '').toLowerCase().includes('survey-pool');
+}
+
 function isHarnessVisibleWorker(agent, visibleTaskIds = null, projectsById = null) {
   if (!agent) return false;
   if (agent.remote_host && String(agent.agent_id || '') === String(agent.remote_host)) return false;
@@ -7807,7 +7815,10 @@ function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sess
   const collapsed = harnessCollapsedProjects.has(projectId);
   const tasksById = new Map(tasks.map(task => [task.task_id, task]));
   const boundAgents = harnessUniqueAgents(projectAgents.filter(agent => harnessWorkerSessionRef(agent)));
-  const projectTitle = projectId === '__unbound__'
+  const isSurveyPool = boundAgents.some(harnessAgentIsSurveyPool) || projectAgents.some(harnessAgentIsSurveyPool);
+  const projectTitle = isSurveyPool
+    ? 'Survey pool'
+    : projectId === '__unbound__'
     ? (_currentLang === 'zh' ? '未绑定 Sessions' : 'Unbound Sessions')
     : ((project && (project.title || project.name)) || projectId || 'default');
   const remoteLabel = harnessProjectRemoteLabel(tasks, agentsByTask, sessions, projectAgents);

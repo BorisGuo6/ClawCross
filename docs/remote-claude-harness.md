@@ -71,10 +71,17 @@ ssh <remote-user>@<remote-tailscale-ip> 'whoami; hostname; tailscale ip -4; sudo
 
 确保本机 ClawCross 至少启动过一次，这样 `~/.clawcross/config/.env` 里有 `INTERNAL_TOKEN`。
 
+ClawCross 仓库不保存任何具体 dashboard 内容或默认项目。先在本机环境中提供 dashboard 配置：
+
+```bash
+export CLAWCROSS_DASHBOARD_URL="<dashboard-web-url>"
+export CLAWCROSS_DASHBOARD_ROOT="<local-dashboard-repo>/dashboard"  # 只在本机需要读写 dashboard/state/*.json 时使用
+```
+
 从本机 ClawCross repo 执行：
 
 ```bash
-cd /Users/boris/workspace/ClawCross
+cd $CLAWCROSS_REPO
 
 python3 scripts/configure_remote_claude_dashboard.py \
   <remote-user>@<remote-tailscale-ip> \
@@ -158,7 +165,7 @@ claude --effort max --permission-mode auto agents
 本机会枚举远端 sessions：
 
 ```bash
-cd /Users/boris/workspace/ClawCross
+cd $CLAWCROSS_REPO
 PYTHONPATH=src python3 - <<'PY'
 from integrations.remote_claude_agents import list_remote_claude_sessions
 import json
@@ -251,7 +258,7 @@ clawcross-harness-agent task-md sync --project-id <project-id> --path TASK.md
 本机也可以直接同步任意 `TASK.md`，用于测试或从远端拉回文件后处理：
 
 ```bash
-cd /Users/boris/workspace/ClawCross
+cd $CLAWCROSS_REPO
 python3 scripts/sync_task_md.py \
   --project-id <project-id> \
   --task-md /path/to/TASK.md \

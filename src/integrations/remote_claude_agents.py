@@ -18,8 +18,8 @@ from typing import Any, Iterable
 from utils.runtime_paths import DATA_DIR
 
 
-DEFAULT_REMOTE_HOST = "100.112.245.1"
-DEFAULT_REMOTE_USER = "jingxiang"
+DEFAULT_REMOTE_HOST = ""
+DEFAULT_REMOTE_USER = ""
 CACHE_FILENAME = "remote_claude_sessions_cache.json"
 TARGETS_FILENAME = "remote_claude_targets.json"
 REMOTE_KEY_SEPARATOR = "::"
@@ -46,8 +46,9 @@ class RemoteClaudeConfig:
 def load_remote_claude_config() -> RemoteClaudeConfig:
     """Load remote Claude SSH settings from the environment.
 
-    Defaults match the Tailscale host the user connected during setup. Override
-    with CLAWCROSS_REMOTE_CLAUDE_HOST / USER / SSH_BINARY if this machine moves.
+    Remote hosts come from CLAWCROSS_REMOTE_CLAUDE_TARGETS, the local target
+    registry, or CLAWCROSS_REMOTE_CLAUDE_HOST / USER. There is no project-specific
+    baked-in default host.
     """
 
     host = (

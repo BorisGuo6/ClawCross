@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -19,10 +20,10 @@ from harness.dashboard_sync import import_dashboard_todos, sync_harness_to_dashb
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Sync ClawCross harness TODOs with dashboard/state/tasks.json.")
-    default_dashboard = PROJECT_ROOT.parent / "BorisGuo6.github.io" / "dashboard"
-    parser.add_argument("--dashboard-root", type=Path, default=default_dashboard)
-    parser.add_argument("--user-id", default="boris")
-    parser.add_argument("--project-id", default="umi-world-model")
+    default_dashboard = os.getenv("CLAWCROSS_DASHBOARD_ROOT") or os.getenv("DASHBOARD_ROOT") or ""
+    parser.add_argument("--dashboard-root", type=Path, default=Path(default_dashboard).expanduser() if default_dashboard else None)
+    parser.add_argument("--user-id", default=os.getenv("CLAWCROSS_HARNESS_USER") or os.getenv("CLAWCROSS_USER_ID") or "default")
+    parser.add_argument("--project-id", default=os.getenv("CLAWCROSS_HARNESS_PROJECT_ID", ""))
     parser.add_argument("--create-missing", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(

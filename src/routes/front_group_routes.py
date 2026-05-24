@@ -39,10 +39,10 @@ def _remote_session_keys(item: dict) -> set[str]:
 def _split_remote_user_host(remote_host: str, *, fallback_user: str = "", fallback_host: str = "") -> tuple[str, str]:
     """Normalize remote identity to separate user and host.
 
-    Harness events often send SSH-style targets such as ``jingxiang@100.112.245.1``
+    Harness events often send SSH-style targets such as ``user@host.example``
     while the live remote payload already carries ``remote.user`` separately.  If
     both are concatenated again in the frontend, the label becomes
-    ``jingxiang@jingxiang@100.112.245.1``.
+    ``user@user@host.example``.
     """
 
     raw = str(remote_host or "").strip()

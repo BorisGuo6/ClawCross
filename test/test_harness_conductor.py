@@ -33,16 +33,16 @@ def sample_state():
         "tasks": [
             {
                 "task_id": "task_umi_eval",
-                "project_id": "umi-world-model",
-                "title": "Run UMI evaluation",
+                "project_id": "project-alpha",
+                "title": "Run Project Alpha evaluation",
                 "description": "Run verifier and report verified results.",
                 "status": "active",
             }
         ],
         "agents": [
             {
-                "agent_id": "umi-vbench@100.112.245.1",
-                "project_id": "umi-world-model",
+                "agent_id": "worker-alpha@192.0.2.1",
+                "project_id": "project-alpha",
                 "current_task_id": "task_umi_eval",
                 "session_ref": "session_abc",
                 "status": "needs_user",
@@ -109,7 +109,7 @@ class HarnessConductorDecisionTests(unittest.TestCase):
                 "display_id": "session_abc",
                 "status": "busy",
                 "last_message": {
-                    "content": "{'command': 'cd ~/workspace/image-layered-world-model && .venv/bin/pip install --quiet --no-cache-dir torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128', 'description': 'Install torch 2.9.1 cu128', 'timeout': 600000}",
+                    "content": "{'command': 'cd ~/workspace/project-beta && .venv/bin/pip install --quiet --no-cache-dir torch==2.9.1 --index-url https://download.pytorch.org/whl/cu128', 'description': 'Install torch 2.9.1 cu128', 'timeout': 600000}",
                 },
             },
             sample_state(),
@@ -138,13 +138,13 @@ class HarnessConductorDecisionTests(unittest.TestCase):
 
     def test_decision_matches_remote_qualified_job_id(self):
         state = sample_state()
-        state["agents"][0]["session_ref"] = "feibo@100.87.220.29::8a5f7c95"
-        state["agents"][0]["agent_id"] = "image-layered-feibo@100.87.220.29"
-        state["agents"][0]["project_id"] = "image-layered-world-model"
-        state["tasks"][0]["project_id"] = "image-layered-world-model"
+        state["agents"][0]["session_ref"] = "remoteuser@192.0.2.29::8a5f7c95"
+        state["agents"][0]["agent_id"] = "project-beta-remoteuser@192.0.2.29"
+        state["agents"][0]["project_id"] = "project-beta"
+        state["tasks"][0]["project_id"] = "project-beta"
         decision = conductor.decide_for_session(
             {
-                "remote_key": "feibo@100.87.220.29::session_014xgjW9Tj25dnXYDNUYg8NJ",
+                "remote_key": "remoteuser@192.0.2.29::session_014xgjW9Tj25dnXYDNUYg8NJ",
                 "display_id": "session_014xgjW9Tj25dnXYDNUYg8NJ",
                 "job_id": "8a5f7c95",
                 "status": "busy",
@@ -156,7 +156,7 @@ class HarnessConductorDecisionTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(decision)
-        self.assertEqual(decision.agent_id, "image-layered-feibo@100.87.220.29")
+        self.assertEqual(decision.agent_id, "project-beta-remoteuser@192.0.2.29")
 
     def test_mark_sent_prevents_immediate_duplicate_reply(self):
         session = {
@@ -247,14 +247,14 @@ class HarnessConductorDecisionTests(unittest.TestCase):
                 return mock.Mock(returncode=0, stdout='{"ok":true,"tasks":2}\n', stderr="")
 
             with mock.patch("harness.dashboard_sync.subprocess.run", side_effect=fake_run):
-                result = sync_dashboard_to_supabase(dashboard_root=dashboard, project_id="umi-world-model")
+                result = sync_dashboard_to_supabase(dashboard_root=dashboard, project_id="project-alpha")
 
             self.assertTrue(result["ok"])
             self.assertTrue(result["synced"])
             self.assertEqual(result["tasks"], 2)
             self.assertEqual(
                 calls[0],
-                ["npm", "run", "supabase:sync", "--", "--once", "--project-id", "umi-world-model"],
+                ["npm", "run", "supabase:sync", "--", "--once", "--project-id", "project-alpha"],
             )
 
 
@@ -267,21 +267,21 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_CONDUCTOR_CACHE"] = str(Path(tmpdir) / "cache.json")
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_umi_eval",
-                        "title": "Run UMI evaluation",
+                        "title": "Run Project Alpha evaluation",
                         "status": "active",
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "needs_user",
-                        "agent_id": "umi-vbench@100.112.245.1",
-                        "project_id": "umi-world-model",
+                        "agent_id": "worker-alpha@192.0.2.1",
+                        "project_id": "project-alpha",
                         "task_id": "task_umi_eval",
                         "session_ref": "session_abc",
                         "message": "Need confirmation",
@@ -301,11 +301,11 @@ class HarnessConductorLoopTests(unittest.TestCase):
                         ],
                     },
                 ), mock.patch.object(conductor, "send_remote_claude_message", return_value={"ok": True}):
-                    result = conductor.run_conductor_once("boris", cooldown_seconds=30, sync_dashboard=False)
+                    result = conductor.run_conductor_once("test-user", cooldown_seconds=30, sync_dashboard=False)
 
                 self.assertEqual(len(result["actions"]), 1)
                 self.assertTrue(result["actions"][0]["sent"])
-                state = get_harness_state("boris")
+                state = get_harness_state("test-user")
                 comments = state["tasks"][0].get("comments", [])
                 self.assertTrue(any(c.get("kind") == "conductor_reply" for c in comments))
             finally:
@@ -331,7 +331,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
   "tasks": [
     {
       "task_id": "task_done_decision",
-      "project_id": "umi-world-model",
+      "project_id": "project-alpha",
       "title": "Decide baseline",
       "description": "Decision task",
       "status": "active",
@@ -340,7 +340,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
     },
     {
       "task_id": "task_next_dashboard",
-      "project_id": "umi-world-model",
+      "project_id": "project-alpha",
       "title": "Next dashboard TODO",
       "description": "New pulled task",
       "status": "todo",
@@ -354,32 +354,32 @@ class HarnessConductorLoopTests(unittest.TestCase):
             )
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_done_decision",
                         "title": "Decide baseline",
                         "status": "done",
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_comment",
                         "agent_id": "worker-1",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_done_decision",
                         "kind": "result",
                         "message": "Decision evidence is recorded.",
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "heartbeat",
                         "agent_id": "worker-1",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_done_decision",
                         "current_task_id": "task_done_decision",
                         "session_ref": "session_abc",
@@ -387,25 +387,89 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 )
 
-                pull = import_dashboard_todos("boris", dashboard_root=dashboard, project_id="umi-world-model")
+                pull = import_dashboard_todos("test-user", dashboard_root=dashboard, project_id="project-alpha")
                 self.assertEqual(pull["created"], 1)
-                verify = conductor.verify_finished_tasks("boris", project_id="umi-world-model")
+                verify = conductor.verify_finished_tasks("test-user", project_id="project-alpha")
                 self.assertEqual(verify["accepted"], 1)
-                state = get_harness_state("boris")
+                state = get_harness_state("test-user")
                 assigned = conductor.assign_next_dashboard_todos(
-                    "boris",
+                    "test-user",
                     [{"display_id": "session_abc", "status": "idle"}],
                     state,
-                    project_id="umi-world-model",
+                    project_id="project-alpha",
                     dry_run=True,
                 )
                 self.assertEqual(assigned[0]["task_id"], "task_next_dashboard")
 
-                push = sync_harness_to_dashboard("boris", dashboard_root=dashboard, project_id="umi-world-model")
+                push = sync_harness_to_dashboard("test-user", dashboard_root=dashboard, project_id="project-alpha")
                 self.assertTrue(push["changed"])
                 doc = (dashboard / "state" / "tasks.json").read_text(encoding="utf-8")
                 self.assertIn('"status": "done"', doc)
                 self.assertIn("Host verification", doc)
+            finally:
+                if old_state is None:
+                    os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
+                else:
+                    os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
+
+    def test_dashboard_push_syncs_project_move_for_existing_task(self):
+        with TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
+            os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
+            dashboard = Path(tmpdir) / "dashboard"
+            (dashboard / "state").mkdir(parents=True)
+            tasks_path = dashboard / "state" / "tasks.json"
+            tasks_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "tasks.v1",
+                        "tasks": [
+                            {
+                                "task_id": "task_move",
+                                "project_id": "project-alpha",
+                                "title": "Move this task",
+                                "description": "Initial project.",
+                                "status": "needs_user",
+                                "priority": "medium",
+                                "comments": [],
+                                "updated_at": "2026-05-19T00:00:00+08:00",
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            try:
+                apply_harness_event(
+                    "test-user",
+                    {
+                        "action": "task_upsert",
+                        "project_id": "project-alpha",
+                        "task_id": "task_move",
+                        "title": "Move this task",
+                        "status": "needs_user",
+                    },
+                )
+                apply_harness_event(
+                    "test-user",
+                    {
+                        "action": "task_status",
+                        "agent_id": "host",
+                        "project_id": "project-beta",
+                        "task_id": "task_move",
+                        "status": "todo",
+                        "message": "Move to the survey pool.",
+                    },
+                )
+
+                summary = sync_harness_to_dashboard("test-user", dashboard_root=dashboard)
+                self.assertEqual(summary["project_updates"], 1)
+                self.assertEqual(summary["status_updates"], 1)
+                task = json.loads(tasks_path.read_text(encoding="utf-8"))["tasks"][0]
+                self.assertEqual(task["project_id"], "project-beta")
+                self.assertEqual(task["status"], "todo")
             finally:
                 if old_state is None:
                     os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
@@ -417,23 +481,23 @@ class HarnessConductorLoopTests(unittest.TestCase):
             "tasks": [
                 {
                     "task_id": "task_umi_next",
-                    "project_id": "umi-world-model",
-                    "title": "UMI next",
+                    "project_id": "project-alpha",
+                    "title": "Project Alpha next",
                     "status": "todo",
                     "priority": "high",
                 },
                 {
                     "task_id": "task_robotics_next",
-                    "project_id": "robotics-3d-printing",
-                    "title": "Robotics next",
+                    "project_id": "project-gamma",
+                    "title": "Project Gamma next",
                     "status": "todo",
                     "priority": "high",
                 },
             ],
             "agents": [
                 {
-                    "agent_id": "robotics-shaol@100.96.228.8",
-                    "project_id": "robotics-3d-printing",
+                    "agent_id": "project-gamma-surveyuser@192.0.2.8",
+                    "project_id": "project-gamma",
                     "current_task_id": "",
                     "session_ref": "session_robotics",
                     "status": "idle",
@@ -443,7 +507,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
         }
 
         assigned = conductor.assign_next_dashboard_todos(
-            "boris",
+            "test-user",
             [{"display_id": "session_robotics", "status": "idle"}],
             state,
             project_id="",
@@ -453,12 +517,62 @@ class HarnessConductorLoopTests(unittest.TestCase):
         self.assertEqual(len(assigned), 1)
         self.assertEqual(assigned[0]["task_id"], "task_robotics_next")
 
+    def test_survey_pool_worker_can_take_multiple_survey_projects(self):
+        state = {
+            "tasks": [
+                {
+                    "task_id": "task_umi_next",
+                    "project_id": "project-alpha",
+                    "title": "Project Alpha next",
+                    "status": "todo",
+                    "priority": "urgent",
+                },
+                {
+                    "task_id": "task_rate_curve_next",
+                    "project_id": "project-survey-a",
+                    "title": "Rate curve survey next",
+                    "status": "todo",
+                    "priority": "high",
+                },
+                {
+                    "task_id": "task_hoi_next",
+                    "project_id": "project-survey-b",
+                    "title": "HOI survey next",
+                    "status": "todo",
+                    "priority": "medium",
+                },
+            ],
+            "agents": [
+                {
+                    "agent_id": "survey-pool-surveyuser@192.0.2.8",
+                    "project_id": "project-survey-a",
+                    "current_task_id": "",
+                    "session_ref": "session_survey",
+                    "status": "idle",
+                    "capabilities": ["survey-pool"],
+                    "metadata": {"clawcross": {"survey_pool": True, "project_ids": ["project-survey-a", "project-survey-b"]}},
+                }
+            ],
+            "runs": [],
+        }
+
+        assigned = conductor.assign_next_dashboard_todos(
+            "test-user",
+            [{"display_id": "session_survey", "status": "idle"}],
+            state,
+            project_id="",
+            dry_run=True,
+        )
+
+        self.assertEqual(len(assigned), 1)
+        self.assertEqual(assigned[0]["task_id"], "task_rate_curve_next")
+
     def test_unbound_idle_session_is_not_auto_adopted_by_default(self):
         state = {
             "tasks": [
                 {
                     "task_id": "task_image_next",
-                    "project_id": "image-layered-world-model",
+                    "project_id": "project-beta",
                     "title": "Image next",
                     "status": "todo",
                     "priority": "high",
@@ -466,11 +580,11 @@ class HarnessConductorLoopTests(unittest.TestCase):
             ],
             "agents": [
                 {
-                    "agent_id": "image-layered-feibo@100.87.220.29",
-                    "project_id": "image-layered-world-model",
+                    "agent_id": "project-beta-remoteuser@192.0.2.29",
+                    "project_id": "project-beta",
                     "current_task_id": "task_done",
                     "session_ref": "old_session",
-                    "remote_host": "feibo@100.87.220.29",
+                    "remote_host": "remoteuser@192.0.2.29",
                     "status": "done",
                 }
             ],
@@ -478,13 +592,13 @@ class HarnessConductorLoopTests(unittest.TestCase):
         }
 
         assigned = conductor.assign_next_dashboard_todos(
-            "boris",
+            "test-user",
             [
                 {
-                    "remote_key": "feibo@100.87.220.29::new_session",
+                    "remote_key": "remoteuser@192.0.2.29::new_session",
                     "display_id": "new_session",
-                    "remote_user": "feibo",
-                    "remote_host": "100.87.220.29",
+                    "remote_user": "remoteuser",
+                    "remote_host": "192.0.2.29",
                     "status": "idle",
                 }
             ],
@@ -500,7 +614,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
             "tasks": [
                 {
                     "task_id": "task_image_next",
-                    "project_id": "image-layered-world-model",
+                    "project_id": "project-beta",
                     "title": "Image next",
                     "status": "todo",
                     "priority": "high",
@@ -508,11 +622,11 @@ class HarnessConductorLoopTests(unittest.TestCase):
             ],
             "agents": [
                 {
-                    "agent_id": "image-layered-feibo@100.87.220.29",
-                    "project_id": "image-layered-world-model",
+                    "agent_id": "project-beta-remoteuser@192.0.2.29",
+                    "project_id": "project-beta",
                     "current_task_id": "task_done",
                     "session_ref": "old_session",
-                    "remote_host": "feibo@100.87.220.29",
+                    "remote_host": "remoteuser@192.0.2.29",
                     "status": "done",
                 }
             ],
@@ -521,13 +635,13 @@ class HarnessConductorLoopTests(unittest.TestCase):
 
         with mock.patch.dict(os.environ, {"CLAWCROSS_HARNESS_AUTOBIND_UNBOUND_SESSIONS": "1"}):
             assigned = conductor.assign_next_dashboard_todos(
-                "boris",
+                "test-user",
                 [
                     {
-                        "remote_key": "feibo@100.87.220.29::new_session",
+                        "remote_key": "remoteuser@192.0.2.29::new_session",
                         "display_id": "new_session",
-                        "remote_user": "feibo",
-                        "remote_host": "100.87.220.29",
+                        "remote_user": "remoteuser",
+                        "remote_host": "192.0.2.29",
                         "status": "idle",
                     }
                 ],
@@ -537,23 +651,23 @@ class HarnessConductorLoopTests(unittest.TestCase):
             )
 
         self.assertEqual(len(assigned), 1)
-        self.assertEqual(assigned[0]["project_id"], "image-layered-world-model")
+        self.assertEqual(assigned[0]["project_id"], "project-beta")
         self.assertEqual(assigned[0]["task_id"], "task_image_next")
-        self.assertIn("image-layered-world-model", assigned[0]["agent_id"])
+        self.assertIn("project-beta", assigned[0]["agent_id"])
 
     def test_llm_assignment_marks_webot_decision_source(self):
         state = {
             "tasks": [
                 {
                     "task_id": "task_a",
-                    "project_id": "umi-world-model",
+                    "project_id": "project-alpha",
                     "title": "Fallback task",
                     "status": "todo",
                     "priority": "low",
                 },
                 {
                     "task_id": "task_b",
-                    "project_id": "umi-world-model",
+                    "project_id": "project-alpha",
                     "title": "Webot selected task",
                     "status": "todo",
                     "priority": "low",
@@ -562,7 +676,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
             "agents": [
                 {
                     "agent_id": "umi-worker",
-                    "project_id": "umi-world-model",
+                    "project_id": "project-alpha",
                     "current_task_id": "",
                     "session_ref": "session_abc",
                     "status": "idle",
@@ -577,10 +691,10 @@ class HarnessConductorLoopTests(unittest.TestCase):
             return_value={"task_id": "task_b", "message": "Webot message", "reason": "better match"},
         ):
             assigned = conductor.assign_next_dashboard_todos(
-                "boris",
+                "test-user",
                 [{"display_id": "session_abc", "status": "idle"}],
                 state,
-                project_id="umi-world-model",
+                project_id="project-alpha",
                 dry_run=True,
                 llm_mode=True,
             )
@@ -596,18 +710,18 @@ class HarnessConductorLoopTests(unittest.TestCase):
             "tasks": [
                 {
                     "task_id": "task_pod",
-                    "project_id": "robotics-3d-printing",
+                    "project_id": "project-gamma",
                     "title": "Benchmark photo / text-to-3D engines",
                     "status": "active",
                 }
             ],
             "agents": [
                 {
-                    "agent_id": "robotics-printing-shaol@100.96.228.8",
-                    "project_id": "robotics-3d-printing",
+                    "agent_id": "project-gamma-surveyuser@192.0.2.8",
+                    "project_id": "project-gamma",
                     "current_task_id": "task_pod",
                     "session_ref": "session_robotics",
-                    "remote_host": "shaol@100.96.228.8",
+                    "remote_host": "surveyuser@192.0.2.8",
                     "status": "running",
                 }
             ],
@@ -619,8 +733,8 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     {
                         "display_id": "session_robotics",
                         "title": "old name",
-                        "remote_user": "shaol",
-                        "remote_host": "100.96.228.8",
+                        "remote_user": "surveyuser",
+                        "remote_host": "192.0.2.8",
                     }
                 ],
                 state,
@@ -628,10 +742,45 @@ class HarnessConductorLoopTests(unittest.TestCase):
 
         self.assertEqual(len(renamed), 1)
         self.assertTrue(renamed[0]["ok"])
-        self.assertEqual(renamed[0]["project_id"], "robotics-3d-printing")
+        self.assertEqual(renamed[0]["project_id"], "project-gamma")
         rename_mock.assert_called_once_with(
             "session_robotics",
-            "ClawCross | Robotics+3D Printing | shaol | Benchmark photo / text-to-3D...",
+            "ClawCross | Project Gamma | surveyuser | Benchmark photo / text-to-3D...",
+        )
+
+    def test_survey_pool_session_rename_uses_pool_label(self):
+        state = {
+            "tasks": [],
+            "agents": [
+                {
+                    "agent_id": "survey-pool-surveyuser@192.0.2.8",
+                    "project_id": "project-survey-a",
+                    "current_task_id": "",
+                    "session_ref": "session_survey",
+                    "remote_host": "surveyuser@192.0.2.8",
+                    "status": "idle",
+                    "metadata": {"clawcross": {"survey_pool": True}},
+                }
+            ],
+        }
+
+        with mock.patch.object(conductor, "rename_remote_claude_session", return_value={"ok": True}) as rename_mock:
+            renamed = conductor.rename_bound_remote_sessions(
+                [
+                    {
+                        "display_id": "session_survey",
+                        "title": "old name",
+                        "remote_user": "surveyuser",
+                        "remote_host": "192.0.2.8",
+                    }
+                ],
+                state,
+            )
+
+        self.assertEqual(len(renamed), 1)
+        rename_mock.assert_called_once_with(
+            "session_survey",
+            "ClawCross | Survey Pool | surveyuser",
         )
 
     def test_cleanup_closes_paused_todo_session_and_deletes_agent(self):
@@ -640,10 +789,10 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_paused",
                         "title": "Paused TODO",
                         "status": "todo",
@@ -651,11 +800,11 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "heartbeat",
-                        "agent_id": "worker-paused@100.112.245.1",
-                        "project_id": "umi-world-model",
+                        "agent_id": "worker-paused@192.0.2.1",
+                        "project_id": "project-alpha",
                         "task_id": "task_paused",
                         "current_task_id": "task_paused",
                         "session_ref": "session_paused",
@@ -663,21 +812,21 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_active",
                         "title": "Active TODO",
                         "status": "active",
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "heartbeat",
-                        "agent_id": "worker-active@100.112.245.1",
-                        "project_id": "umi-world-model",
+                        "agent_id": "worker-active@192.0.2.1",
+                        "project_id": "project-alpha",
                         "task_id": "task_active",
                         "current_task_id": "task_active",
                         "session_ref": "session_active",
@@ -685,26 +834,26 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 )
 
-                state = get_harness_state("boris")
+                state = get_harness_state("test-user")
                 with mock.patch.object(
                     conductor,
                     "close_remote_claude_session",
                     return_value={"ok": True, "archive_path": "/archive/paused.json"},
                 ) as close_mock:
                     cleaned = conductor.cleanup_remote_sessions_without_todos(
-                        "boris",
+                        "test-user",
                         [
                             {"display_id": "session_paused", "status": "idle"},
                             {"display_id": "session_active", "status": "busy"},
                         ],
                         state,
-                        project_id="umi-world-model",
+                        project_id="project-alpha",
                     )
 
                 self.assertEqual(len(cleaned), 1)
                 self.assertTrue(cleaned[0]["deleted_agent"])
                 close_mock.assert_called_once_with("session_paused", force=True)
-                self.assertEqual(get_harness_state("boris")["counts"]["agents"], 1)
+                self.assertEqual(get_harness_state("test-user")["counts"]["agents"], 1)
             finally:
                 if old_state is None:
                     os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
@@ -717,32 +866,32 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_done",
                         "title": "Done TODO",
                         "status": "done",
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_comment",
                         "agent_id": conductor.CONDUCTOR_AGENT_ID,
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_done",
                         "kind": "host_verified",
                         "message": "verified",
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "heartbeat",
-                        "agent_id": "worker-last@100.112.245.1",
-                        "project_id": "umi-world-model",
+                        "agent_id": "worker-last@192.0.2.1",
+                        "project_id": "project-alpha",
                         "task_id": "task_done",
                         "current_task_id": "task_done",
                         "session_ref": "session_last",
@@ -750,19 +899,19 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 )
 
-                state = get_harness_state("boris")
+                state = get_harness_state("test-user")
                 with mock.patch.object(conductor, "close_remote_claude_session") as close_mock:
                     cleaned = conductor.cleanup_remote_sessions_without_todos(
-                        "boris",
+                        "test-user",
                         [{"display_id": "session_last", "status": "idle"}],
                         state,
-                        project_id="umi-world-model",
+                        project_id="project-alpha",
                     )
 
                 self.assertEqual(len(cleaned), 1)
                 self.assertTrue(cleaned[0]["kept"])
                 close_mock.assert_not_called()
-                agents = get_harness_state("boris")["agents"]
+                agents = get_harness_state("test-user")["agents"]
                 self.assertEqual(len(agents), 1)
                 self.assertEqual(agents[0]["status"], "idle")
                 self.assertEqual(agents[0]["current_task_id"], "")
@@ -778,16 +927,16 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_review_me",
                         "title": "Reviewable result",
                         "status": "review",
                     },
                 )
-                state = get_harness_state("boris")
+                state = get_harness_state("test-user")
                 cache = {"sent": {}}
                 with mock.patch.object(
                     conductor,
@@ -802,17 +951,17 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 ):
                     reviewed = conductor.review_pending_tasks_with_codex(
-                        "boris",
+                        "test-user",
                         state,
                         [],
                         cache,
-                        project_id="umi-world-model",
+                        project_id="project-alpha",
                         limit=1,
                     )
 
                 self.assertEqual(len(reviewed), 1)
                 self.assertEqual(reviewed[0]["action"], "accept")
-                final = get_harness_state("boris")
+                final = get_harness_state("test-user")
                 task = final["tasks"][0]
                 self.assertEqual(task["status"], "done")
                 self.assertTrue(any(c.get("kind") == "host_verified" for c in task.get("comments", [])))
@@ -829,16 +978,16 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "umi-world-model",
+                        "project_id": "project-alpha",
                         "task_id": "task_review_more",
                         "title": "Needs more scale",
                         "status": "review",
                     },
                 )
-                state = get_harness_state("boris")
+                state = get_harness_state("test-user")
                 cache = {"sent": {}}
                 with mock.patch.object(
                     conductor,
@@ -851,17 +1000,17 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 ):
                     reviewed = conductor.review_pending_tasks_with_codex(
-                        "boris",
+                        "test-user",
                         state,
                         [],
                         cache,
-                        project_id="umi-world-model",
+                        project_id="project-alpha",
                         limit=1,
                     )
 
                 self.assertEqual(len(reviewed), 1)
                 self.assertEqual(reviewed[0]["action"], "reopen")
-                task = get_harness_state("boris")["tasks"][0]
+                task = get_harness_state("test-user")["tasks"][0]
                 self.assertEqual(task["status"], "active")
                 self.assertTrue(any("Scale to 100" in c.get("body", "") for c in task.get("comments", [])))
             finally:
@@ -876,16 +1025,16 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "image-layered-world-model",
+                        "project_id": "project-beta",
                         "task_id": "task_photoshop",
                         "title": "Prototype Photoshop PSD layer pipeline",
                         "status": "review",
                     },
                 )
-                state = get_harness_state("boris")
+                state = get_harness_state("test-user")
                 cache = {"sent": {}}
                 with mock.patch.object(
                     conductor,
@@ -898,17 +1047,17 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     },
                 ):
                     reviewed = conductor.review_pending_tasks_with_codex(
-                        "boris",
+                        "test-user",
                         state,
                         [],
                         cache,
-                        project_id="image-layered-world-model",
+                        project_id="project-beta",
                         limit=1,
                     )
 
                 self.assertEqual(len(reviewed), 1)
                 self.assertEqual(reviewed[0]["action"], "needs_user")
-                task = get_harness_state("boris")["tasks"][0]
+                task = get_harness_state("test-user")["tasks"][0]
                 self.assertEqual(task["status"], "needs_user")
                 self.assertTrue(any(c.get("kind") == "needs_user" for c in task.get("comments", [])))
             finally:
@@ -923,31 +1072,31 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
             try:
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_upsert",
-                        "project_id": "image-layered-world-model",
+                        "project_id": "project-beta",
                         "task_id": "task_verified_review",
                         "title": "Already accepted",
                         "status": "review",
                     },
                 )
                 apply_harness_event(
-                    "boris",
+                    "test-user",
                     {
                         "action": "task_comment",
                         "agent_id": conductor.CONDUCTOR_AGENT_ID,
-                        "project_id": "image-layered-world-model",
+                        "project_id": "project-beta",
                         "task_id": "task_verified_review",
                         "kind": "host_verified",
                         "message": "Accepted earlier.",
                     },
                 )
 
-                result = conductor.verify_finished_tasks("boris", project_id="image-layered-world-model")
+                result = conductor.verify_finished_tasks("test-user", project_id="project-beta")
 
                 self.assertEqual(result["accepted"], 1)
-                task = get_harness_state("boris")["tasks"][0]
+                task = get_harness_state("test-user")["tasks"][0]
                 self.assertEqual(task["status"], "done")
             finally:
                 if old_state is None:
@@ -969,7 +1118,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
                             "tasks": [
                                 {
                                     "task_id": "task_lifecycle",
-                                    "project_id": "umi-world-model",
+                                    "project_id": "project-alpha",
                                     "title": "Run lifecycle verifier",
                                     "description": "Exercise TASK.md sync.",
                                     "status": "todo",
@@ -986,10 +1135,10 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 task_md = Path(tmpdir) / "TASK.md"
 
                 exported = sync_task_markdown(
-                    "boris",
+                    "test-user",
                     task_md_path=task_md,
                     dashboard_root=root,
-                    project_id="umi-world-model",
+                    project_id="project-alpha",
                     direction="dashboard-to-md",
                 )
                 self.assertEqual(exported["task_md_export"]["tasks"], 1)
@@ -1010,10 +1159,10 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 task_md.write_text(render_task_markdown(payload), encoding="utf-8")
 
                 imported = sync_task_markdown(
-                    "boris",
+                    "test-user",
                     task_md_path=task_md,
                     dashboard_root=root,
-                    project_id="umi-world-model",
+                    project_id="project-alpha",
                     direction="md-to-dashboard",
                 )
                 self.assertEqual(imported["task_md_import"]["status_updates"], 1)

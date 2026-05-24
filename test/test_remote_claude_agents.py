@@ -84,29 +84,29 @@ class RemoteClaudeParserTests(unittest.TestCase):
 
     def test_tailscale_discovery_uses_registered_users(self):
         status = {
-            "Self": {"TailscaleIPs": ["100.111.237.115"]},
+            "Self": {"TailscaleIPs": ["192.0.2.115"]},
             "Peer": {
                 "a": {
-                    "HostName": "yuhang-B850M-C",
+                    "HostName": "fixture-host",
                     "OS": "linux",
                     "Online": True,
-                    "TailscaleIPs": ["100.87.220.29"],
+                    "TailscaleIPs": ["192.0.2.29"],
                 },
                 "b": {
                     "HostName": "BGUO-MC0",
                     "OS": "macOS",
                     "Online": True,
-                    "TailscaleIPs": ["100.111.237.115"],
+                    "TailscaleIPs": ["192.0.2.115"],
                 },
             },
         }
         base = rca.RemoteClaudeConfig(host="fallback", user="fallback")
         with mock.patch.object(rca, "_run_tailscale_status", return_value=status), mock.patch.object(
-            rca, "_registered_user_map", return_value={"100.87.220.29": "feibo"}
+            rca, "_registered_user_map", return_value={"192.0.2.29": "remoteuser"}
         ):
             configs = rca.discover_tailscale_remote_configs(base)
 
-        self.assertEqual([(item.user, item.host, item.hostname) for item in configs], [("feibo", "100.87.220.29", "yuhang-B850M-C")])
+        self.assertEqual([(item.user, item.host, item.hostname) for item in configs], [("remoteuser", "192.0.2.29", "fixture-host")])
 
     def test_list_sessions_filters_idle_daemon_spares(self):
         payload = {
@@ -212,18 +212,18 @@ class RemoteClaudeParserTests(unittest.TestCase):
             "ok": True,
             "short": "5dd495e1",
             "old_name": "old",
-            "name": "ClawCross | UMI World Model | jingxiang",
+            "name": "ClawCross | Project Alpha | primaryuser",
             "roster_updated": True,
-            "session": {"bridge_session_id": "session_abc", "title": "ClawCross | UMI World Model | jingxiang"},
+            "session": {"bridge_session_id": "session_abc", "title": "ClawCross | Project Alpha | primaryuser"},
         }
         with mock.patch.object(
             rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
         ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
-            data = rca.rename_remote_claude_session("u@h::session_abc", "ClawCross | UMI World Model | jingxiang")
+            data = rca.rename_remote_claude_session("u@h::session_abc", "ClawCross | Project Alpha | primaryuser")
 
         self.assertTrue(data["ok"])
         self.assertEqual(data["old_name"], "old")
-        self.assertEqual(data["name"], "ClawCross | UMI World Model | jingxiang")
+        self.assertEqual(data["name"], "ClawCross | Project Alpha | primaryuser")
         self.assertTrue(data["roster_updated"])
         self.assertEqual(data["session"]["remote_key"], "u@h::session_abc")
 
@@ -234,7 +234,7 @@ class RemoteClaudeParserTests(unittest.TestCase):
             "short": "5dd495e1",
             "pid": 1234,
             "session": {"bridge_session_id": "session_abc"},
-            "archive_path": "/home/jingxiang/.claude/sessions/.clawcross-archive/1.json",
+            "archive_path": "/home/primaryuser/.claude/sessions/.clawcross-archive/1.json",
             "kill": {"attempted": True, "terminated": True},
             "archive": {"attempted": True, "archived": True},
         }
@@ -278,7 +278,7 @@ class RemoteClaudeRouteTests(unittest.TestCase):
     def test_merge_review_harness_sessions_keeps_settled_review_worker_visible(self):
         data = {
             "ok": True,
-            "remote": {"host": "100.112.245.1", "user": "jingxiang"},
+            "remote": {"host": "192.0.2.1", "user": "primaryuser"},
             "sessions": [{"display_id": "session_live"}],
         }
         harness_state = {
@@ -292,11 +292,11 @@ class RemoteClaudeRouteTests(unittest.TestCase):
             ],
             "agents": [
                 {
-                    "agent_id": "worker-review@100.112.245.1",
+                    "agent_id": "worker-review@192.0.2.1",
                     "current_task_id": "task_review",
                     "session_ref": "session_review",
                     "status": "done",
-                    "remote_host": "jingxiang@100.112.245.1",
+                    "remote_host": "primaryuser@192.0.2.1",
                     "message": "done, awaiting review",
                     "updated_at": "2026-05-19T02:01:00+08:00",
                 }
@@ -309,8 +309,8 @@ class RemoteClaudeRouteTests(unittest.TestCase):
         review = merged["sessions"][1]
         self.assertEqual(review["display_id"], "session_review")
         self.assertEqual(review["status"], "review")
-        self.assertEqual(review["remote_user"], "jingxiang")
-        self.assertEqual(review["remote_host"], "100.112.245.1")
+        self.assertEqual(review["remote_user"], "primaryuser")
+        self.assertEqual(review["remote_host"], "192.0.2.1")
         self.assertTrue(review["harness_review_placeholder"])
 
     def test_messages_route_returns_remote_payload(self):

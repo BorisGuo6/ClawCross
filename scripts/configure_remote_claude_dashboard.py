@@ -142,11 +142,13 @@ def post_event(args: argparse.Namespace, payload: dict, *, emit: bool = True) ->
     config = load_env(args.config)
     base_url = config_value(config, "CLAWCROSS_AGENT_BASE_URL", "http://127.0.0.1:51200").rstrip("/")
     token = config_value(config, "INTERNAL_TOKEN")
-    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "boris"))
+    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "default"))
     if not token:
         raise SystemExit(f"INTERNAL_TOKEN is missing in {args.config}")
     payload = {key: value for key, value in payload.items() if value not in (None, "")}
-    payload.setdefault("project_id", config_value(config, "DEFAULT_PROJECT_ID", "umi-world-model"))
+    default_project_id = config_value(config, "DEFAULT_PROJECT_ID")
+    if default_project_id:
+        payload.setdefault("project_id", default_project_id)
     payload["user_id"] = user_id
     data = request_json(f"{base_url}/harness/event", timeout=args.timeout, token=token, payload=payload)
     if emit:
@@ -158,7 +160,7 @@ def request_clawcross(args: argparse.Namespace, path: str, *, payload: dict | No
     config = load_env(args.config)
     base_url = config_value(config, "CLAWCROSS_AGENT_BASE_URL", "http://127.0.0.1:51200").rstrip("/")
     token = config_value(config, "INTERNAL_TOKEN")
-    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "boris"))
+    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "default"))
     if not token:
         raise SystemExit(f"INTERNAL_TOKEN is missing in {args.config}")
     url = f"{base_url}{path}"
@@ -173,8 +175,10 @@ def request_clawcross(args: argparse.Namespace, path: str, *, payload: dict | No
 
 def command_dashboard(args: argparse.Namespace) -> None:
     config = load_env(args.config)
-    dashboard_url = config_value(config, "DASHBOARD_URL", "https://jingxiangguo.com/dashboard").rstrip("/")
-    project_id = args.project_id or config_value(config, "DEFAULT_PROJECT_ID", "umi-world-model")
+    dashboard_url = config_value(config, "DASHBOARD_URL").rstrip("/")
+    if not dashboard_url:
+        raise SystemExit("DASHBOARD_URL is missing in the remote ClawCross harness env")
+    project_id = args.project_id or config_value(config, "DEFAULT_PROJECT_ID")
     tasks_doc = request_json(f"{dashboard_url}/state/tasks.json", timeout=args.timeout)
     tasks = tasks_doc.get("tasks", tasks_doc if isinstance(tasks_doc, list) else [])
     if not isinstance(tasks, list):
@@ -195,7 +199,7 @@ def command_dashboard(args: argparse.Namespace) -> None:
         "task_count": len(selected),
         "tasks": selected,
     }
-    if args.project:
+    if args.project and project_id:
         try:
             result["project"] = request_json(f"{dashboard_url}/state/projects/{project_id}.json", timeout=args.timeout)
         except SystemExit as exc:
@@ -205,9 +209,11 @@ def command_dashboard(args: argparse.Namespace) -> None:
 
 def task_md_payload_from_dashboard(args: argparse.Namespace) -> dict:
     config = load_env(args.config)
-    dashboard_url = config_value(config, "DASHBOARD_URL", "https://jingxiangguo.com/dashboard").rstrip("/")
-    project_id = args.project_id or config_value(config, "DEFAULT_PROJECT_ID", "umi-world-model")
-    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "boris"))
+    dashboard_url = config_value(config, "DASHBOARD_URL").rstrip("/")
+    if not dashboard_url:
+        raise SystemExit("DASHBOARD_URL is missing in the remote ClawCross harness env")
+    project_id = args.project_id or config_value(config, "DEFAULT_PROJECT_ID")
+    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "default"))
     tasks_doc = request_json(f"{dashboard_url}/state/tasks.json", timeout=args.timeout)
     tasks = tasks_doc.get("tasks", tasks_doc if isinstance(tasks_doc, list) else [])
     if not isinstance(tasks, list):
@@ -593,7 +599,7 @@ def main() -> None:
     args.config = args.config.expanduser()
     config = load_env(args.config)
     if hasattr(args, "project_id") and not args.project_id:
-        args.project_id = config_value(config, "DEFAULT_PROJECT_ID", "umi-world-model")
+        args.project_id = config_value(config, "DEFAULT_PROJECT_ID")
     if hasattr(args, "remote_host") and not args.remote_host:
         args.remote_host = config_value(config, "REMOTE_HOST")
     args.func(args)
@@ -870,12 +876,31 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         clean = (item or "").strip()
         if clean and clean not in projects:
             projects.append(clean)
-    if not projects:
-        projects = ["umi-world-model"]
     project_curls = "\n".join(
         f"curl -fsSL {dashboard_url}/state/projects/{project_id}.json" for project_id in projects
     )
-    default_project = projects[0]
+    default_project = projects[0] if projects else ""
+    project_read_block = (
+        f"\n        {project_curls}"
+        if project_curls
+        else ""
+    )
+    default_project_text = (
+        f"Default to `project_id: {default_project}` unless the user assigns another project."
+        if default_project
+        else "No project_id is baked into ClawCross. Choose project_id from dashboard/state/tasks.json or the user's assignment."
+    )
+    dashboard_agent_command = (
+        f"clawcross-harness-agent dashboard --project-id {default_project} --project"
+        if default_project
+        else "clawcross-harness-agent dashboard"
+    )
+    task_md_sync_command = (
+        f"clawcross-harness-agent task-md sync --project-id {default_project} --path TASK.md"
+        if default_project
+        else "clawcross-harness-agent task-md sync --project-id <project_id> --path TASK.md"
+    )
+    status_project_arg = default_project or "<project_id>"
     return dedent(
         f"""\
         {START_MARKER}
@@ -909,11 +934,10 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
 
         ```bash
         curl -fsSL {dashboard_url}/state/portfolio.json
-        curl -fsSL {dashboard_url}/state/tasks.json
-        {project_curls}
+        curl -fsSL {dashboard_url}/state/tasks.json{project_read_block}
         ```
 
-        Use `dashboard/state/tasks.json` as the TODO queue. Choose tasks by `project_id`, `status`, `priority`, `due_at`, and project context. Default to `project_id: {default_project}` unless the user assigns another project.
+        Use `dashboard/state/tasks.json` as the TODO queue. Choose tasks by `project_id`, `status`, `priority`, `due_at`, and project context. {default_project_text}
 
         ## Remote Workspace
 
@@ -923,12 +947,12 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         cd ~/workspace
         ```
 
-        Do not assume the controller machine's `/Users/boris/workspace` path exists on this host.
+        Do not assume the controller machine's local workspace path exists on this host.
 
         If `clawcross-harness-agent` is available, prefer this machine-readable read path:
 
         ```bash
-        clawcross-harness-agent dashboard --project-id {default_project} --project
+        {dashboard_agent_command}
         ```
 
         ## TASK.md Working Log
@@ -936,7 +960,7 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         Maintain a per-worktree `TASK.md` as the local plan -> execution -> modification -> experiment/result log. Use it to understand the full path of the work, not just the latest status.
 
         ```bash
-        clawcross-harness-agent task-md sync --project-id {default_project} --path TASK.md
+        {task_md_sync_command}
         ```
 
         In `TASK.md`, edit each task's `update` fields:
@@ -962,9 +986,9 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         Keep task state current whenever it changes. Use ClawCross harness commands for runtime updates; ClawCross is the private control plane and may sync TODO status/comments back to the dashboard.
 
         ```bash
-        clawcross-harness-agent task-status --agent-id "$(hostname)-claude" --project-id {default_project} --task-id <task_id> --status doing --message "Started: <short plan>"
-        clawcross-harness-agent comment --agent-id "$(hostname)-claude" --project-id {default_project} --task-id <task_id> --kind comment --message "Progress: <evidence>"
-        clawcross-harness-agent task-status --agent-id "$(hostname)-claude" --project-id {default_project} --task-id <task_id> --status done --message "Result: <evidence and artifact path>"
+        clawcross-harness-agent task-status --agent-id "$(hostname)-claude" --project-id {status_project_arg} --task-id <task_id> --status doing --message "Started: <short plan>"
+        clawcross-harness-agent comment --agent-id "$(hostname)-claude" --project-id {status_project_arg} --task-id <task_id> --kind comment --message "Progress: <evidence>"
+        clawcross-harness-agent task-status --agent-id "$(hostname)-claude" --project-id {status_project_arg} --task-id <task_id> --status done --message "Result: <evidence and artifact path>"
         ```
 
         Status vocabulary:
@@ -1163,9 +1187,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Configure a remote Claude Code host to read dashboard TODOs and update ClawCross harness state."
     )
-    parser.add_argument("remote", help="SSH target, for example jingxiang@100.112.245.1")
-    parser.add_argument("--dashboard-url", default="https://jingxiangguo.com/dashboard")
-    parser.add_argument("--default-project-id", default="umi-world-model")
+    parser.add_argument("remote", help="SSH target, for example user@host.example")
+    parser.add_argument("--dashboard-url", default=os.getenv("CLAWCROSS_DASHBOARD_URL") or os.getenv("DASHBOARD_URL") or "")
+    parser.add_argument("--default-project-id", default=os.getenv("CLAWCROSS_DASHBOARD_DEFAULT_PROJECT_ID") or os.getenv("CLAWCROSS_HARNESS_PROJECT_ID") or "")
     parser.add_argument("--project-id", action="append", default=[], help="Additional project_id to include in startup reads.")
     parser.add_argument("--memory-path", default="~/.claude/CLAUDE.md", help="Remote Claude Code user memory file.")
     parser.add_argument("--client-path", default="~/.local/bin/clawcross-harness-agent")
@@ -1175,7 +1199,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--claude-wrapper-path", default="~/.local/bin/clawcross-claude")
     parser.add_argument("--real-claude-path", default="~/.local/bin/claude")
     parser.add_argument("--agent-base-url", default="http://127.0.0.1:51200")
-    parser.add_argument("--harness-user", default="boris")
+    parser.add_argument("--harness-user", default=os.getenv("CLAWCROSS_HARNESS_USER") or os.getenv("CLAWCROSS_USER_ID") or "default")
     parser.add_argument("--internal-token", default="")
     parser.add_argument("--connect-timeout", type=int, default=8)
     parser.add_argument("--port", type=int, default=0)
