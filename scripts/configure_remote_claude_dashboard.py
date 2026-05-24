@@ -30,9 +30,11 @@ only to the private ClawCross harness API.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -40,6 +42,13 @@ import urllib.request
 
 
 DEFAULT_CONFIG_PATH = Path(os.getenv("CLAWCROSS_HARNESS_ENV", "~/.clawcross/harness.env")).expanduser()
+TASK_MD_SCHEMA_VERSION = "clawcross.task_md.v1"
+TASK_MD_START = "<!-- CLAWCROSS_TASK_MD_START -->"
+TASK_MD_END = "<!-- CLAWCROSS_TASK_MD_END -->"
+TASK_MD_JSON_RE = re.compile(
+    rf"{re.escape(TASK_MD_START)}\s*```json\s*(?P<payload>.*?)\s*```\s*{re.escape(TASK_MD_END)}",
+    re.DOTALL,
+)
 TASK_STATUS_ALIASES = {
     "doing": "active",
     "active": "active",
@@ -194,6 +203,219 @@ def command_dashboard(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def task_md_payload_from_dashboard(args: argparse.Namespace) -> dict:
+    config = load_env(args.config)
+    dashboard_url = config_value(config, "DASHBOARD_URL", "https://jingxiangguo.com/dashboard").rstrip("/")
+    project_id = args.project_id or config_value(config, "DEFAULT_PROJECT_ID", "umi-world-model")
+    user_id = config_value(config, "CLAWCROSS_HARNESS_USER", config_value(config, "CLAWCROSS_USER_ID", "boris"))
+    tasks_doc = request_json(f"{dashboard_url}/state/tasks.json", timeout=args.timeout)
+    tasks = tasks_doc.get("tasks", tasks_doc if isinstance(tasks_doc, list) else [])
+    if not isinstance(tasks, list):
+        raise SystemExit("dashboard tasks payload is not a list")
+    selected = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        if project_id and task.get("project_id") != project_id:
+            continue
+        if not getattr(args, "include_done", False) and task.get("status") == "done":
+            continue
+        comments = [item for item in task.get("comments", []) or [] if isinstance(item, dict) and str(item.get("body") or "").strip()]
+        latest = comments[-1] if comments else {}
+        selected.append(
+            {
+                "task_id": str(task.get("task_id") or ""),
+                "project_id": str(task.get("project_id") or project_id),
+                "title": str(task.get("title") or task.get("task_id") or ""),
+                "description": str(task.get("description") or ""),
+                "status": normalize_task_status(str(task.get("status") or "todo")),
+                "priority": str(task.get("priority") or "medium"),
+                "assignee": str(task.get("assignee") or ""),
+                "due_at": str(task.get("due_at") or ""),
+                "latest_comment": {
+                    "kind": str(latest.get("kind") or ""),
+                    "author": str(latest.get("author") or ""),
+                    "body": str(latest.get("body") or ""),
+                    "created_at": str(latest.get("created_at") or ""),
+                },
+                "update": {
+                    "status": "",
+                    "plan": "",
+                    "execution": "",
+                    "modifications": "",
+                    "experiments": "",
+                    "result": "",
+                    "next": "",
+                    "comment_kind": "comment",
+                    "comment": "",
+                },
+            }
+        )
+    return {
+        "schema_version": TASK_MD_SCHEMA_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "user_id": user_id,
+        "project_id": project_id,
+        "project_title": project_id,
+        "instructions": [
+            "Use each tasks[].update object as a plan-execute-modify-experiment log.",
+            "Allowed status values: todo, active, blocked, needs_user, review, done.",
+            "Run clawcross-harness-agent task-md import --path TASK.md after editing.",
+        ],
+        "tasks": selected,
+    }
+
+
+def render_task_md(payload: dict) -> str:
+    lines = [
+        "# ClawCross TASK.md",
+        "",
+        f"Project: `{payload.get('project_title') or payload.get('project_id')}`",
+        "",
+        "Use `update` fields as the worker log: plan, execution, modifications, experiments, result, next.",
+        "",
+        "| Status | Priority | Task | Assignee |",
+        "| --- | --- | --- | --- |",
+    ]
+    for task in payload.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        title = str(task.get("title") or task.get("task_id") or "").replace("|", "\\|")
+        lines.append(
+            f"| {task.get('status') or ''} | {task.get('priority') or ''} | `{task.get('task_id') or ''}` {title} | {task.get('assignee') or ''} |"
+        )
+    lines.extend(["", "## Current Task Context", ""])
+    for task in payload.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        title = " ".join(str(task.get("title") or task.get("task_id") or "").split())
+        task_id = str(task.get("task_id") or "")
+        lines.extend(
+            [
+                f"### `{task_id}` {title}",
+                "",
+                f"- Status: `{task.get('status') or ''}`",
+                f"- Priority: `{task.get('priority') or ''}`",
+                f"- Assignee: `{task.get('assignee') or ''}`",
+            ]
+        )
+        description = str(task.get("description") or "").strip()
+        if description:
+            lines.extend(["", "Description:", "", description])
+        latest = task.get("latest_comment") if isinstance(task.get("latest_comment"), dict) else {}
+        latest_body = str(latest.get("body") or "").strip()
+        if latest_body:
+            lines.extend(["", "Latest dashboard comment:", "", latest_body])
+        lines.append("")
+    lines.extend(["", TASK_MD_START, "```json", json.dumps(payload, ensure_ascii=False, indent=2), "```", TASK_MD_END, ""])
+    return "\n".join(lines)
+
+
+def parse_task_md(path: Path) -> dict:
+    text = path.expanduser().read_text(encoding="utf-8")
+    match = TASK_MD_JSON_RE.search(text)
+    if not match:
+        raise SystemExit(f"{path} is missing the ClawCross TASK.md JSON block")
+    payload = json.loads(match.group("payload"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != TASK_MD_SCHEMA_VERSION:
+        raise SystemExit(f"{path} has unsupported TASK.md schema")
+    if not isinstance(payload.get("tasks"), list):
+        raise SystemExit(f"{path} TASK.md payload missing tasks[]")
+    return payload
+
+
+def lifecycle_comment(update: dict) -> str:
+    parts = []
+    for label, key in [
+        ("Plan", "plan"),
+        ("Execution", "execution"),
+        ("Modifications", "modifications"),
+        ("Experiments", "experiments"),
+        ("Result", "result"),
+        ("Next", "next"),
+    ]:
+        value = str(update.get(key) or "").strip()
+        if value:
+            parts.append(f"## {label}\n{value}")
+    comment = str(update.get("comment") or "").strip()
+    if comment:
+        parts.append(f"## Comment\n{comment}" if parts else comment)
+    return "\n\n".join(parts)
+
+
+def command_task_md(args: argparse.Namespace) -> None:
+    path = args.path.expanduser()
+    if not args.agent_id:
+        args.agent_id = f"{os.uname().nodename}-claude"
+    summary = {"ok": True, "path": str(path), "action": args.action}
+    if args.action in {"import", "sync"} and path.exists():
+        payload = parse_task_md(path)
+        state = request_clawcross(args, "/harness/state")
+        existing = {
+            str(task.get("task_id") or ""): task
+            for task in state.get("tasks", []) or []
+            if isinstance(task, dict)
+        }
+        imported_status = 0
+        imported_comments = 0
+        for task in payload.get("tasks", []) or []:
+            if not isinstance(task, dict):
+                continue
+            task_id = str(task.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            project_id = str(task.get("project_id") or args.project_id or payload.get("project_id") or "").strip()
+            update = task.get("update") if isinstance(task.get("update"), dict) else {}
+            status = normalize_task_status(str(update.get("status") or "")) if str(update.get("status") or "").strip() else ""
+            if status:
+                post_event(
+                    args,
+                    {
+                        "action": "task_status",
+                        "agent_id": args.agent_id,
+                        "project_id": project_id,
+                        "task_id": task_id,
+                        "status": status,
+                        "message": f"TASK.md status -> {status}",
+                    },
+                    emit=False,
+                )
+                imported_status += 1
+            comment = lifecycle_comment(update)
+            if comment:
+                local = existing.get(task_id) or {}
+                existing_bodies = {
+                    str(item.get("body") or "").strip()
+                    for item in local.get("comments", []) or []
+                    if isinstance(item, dict)
+                }
+                if comment not in existing_bodies:
+                    post_event(
+                        args,
+                        {
+                            "action": "task_comment",
+                            "agent_id": args.agent_id,
+                            "project_id": project_id,
+                            "task_id": task_id,
+                            "kind": str(update.get("comment_kind") or "comment"),
+                            "message": comment,
+                        },
+                        emit=False,
+                    )
+                    imported_comments += 1
+        summary["imported_status"] = imported_status
+        summary["imported_comments"] = imported_comments
+    if args.action in {"export", "sync"}:
+        payload = task_md_payload_from_dashboard(args)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        before = path.read_text(encoding="utf-8") if path.exists() else ""
+        rendered = render_task_md(payload)
+        path.write_text(rendered, encoding="utf-8")
+        summary["exported_tasks"] = len(payload.get("tasks") or [])
+        summary["changed"] = before != rendered
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
 def command_heartbeat(args: argparse.Namespace) -> None:
     post_event(
         args,
@@ -328,6 +550,14 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--include-done", action="store_true")
     dashboard.add_argument("--project", action="store_true", help="Also read project context JSON.")
     dashboard.set_defaults(func=command_dashboard)
+
+    task_md = sub.add_parser("task-md", help="Sync dashboard TODOs with local TASK.md.")
+    task_md.add_argument("action", choices=["export", "import", "sync"])
+    task_md.add_argument("--path", type=Path, default=Path("TASK.md"))
+    task_md.add_argument("--project-id", default="")
+    task_md.add_argument("--include-done", action="store_true")
+    task_md.add_argument("--agent-id", default="")
+    task_md.set_defaults(func=command_task_md)
 
     heartbeat = sub.add_parser("heartbeat", help="Post worker heartbeat.")
     add_event_common(heartbeat)
@@ -700,6 +930,32 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         ```bash
         clawcross-harness-agent dashboard --project-id {default_project} --project
         ```
+
+        ## TASK.md Working Log
+
+        Maintain a per-worktree `TASK.md` as the local plan -> execution -> modification -> experiment/result log. Use it to understand the full path of the work, not just the latest status.
+
+        ```bash
+        clawcross-harness-agent task-md sync --project-id {default_project} --path TASK.md
+        ```
+
+        In `TASK.md`, edit each task's `update` fields:
+
+        - `status`: `todo`, `active`, `blocked`, `needs_user`, `review`, or `done`.
+        - `plan`: intended route and assumptions.
+        - `execution`: commands/actions actually run.
+        - `modifications`: files changed and why.
+        - `experiments`: tests, evals, smoke runs, metrics, logs, verifier commands.
+        - `result`: final evidence or conclusion.
+        - `next`: remaining unblockers or handoff.
+
+        Then run:
+
+        ```bash
+        clawcross-harness-agent task-md import --path TASK.md
+        ```
+
+        ClawCross will turn the lifecycle fields into dashboard comments and task state, while keeping runtime/session metadata private.
 
         ## Keep TODOs Updated
 

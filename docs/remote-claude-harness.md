@@ -10,6 +10,7 @@
 - 远端电脑通过 Tailscale 和 SSH 接入。
 - 远端 `127.0.0.1:51200` 通过 SSH reverse tunnel 指回本机 ClawCross `127.0.0.1:51200`。
 - 远端 Claude 通过 `~/.local/bin/clawcross-harness-agent` 读 dashboard TODO、写 harness heartbeat/status/comment。
+- 远端项目根目录可以维护一个 `TASK.md`，作为 plan → execution → modification → experiment/result 的本地工作日志；ClawCross 可把它和 dashboard TODO 双向同步。
 - 本机前端 `/mobile/group_chat` 通过 Tailscale 枚举远端 Claude sessions，并把项目卡片里的 TODO 和 worker session 绑定显示。
 - 每台远端电脑默认绑定一个主项目；没有 TODO 时保留一个 standby session，避免项目卡片消失。
 
@@ -216,6 +217,54 @@ PY
 ```
 
 实验、推理、评测类任务不能只写自然语言结果。需要包含 `run_id`、`git_sha`、实际命令、日志/metrics 路径和 verifier/test 结果。
+
+## 6.1 使用 TASK.md 做远端任务工作日志
+
+`TASK.md` 不是简单 TODO 表，而是远端 worker 对一个项目的可追溯工作记录。它应该记录：
+
+- `plan`: 准备怎么做、关键假设、风险。
+- `execution`: 实际执行过的命令、路径、步骤。
+- `modifications`: 改了哪些文件、为什么改。
+- `experiments`: smoke/test/eval/verifier 命令、退出码、日志、metrics、sha256。
+- `result`: 可审查结论或交付物。
+- `next`: 剩余 blocker、下一步、需要用户/主控做什么。
+
+在远端项目目录中拉取 dashboard TODO 到 `TASK.md`：
+
+```bash
+cd ~/workspace/<project-repo-or-folder>
+clawcross-harness-agent task-md export --project-id <project-id> --path TASK.md
+```
+
+编辑 `TASK.md` 里每个 task 的 `update` JSON 字段后，把状态和日志写回 ClawCross harness：
+
+```bash
+clawcross-harness-agent task-md import --path TASK.md
+```
+
+如果需要一条命令完成“先导入本地 `TASK.md` 更新，再从 dashboard 刷新任务列表”：
+
+```bash
+clawcross-harness-agent task-md sync --project-id <project-id> --path TASK.md
+```
+
+本机也可以直接同步任意 `TASK.md`，用于测试或从远端拉回文件后处理：
+
+```bash
+cd /Users/boris/workspace/ClawCross
+python3 scripts/sync_task_md.py \
+  --project-id <project-id> \
+  --task-md /path/to/TASK.md \
+  --direction both
+```
+
+双向同步规则：
+
+- dashboard → TASK.md: dashboard/status/TODO/comment 会被渲染进 `TASK.md` 的托管 JSON block。
+- TASK.md → dashboard: `update.status` 和 lifecycle 字段会先写入私有 harness，再由 ClawCross 同步成 dashboard status/comment。
+- `TASK.md` 上半部分是给人和 agent 快速阅读的项目工作日志，会展示每个 TODO 的描述和最新 comment；下半部分托管 JSON block 是双向同步的唯一机器源。
+- `TASK.md` 不保存 Claude session id、remote-control link、token、密码或 harness runtime state。
+- 导入后会重写托管 block，清空已消费的 `update.*` 字段，避免重复 comment。
 
 ## 7. 项目绑定和并行 session 规则
 

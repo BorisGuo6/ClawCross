@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -20,6 +21,11 @@ from harness.dashboard_sync import (  # noqa: E402
     sync_harness_to_dashboard,
 )
 from harness.store import apply_harness_event, get_harness_state  # noqa: E402
+from harness.task_markdown import (  # noqa: E402
+    parse_task_markdown,
+    render_task_markdown,
+    sync_task_markdown,
+)
 
 
 def sample_state():
@@ -943,6 +949,79 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 self.assertEqual(result["accepted"], 1)
                 task = get_harness_state("boris")["tasks"][0]
                 self.assertEqual(task["status"], "done")
+            finally:
+                if old_state is None:
+                    os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
+                else:
+                    os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
+
+    def test_task_md_round_trips_dashboard_and_lifecycle_comment(self):
+        with TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
+            os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
+            try:
+                root = Path(tmpdir) / "dashboard"
+                (root / "state").mkdir(parents=True)
+                tasks_path = root / "state" / "tasks.json"
+                tasks_path.write_text(
+                    json.dumps(
+                        {
+                            "tasks": [
+                                {
+                                    "task_id": "task_lifecycle",
+                                    "project_id": "umi-world-model",
+                                    "title": "Run lifecycle verifier",
+                                    "description": "Exercise TASK.md sync.",
+                                    "status": "todo",
+                                    "priority": "high",
+                                    "comments": [],
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                task_md = Path(tmpdir) / "TASK.md"
+
+                exported = sync_task_markdown(
+                    "boris",
+                    task_md_path=task_md,
+                    dashboard_root=root,
+                    project_id="umi-world-model",
+                    direction="dashboard-to-md",
+                )
+                self.assertEqual(exported["task_md_export"]["tasks"], 1)
+                payload = parse_task_markdown(task_md.read_text(encoding="utf-8"))
+                self.assertEqual(payload["tasks"][0]["update"]["plan"], "")
+
+                payload["tasks"][0]["update"].update(
+                    {
+                        "status": "blocked",
+                        "plan": "Run a minimal verifier first.",
+                        "execution": "python verify.py --smoke",
+                        "modifications": "No code changes.",
+                        "experiments": "Exit 2 because input file is missing.",
+                        "result": "Blocked on missing fixture.",
+                        "next": "Provide fixture.json.",
+                    }
+                )
+                task_md.write_text(render_task_markdown(payload), encoding="utf-8")
+
+                imported = sync_task_markdown(
+                    "boris",
+                    task_md_path=task_md,
+                    dashboard_root=root,
+                    project_id="umi-world-model",
+                    direction="md-to-dashboard",
+                )
+                self.assertEqual(imported["task_md_import"]["status_updates"], 1)
+                self.assertEqual(imported["task_md_import"]["comments_added"], 1)
+                dashboard_doc = json.loads(tasks_path.read_text(encoding="utf-8"))
+                task = dashboard_doc["tasks"][0]
+                self.assertEqual(task["status"], "blocked")
+                self.assertTrue(any("## Plan" in c.get("body", "") for c in task.get("comments", [])))
             finally:
                 if old_state is None:
                     os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
