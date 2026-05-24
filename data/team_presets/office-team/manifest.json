@@ -1,0 +1,18 @@
+{
+  "preset_id": "office-team",
+  "name": "Office Team",
+  "description": "办公协作小队：项目协调、文档撰写、数据分析、PDF/演示制作和审校六个角色，从需求 → 内容 → 数据 → 成稿 → 评审走完一份办公交付。每个角色的 persona 已内嵌对应 SKILL（docx / doc-coauthoring / xlsx / pdf / productivity-pptx / hyperframes）的核心 API、安装命令、易踩雷清单，**不依赖团队 skills 目录就能跑**。",
+  "source": "clawcross/custom",
+  "regime": "office-team",
+  "role_count": 6,
+  "workflow_files": [
+    "office_team_delivery.yaml"
+  ],
+  "default_team_name": "Office Team",
+  "tags": [
+    "office",
+    "documents",
+    "productivity",
+    "delivery"
+  ]
+}

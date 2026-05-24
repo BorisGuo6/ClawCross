@@ -2095,7 +2095,7 @@ header {
 /* === Page Switch Tab === */
 .page-tab-bar {
     display: flex; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
-    flex-shrink: 0; z-index: 10; align-items: stretch;
+    flex-shrink: 0; z-index: 50; align-items: stretch;
 }
 .tab-bar-brand {
     display: flex; align-items: center; gap: 6px; padding: 0 10px;
@@ -3127,7 +3127,7 @@ header {
     /* toggle 按钮 - 带文字标签 */
     .orch-mobile-toggle {
         display: flex !important;
-        position: absolute; z-index: 110;
+        position: absolute; z-index: 30;
         height: 32px; border-radius: 8px;
         padding: 0 10px; gap: 4px;
         align-items: center; justify-content: center;
@@ -4392,6 +4392,34 @@ body.session-panel-resizing * {
     gap: 10px;
     flex-wrap: wrap;
 }
+.oc-mode-selector {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+.oc-mode-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
+    white-space: nowrap;
+}
+.oc-mode-select {
+    padding: 4px 8px;
+    font-size: 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: #fff;
+    color: #111827;
+    cursor: pointer;
+}
+.oc-mode-select:focus {
+    outline: 2px solid #2563eb;
+    outline-offset: -1px;
+}
+/* visual hint when not in default bypass mode */
+.oc-mode-select[data-active-mode="plan"] { background: #fef3c7; border-color: #f59e0b; }
+.oc-mode-select[data-active-mode="manual"] { background: #fee2e2; border-color: #ef4444; }
 .oc-acp-session-row {
     display: none;
     align-items: center;

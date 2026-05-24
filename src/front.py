@@ -162,6 +162,16 @@ def _weclaw_session_expired_from_log() -> bool:
         return False
 
 
+def _weclaw_session_expired(accounts: list[str], status_output: str) -> bool:
+    """Treat stale launcher.log warnings as non-authoritative when account files still exist."""
+    if accounts:
+        return False
+    text = str(status_output or "").lower()
+    if "session expired" in text or "cannot be auto-recovered" in text:
+        return True
+    return _weclaw_session_expired_from_log()
+
+
 def _stop_managed_weclaw_proxy(settings: dict[str, str]) -> None:
     proxy_host = settings.get("WECLAW_PROXY_HOST") or os.getenv("WECLAW_PROXY_HOST") or "127.0.0.1"
     proxy_port = int(settings.get("WECLAW_PROXY_PORT") or os.getenv("WECLAW_PROXY_PORT") or "51298")
@@ -2803,6 +2813,7 @@ def proxy_weclaw_status():
                 status_output = ((result.stdout or "") + (result.stderr or "")).strip()
             except Exception as e:
                 status_output = f"status failed: {e}"
+        session_expired = _weclaw_session_expired(accounts, status_output)
         return jsonify({
             "status": "success",
             "bin": resolved_bin,
@@ -2955,6 +2966,21 @@ def proxy_restart_services():
         with open(restart_flag, "w") as f:
             f.write("restart")
         return jsonify({"status": "success", "message": "重启信号已发送"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/proxy_restart_chatbot", methods=["POST"])
+def proxy_restart_chatbot():
+    """只重启社交媒体机器人，让 channel 配置保存后尽快生效。"""
+    user_id = session.get("user_id", "")
+    if not user_id:
+        return jsonify({"error": "not logged in"}), 401
+    try:
+        restart_flag = os.path.join(str(PID_DIR), "chatbot_restart_flag")
+        with open(restart_flag, "w") as f:
+            f.write("restart")
+        return jsonify({"status": "success", "message": "chatbot 重启信号已发送"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -3958,6 +3984,9 @@ def proxy_acpx_chat():
             "system_prompt": front_external_system_prompt,
             "attachments": acpx_attachments or None,
             "timeout_sec": int(body.get("timeout_sec") or 600),
+            "permission_policy": body.get("permission_policy"),
+            "non_interactive_permissions": body.get("non_interactive_permissions"),
+            "allowed_tools": body.get("allowed_tools"),
         },
         user_id=session.get("user_id") or "",
     )
@@ -5944,6 +5973,19 @@ def ia_list():
     })
 
 
+def _ia_preempt_primary(agents: list, keep_sid: str) -> None:
+    """If `keep_sid` is being marked primary, clear is_primary from all other agents.
+
+    Each team may have at most one primary agent — this enforces that on the server.
+    """
+    for other in agents:
+        if other.get("session") == keep_sid:
+            continue
+        other_meta = other.get("meta")
+        if isinstance(other_meta, dict) and other_meta.get("is_primary"):
+            other_meta.pop("is_primary", None)
+
+
 @app.route("/internal_agents", methods=["POST"])
 def ia_add():
     """Add a new internal agent entry.
@@ -5960,7 +6002,10 @@ def ia_add():
     # Prevent duplicate session
     if any(a["session"] == sid for a in agents):
         return jsonify({"error": f"session '{sid}' already exists"}), 409
-    entry = {"session": sid, "meta": body.get("meta", {})}
+    meta = body.get("meta", {}) or {}
+    if isinstance(meta, dict) and meta.get("is_primary"):
+        _ia_preempt_primary(agents, sid)
+    entry = {"session": sid, "meta": meta}
     agents.append(entry)
     _ia_save(user_id, agents, team)
     return jsonify({"status": "success", "agent": entry})
@@ -5977,9 +6022,11 @@ def ia_update(sid):
     agents = _ia_load(user_id, team)
     for a in agents:
         if a["session"] == sid:
-            new_meta = body.get("meta", {})
+            new_meta = body.get("meta", {}) or {}
             if not isinstance(a.get("meta"), dict):
                 a["meta"] = {}
+            if isinstance(new_meta, dict) and new_meta.get("is_primary"):
+                _ia_preempt_primary(agents, sid)
             a["meta"].update(new_meta)
             _ia_save(user_id, agents, team)
             return jsonify({"status": "success", "agent": a})
@@ -6207,9 +6254,10 @@ def get_team_members(team_name):
                 "name": meta.get("name", ""),
                 "type": "oasis",
                 "tag": meta.get("tag", ""),
-                "global_name": agent.get("session", "")
+                "global_name": agent.get("session", ""),
+                "is_primary": bool(meta.get("is_primary")),
             })
-        
+
         # Load external agents from external_agents.json (all types including openclaw)
         ext_path = os.path.join(team_dir, "external_agents.json")
         if os.path.isfile(ext_path):
@@ -6224,7 +6272,8 @@ def get_team_members(team_name):
                             "platform": _external_agent_platform(agent),
                             "global_name": agent.get("global_name", ""),
                             "meta": agent.get("meta", {}),
-                            "team": team_name
+                            "team": team_name,
+                            "is_primary": bool(agent.get("is_primary")),
                         })
         
         return jsonify({
@@ -6236,20 +6285,34 @@ def get_team_members(team_name):
         return jsonify({"error": str(e)}), 500
 
 
+def _ext_preempt_primary(agents: list, keep_global_name: str) -> None:
+    """If `keep_global_name` is being marked primary, clear is_primary on all others.
+
+    Enforces at-most-one primary external agent per team.
+    """
+    for other in agents:
+        if not isinstance(other, dict):
+            continue
+        if other.get("global_name") == keep_global_name:
+            continue
+        if other.get("is_primary"):
+            other.pop("is_primary", None)
+
+
 @app.route("/teams/<team_name>/members/external", methods=["POST"])
 def add_external_member(team_name):
     """Add an external agent to the team's external_agents.json."""
     user_id = session.get("user_id", "")
-    
+
     # Validate team name
     if "/" in team_name or "\\" in team_name or team_name.startswith("."):
         return jsonify({"error": "Invalid team name"}), 400
-    
+
     team_dir = _team_storage_dir(user_id, team_name)
-    
+
     if not os.path.exists(team_dir):
         return jsonify({"error": "Team not found"}), 404
-    
+
     body = request.get_json(force=True)
     name = body.get("name", "")
     tag = body.get("tag", "")
@@ -6259,13 +6322,14 @@ def add_external_member(team_name):
     model = body.get("model", "")
     headers = body.get("headers", {})
     platform = str(body.get("platform", "") or "").strip()
-    
+    is_primary = bool(body.get("is_primary"))
+
     if not name or not global_name or not platform:
         return jsonify({"error": "name, global_name, and platform are required"}), 400
-    
+
     try:
         ext_path = os.path.join(team_dir, "external_agents.json")
-        
+
         # Load existing agents list
         agents = []
         if os.path.isfile(ext_path):
@@ -6273,11 +6337,14 @@ def add_external_member(team_name):
                 raw = json.load(f)
                 if isinstance(raw, list):
                     agents = raw
-        
+
         # Check for duplicate global_name
         if any(a.get("global_name") == global_name for a in agents):
             return jsonify({"error": "Global name already exists"}), 409
-        
+
+        if is_primary:
+            _ext_preempt_primary(agents, global_name)
+
         # Add new agent with all metadata
         new_agent = {
             "name": name,
@@ -6289,12 +6356,14 @@ def add_external_member(team_name):
                 body,
             )
         }
+        if is_primary:
+            new_agent["is_primary"] = True
         agents.append(new_agent)
-        
+
         # Save back
         with open(ext_path, "w", encoding="utf-8") as f:
             json.dump(agents, f, ensure_ascii=False, indent=2)
-        
+
         return jsonify({"status": "success", "agent": new_agent})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -6418,6 +6487,15 @@ def update_external_member(team_name):
             found["meta"] = meta
         elif "meta" in found:
             found.pop("meta", None)
+
+        # is_primary toggle with preemption
+        if "is_primary" in body:
+            keep_gn = found.get("global_name") or target_global_name
+            if bool(body["is_primary"]):
+                _ext_preempt_primary(agents, keep_gn)
+                found["is_primary"] = True
+            else:
+                found.pop("is_primary", None)
 
         # Save back
         with open(ext_path, "w", encoding="utf-8") as f:

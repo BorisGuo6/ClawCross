@@ -443,13 +443,32 @@ def list_crons(team: str | None = None, user: str | None = None) -> tuple[list[d
 
 def run_workflow(user: str, name: str, team: str, question: str,
                  kind: str = "yaml") -> tuple[dict, str | None]:
-    """POST to ``{OASIS_BASE}/topics`` to launch a YAML workflow.
+    """Launch a saved workflow.
+
+    YAML: POST ``{OASIS_BASE}/topics`` with the resolved schedule.
+    Python: POST ``{FRONT_BASE}/proxy_visual/run-python-workflow`` to spawn the
+    standalone runner (front.py:_spawn_standalone_python_workflow).
 
     Returns ``(body, error)``. On failure the body is empty and ``error`` is a
     friendly message.
     """
+    if kind == "python":
+        py_path, err = resolve_python_workflow_path(user, name, team)
+        if err or not py_path:
+            return {}, err or "python workflow not found"
+        url = f"{FRONT_BASE}/proxy_visual/run-python-workflow"
+        payload = {
+            "python_file": py_path,
+            "question": question,
+            "team": team or "",
+        }
+        code, body = _req("POST", url, headers=_front_headers(user), data=payload, timeout=30)
+        if code == 200 and isinstance(body, dict):
+            return body, None
+        return {}, friendly_error(url, code, body)
+
     if kind != "yaml":
-        return {}, "only YAML workflow run is supported here"
+        return {}, f"unsupported workflow kind: {kind!r}"
     yaml_path, err = resolve_yaml_workflow_path(user, name, team)
     if err:
         return {}, err

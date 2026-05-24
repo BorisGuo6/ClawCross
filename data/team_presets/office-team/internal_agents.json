@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Office Coordinator",
+    "tag": "coordinator"
+  },
+  {
+    "name": "Document Writer",
+    "tag": "writer"
+  },
+  {
+    "name": "Data Analyst",
+    "tag": "analyst"
+  },
+  {
+    "name": "PDF & Print Master",
+    "tag": "pdf_master"
+  },
+  {
+    "name": "Visual Designer",
+    "tag": "designer"
+  },
+  {
+    "name": "Office Reviewer",
+    "tag": "reviewer"
+  }
+]

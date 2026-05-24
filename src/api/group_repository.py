@@ -83,6 +83,11 @@ async def init_group_db(group_db_path: str) -> None:
         """)
         # ── Migrations for old databases ──
         # groups: remove team_name/custom_name (kept as no-op, SQLite can't DROP COLUMN easily)
+        # groups: add primary_agent_global_id for "主 agent" mechanism (nullable, optional feature)
+        try:
+            await db.execute("ALTER TABLE groups ADD COLUMN primary_agent_global_id TEXT")
+        except Exception:
+            pass
         # group_members: add new columns
         for col, default in [("short_name", "''"), ("global_id", "''"), ("tag", "''"), ("member_type", "'oasis'")]:
             try:
@@ -353,6 +358,34 @@ async def update_group_name(group_db_path: str, group_id: str, name: str) -> Non
     async with aiosqlite.connect(group_db_path) as db:
         await db.execute("UPDATE groups SET name = ? WHERE group_id = ?", (name, group_id))
         await db.commit()
+
+
+async def set_group_primary_agent(
+    group_db_path: str,
+    *,
+    group_id: str,
+    global_id: str | None,
+) -> None:
+    """Set or clear the group's primary agent. Pass None to clear."""
+    async with aiosqlite.connect(group_db_path) as db:
+        await db.execute(
+            "UPDATE groups SET primary_agent_global_id = ? WHERE group_id = ?",
+            (global_id, group_id),
+        )
+        await db.commit()
+
+
+async def get_group_primary_agent(group_db_path: str, group_id: str) -> str | None:
+    async with aiosqlite.connect(group_db_path) as db:
+        cursor = await db.execute(
+            "SELECT primary_agent_global_id FROM groups WHERE group_id = ?",
+            (group_id,),
+        )
+        row = await cursor.fetchone()
+    if not row:
+        return None
+    value = row[0]
+    return value if value else None
 
 
 async def add_group_member(

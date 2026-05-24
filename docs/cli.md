@@ -1,6 +1,6 @@
 # Clawcross CLI 命令大全
 
-> 最后更新：2026-04-23
+> 最后更新：2026-05-18
 
 ## 运行方式
 
@@ -50,18 +50,19 @@ uv run scripts/cli.py [-u USER] <子命令> [参数...]
 9. [tts](#9-tts) — 文字转语音
 10. [cancel](#10-cancel) — 取消当前生成
 11. [restart](#11-restart) — 重启 Agent
-12. [groups](#12-groups) — 群组管理
-13. [openclaw](#13-openclaw) — OpenClaw Agent 管理
-14. [openclaw-snapshot](#14-openclaw-snapshot) — OpenClaw 快照管理
-15. [visual](#15-visual) — 可视化编排管理
-16. [internal-agents](#16-internal-agents) — 内部 Agent CRUD
-17. [teams](#17-teams) — Team 管理
-18. [topics](#18-topics) — OASIS 话题管理
-19. [personas](#19-personas) — 人设管理
-20. [workflows](#20-workflows) — YAML / Python Workflow 管理
-21. [tunnel](#21-tunnel) — Cloudflare Tunnel 管理
-22. [token](#22-token) — Token 生成与验证
-23. [status](#23-status) — 服务状态检查
+12. [channel](#12-channel) — Chatbot / NoneBot / WeClaw channel 管理
+13. [groups](#13-groups) — 群组管理
+14. [openclaw](#14-openclaw) — OpenClaw Agent 管理
+15. [openclaw-snapshot](#15-openclaw-snapshot) — OpenClaw 快照管理
+16. [visual](#16-visual) — 可视化编排管理
+17. [internal-agents](#17-internal-agents) — 内部 Agent CRUD
+18. [teams](#18-teams) — Team 管理
+19. [topics](#19-topics) — OASIS 话题管理
+20. [personas](#20-personas) — 人设管理
+21. [workflows](#21-workflows) — YAML / Python Workflow 管理
+22. [tunnel](#22-tunnel) — Cloudflare Tunnel 管理
+23. [token](#23-token) — Token 生成与验证
+24. [status](#24-status) — 服务状态检查
 
 ---
 
@@ -177,6 +178,8 @@ uv run scripts/cli.py settings --set model gpt-4o
 | `--full` | 显示完整设置 | 否 | `False` |
 | `--set KEY VALUE` | 修改设置项 | 否 | — |
 
+> `LLM_MODEL`、`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_BASE_URL`、`NONEBOT_ADAPTERS`、`WHITELIST_FILE` 以及相关 `*_BOTS` 配置通常需要重启 ClawCross 后才会生效。
+
 ---
 
 ## 8. tools
@@ -237,11 +240,37 @@ uv run scripts/cli.py cancel -s mysession
 uv run scripts/cli.py restart
 ```
 
-无额外参数，无 HTTP 请求。
+无额外参数。命令会在发起重启后继续轮询服务，恢复成功后打印 `✅ 重启完成`。
+
+> 这类重启完成后，前端会提示“重启完成”。如果你刚改了 `model` 或 `channel` 相关的环境变量，也会在保存后提示需要重启后生效。
 
 ---
 
-## 12. groups
+## 12. channel
+
+**Chatbot / NoneBot / WeClaw channel 管理**
+
+```bash
+# 列出所有渠道及配置状态
+uv run scripts/cli.py channel
+uv run scripts/cli.py channel list
+
+# 查看、设置、清理指定渠道
+uv run scripts/cli.py channel show telegram
+uv run scripts/cli.py channel setup telegram
+uv run scripts/cli.py channel clear telegram
+
+# WeClaw 微信登录状态与扫码登录
+uv run scripts/cli.py channel status weclaw
+uv run scripts/cli.py channel login weclaw
+uv run scripts/cli.py channel logout weclaw
+```
+
+终端交互模式下，`channel` 会先进入 channel 选择列表，再进入二级 action 列表（show/setup/clear；WeClaw 额外包含 login/logout/status）。NoneBot adapter-only 渠道（如 OneBot、Console）会写入 `NONEBOT_ADAPTERS`；env-only 渠道（如 DingTalk、Minecraft）会写对应平台环境变量。
+
+---
+
+## 13. groups
 
 **群组管理**
 
@@ -291,7 +320,7 @@ uv run scripts/cli.py groups sessions --group-id abc123
 
 ---
 
-## 13. openclaw
+## 14. openclaw
 
 **OpenClaw Agent 管理**
 
@@ -347,7 +376,7 @@ uv run scripts/cli.py openclaw remove --name mybot
 
 ---
 
-## 14. openclaw-snapshot
+## 15. openclaw-snapshot
 
 **OpenClaw 快照管理**
 
@@ -382,7 +411,7 @@ uv run scripts/cli.py -u Avalon_01 openclaw-snapshot restore-all --team myteam
 
 ---
 
-## 15. visual
+## 16. visual
 
 **可视化编排管理**
 
@@ -422,7 +451,7 @@ uv run scripts/cli.py -u Avalon_01 visual sessions-status
 
 ---
 
-## 16. internal-agents
+## 17. internal-agents
 
 **内部 Agent CRUD**
 
@@ -451,7 +480,7 @@ uv run scripts/cli.py -u Avalon_01 internal-agents delete --sid s1 --team myteam
 
 ---
 
-## 17. teams
+## 18. teams
 
 **Team 管理**
 
@@ -611,7 +640,7 @@ uv run scripts/cli.py -u admin teams snapshot-download --team-name myteam \
 
 ---
 
-## 18. topics
+## 19. topics
 
 **OASIS 话题管理**
 
@@ -651,7 +680,7 @@ uv run scripts/cli.py topics delete-all
 > - `conclusion` (在 workflows 子命令中) — 阻塞等待直到讨论结束并返回结论
 
 
-## 19. personas
+## 20. personas
 
 **OASIS 人设管理**
 
@@ -688,7 +717,7 @@ uv run scripts/cli.py -u Avalon_01 personas delete --tag my_lawyer --team team2
 
 ---
 
-## 20. workflows
+## 21. workflows
 
 **OASIS YAML / Python Workflow 管理**
 
@@ -787,7 +816,7 @@ uv run scripts/cli.py -u Avalon_01 workflows conclusion --topic-id abc12345 --ti
 
 ---
 
-## 21. tunnel
+## 22. tunnel
 
 **Cloudflare Tunnel 管理**
 
@@ -811,7 +840,7 @@ uv run scripts/cli.py tunnel stop
 
 ---
 
-## 22. token
+## 23. token
 
 **Token 生成与验证**
 
@@ -846,7 +875,7 @@ uv run scripts/cli.py token decode --token "xxx"
 
 ---
 
-## 23. status
+## 24. status
 
 **检查各服务状态**
 

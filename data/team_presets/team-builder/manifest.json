@@ -1,0 +1,18 @@
+{
+  "preset_id": "team-builder",
+  "name": "Team Builder",
+  "description": "造团队的元团队。顺序：1) 访谈 → 2) 写 personas (oasis_experts.json) → 3) 绑 internal_agents.json / external_agents.json → 4) 按需写 workflow YAML 或 Python → 5) 设 skills + cron → 6) 校验。每个角色的 persona 都把自己那一步的完整方法（路径、文件 schema、工具命令、校验方式）写清楚，agent 不需要去翻外挂 SKILL 也能做事。",
+  "source": "clawcross/custom",
+  "regime": "team-builder",
+  "role_count": 6,
+  "workflow_files": [
+    "team_builder_pipeline.yaml"
+  ],
+  "default_team_name": "Team Builder",
+  "tags": [
+    "meta",
+    "team-construction",
+    "diy",
+    "scaffolding"
+  ]
+}

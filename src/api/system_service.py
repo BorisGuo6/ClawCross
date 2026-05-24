@@ -226,15 +226,20 @@ class SystemService:
         )
 
     def _build_system_input(self, req: SystemTriggerRequest, human_msg: HumanMessage) -> dict[str, Any]:
-        return {
+        state: dict[str, Any] = {
             "messages": [human_msg],
             "trigger_source": "system",
-            "enabled_tools": None,
+            "enabled_tools": req.enabled_tools,
             "user_id": req.user_id,
             "session_id": req.session_id,
             "max_turns": None,
             "turn_count": 0,
         }
+        # Per-request session_mode override; agent.py prefers this over the stored mode.
+        mode = (req.session_mode or "").strip().lower()
+        if mode:
+            state["session_mode"] = mode
+        return state
 
     async def _invoke_system_message_locked(
         self,

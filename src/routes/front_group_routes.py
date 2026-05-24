@@ -417,6 +417,39 @@ def register_group_routes(app, *, port_agent: int, internal_token: str) -> None:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/proxy_groups/<group_id>/primary", methods=["POST"])
+    def proxy_set_primary_agent(group_id):
+        try:
+            headers = _group_auth_headers()
+            headers["Content-Type"] = "application/json"
+            r = requests.post(
+                "http://127.0.0.1:{port}/groups/{gid}/primary".format(
+                    port=port_agent,
+                    gid=_enc_group_seg(group_id),
+                ),
+                json=request.get_json(silent=True),
+                headers=headers,
+                timeout=10,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/proxy_groups/<group_id>/primary", methods=["DELETE"])
+    def proxy_clear_primary_agent(group_id):
+        try:
+            r = requests.delete(
+                "http://127.0.0.1:{port}/groups/{gid}/primary".format(
+                    port=port_agent,
+                    gid=_enc_group_seg(group_id),
+                ),
+                headers=_group_auth_headers(),
+                timeout=10,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     # ── ACP external agent management ──
 
     @app.route("/proxy_acp_control", methods=["POST"])

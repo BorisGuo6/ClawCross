@@ -28,6 +28,7 @@ from clawcross_cli.providers import (
     list_providers,
     resolve_provider,
 )
+from src.utils.env_settings import read_env_all, write_env_settings
 
 
 # ---------------------------------------------------------------------------
@@ -41,40 +42,13 @@ def _find_env_file() -> Path:
 
 
 def _read_env() -> dict[str, str]:
-    path = _find_env_file()
-    if not path.is_file():
-        return {}
-    values: dict[str, str] = {}
-    for raw in path.read_text("utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-            v = v[1:-1]
-        if k:
-            values[k] = v
-    return values
+    return read_env_all(str(_find_env_file()))
 
 
 def _write_env(updates: dict[str, str]) -> None:
     path = _find_env_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _read_env()
-    existing.update(updates)
-    lines = [f"{k}={_quote(v)}" for k, v in existing.items()]
-    path.write_text("\n".join(lines) + "\n", "utf-8")
-
-
-def _quote(v: str) -> str:
-    v = str(v)
-    if not v or any(c.isspace() for c in v) or any(c in v for c in "#'\""):
-        import json
-
-        return json.dumps(v, ensure_ascii=False)
-    return v
+    write_env_settings(str(path), updates)
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +288,59 @@ def cmd_use(name: str) -> str:
     return f"Active profile -> {p.name} ({p.provider}/{p.model})"
 
 
+def cmd_use_interactive() -> str:
+    """Pick a saved profile via curses radiolist, then activate it."""
+    store = models_store.load()
+    profiles = list(store.profiles.values())
+    if not profiles:
+        return (
+            "No profiles configured. Add one with `/model add <name>` "
+            "or `/model migrate` first."
+        )
+    labels = [
+        f"{p.name}  ({p.provider}/{p.model})  {_mask_key(p.auth.api_key)}"
+        for p in profiles
+    ]
+    labels.append("Leave unchanged")
+    try:
+        active_idx = next(
+            i for i, p in enumerate(profiles) if p.name == store.active
+        )
+    except StopIteration:
+        active_idx = 0
+    idx = curses_radiolist(
+        "Select profile to activate:",
+        labels,
+        selected=active_idx,
+        cancel_returns=len(labels) - 1,
+    )
+    if idx == len(labels) - 1:
+        return "Profile selection cancelled."
+    return cmd_use(profiles[idx].name)
+
+
+def cmd_remove_interactive() -> str:
+    """Pick a saved profile and delete it."""
+    store = models_store.load()
+    profiles = list(store.profiles.values())
+    if not profiles:
+        return "No profiles configured."
+    labels = [
+        f"{p.name}  ({p.provider}/{p.model})  {_mask_key(p.auth.api_key)}"
+        for p in profiles
+    ]
+    labels.append("Cancel")
+    idx = curses_radiolist(
+        "Select profile to remove:",
+        labels,
+        selected=0,
+        cancel_returns=len(labels) - 1,
+    )
+    if idx == len(labels) - 1:
+        return "Profile removal cancelled."
+    return cmd_remove(profiles[idx].name)
+
+
 def cmd_remove(name: str) -> str:
     if models_store.remove_profile(name):
         store = models_store.load()
@@ -401,13 +428,42 @@ def _model_help() -> str:
         "Usage: /cross model <subcommand>\n"
         "  list                list all profiles\n"
         "  show                show the active profile\n"
-        "  use <name>          switch active profile\n"
+        "  use [<name>]        switch active profile (no <name> -> picker)\n"
         "  add [<name>]        add a new profile (interactive)\n"
         "  remove <name>       delete a profile\n"
         "  migrate             import current .env into a new profile\n"
         "  <name>              shorthand for `use <name>` if profile exists,\n"
         "                      else sets LLM_MODEL directly (legacy)"
     )
+
+
+_MODEL_ACTIONS = [
+    ("list", "list saved profiles"),
+    ("show", "show the active profile"),
+    ("use", "switch active profile (picker)"),
+    ("add", "add a new profile (interactive)"),
+    ("migrate", "import current .env into a profile"),
+    ("remove", "remove a saved profile (picker)"),
+]
+
+
+def _model_action_menu() -> str | None:
+    """Open a curses picker over model actions. Returns the chosen key
+    (e.g. ``"use"``) or None when the user cancels or stdin is not a TTY.
+    """
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return None
+    labels = [f"{key:<10}  {desc}" for key, desc in _MODEL_ACTIONS]
+    labels.append("Cancel")
+    idx = curses_radiolist(
+        "Select model action:",
+        labels,
+        selected=0,
+        cancel_returns=len(labels) - 1,
+    )
+    if idx == len(labels) - 1:
+        return None
+    return _MODEL_ACTIONS[idx][0]
 
 
 def handle_model_command(args: list[str], *, interactive: bool = False) -> str:
@@ -418,13 +474,19 @@ def handle_model_command(args: list[str], *, interactive: bool = False) -> str:
     stdin for sub-prompts, so the dispatcher returns a usage hint instead.
     """
     if not args:
-        store = models_store.load()
-        sections = []
-        if store.profiles:
-            sections.append(cmd_list())
-        sections.append(cmd_catalog())
-        sections.append(_model_help())
-        return "\n\n".join(sections)
+        if interactive:
+            chosen = _model_action_menu()
+            if chosen is None:
+                return ""
+            args = [chosen]
+        else:
+            store = models_store.load()
+            sections = []
+            if store.profiles:
+                sections.append(cmd_list())
+            sections.append(cmd_catalog())
+            sections.append(_model_help())
+            return "\n\n".join(sections)
 
     sub = args[0].lower()
 
@@ -434,6 +496,8 @@ def handle_model_command(args: list[str], *, interactive: bool = False) -> str:
         return cmd_show()
     if sub in ("use",):
         if len(args) < 2:
+            if interactive:
+                return cmd_use_interactive()
             return "Usage: /cross model use <name>"
         return cmd_use(args[1])
     if sub in ("add", "new"):
@@ -442,6 +506,8 @@ def handle_model_command(args: list[str], *, interactive: bool = False) -> str:
         return cmd_add_interactive(args[1] if len(args) > 1 else None)
     if sub in ("remove", "rm", "delete"):
         if len(args) < 2:
+            if interactive:
+                return cmd_remove_interactive()
             return "Usage: /cross model remove <name>"
         return cmd_remove(args[1])
     if sub == "migrate":

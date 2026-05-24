@@ -745,8 +745,18 @@ async function orchLoadSessionAgents() {
             // Carry agent meta tag (from internal agent JSON) if available
             const meta = agentMap[s.session_id] || {};
             const agentTag = meta.tag || '';
+            const isPrimary = !!meta.is_primary;
+            const primaryStar = `<button class="orch-ia-primary-btn" data-sid="${s.session_id}" data-is-primary="${isPrimary ? '1' : '0'}" title="${isPrimary ? '取消团队主 agent' : '设为团队主 agent（创群时自动作为主 agent）'}" style="background:none;border:none;cursor:pointer;font-size:13px;padding:1px 3px;line-height:1;${isPrimary ? 'color:#f59e0b;' : 'color:#d1d5db;opacity:0.6;'}" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=${isPrimary ? 1 : 0.6}">${isPrimary ? '⭐' : '☆'}</button>`;
             // Add delete button
-            card.innerHTML = `<span class="orch-emoji">🤖</span><div style="min-width:0;flex:1;"><div class="orch-name" title="${escapeHtml(title)}">${escapeHtml(title)}</div><div class="orch-tag" style="color:#6366f1;font-family:monospace;">${agentTag ? '🏷️' + escapeHtml(agentTag) + ' · ' : ''}#${escapeHtml(shortId)}</div></div><button class="orch-card-delete-btn" title="Delete agent" onclick="event.stopPropagation(); orchDeleteInternalAgent('${s.session_id}')">×</button>`;
+            card.innerHTML = `<span class="orch-emoji">🤖</span><div style="min-width:0;flex:1;"><div class="orch-name" title="${escapeHtml(title)}">${escapeHtml(title)}${isPrimary ? ' <span style="color:#f59e0b;font-size:10px;">⭐ 主</span>' : ''}</div><div class="orch-tag" style="color:#6366f1;font-family:monospace;">${agentTag ? '🏷️' + escapeHtml(agentTag) + ' · ' : ''}#${escapeHtml(shortId)}</div></div>${primaryStar}<button class="orch-card-delete-btn" title="Delete agent" onclick="event.stopPropagation(); orchDeleteInternalAgent('${s.session_id}')">×</button>`;
+            const starBtn = card.querySelector('.orch-ia-primary-btn');
+            if (starBtn) {
+                starBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    await orchToggleInternalPrimary(starBtn.dataset.sid, starBtn.dataset.isPrimary !== '1');
+                });
+                starBtn.addEventListener('dblclick', (e) => e.stopPropagation());
+            }
             const nodeData = {
                 type: 'session_agent',
                 name: title,
@@ -763,6 +773,30 @@ async function orchLoadSessionAgents() {
         console.error('Load internal agents failed:', e);
         orch.internalAgents = [];
         list.innerHTML = '<div style="padding:6px 10px;font-size:10px;color:#dc2626;text-align:center;">❌ ' + t('error') + '</div>';
+    }
+}
+
+// Toggle "team primary agent" marker on an internal agent.
+// Backend preempts: setting one to primary clears it from siblings in the same file.
+async function orchToggleInternalPrimary(sessionId, makePrimary) {
+    try {
+        const url = (orch.teamEnabled && orch.teamName)
+            ? `/internal_agents/${encodeURIComponent(sessionId)}?team=${encodeURIComponent(orch.teamName)}`
+            : `/internal_agents/${encodeURIComponent(sessionId)}`;
+        const resp = await fetch(url, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ meta: { is_primary: !!makePrimary } }),
+        });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            orchToast('设置失败: ' + (data.error || resp.statusText));
+            return;
+        }
+        orchToast(makePrimary ? '✅ 已设为团队主 agent' : '✅ 已取消主 agent');
+        await orchLoadSessionAgents();
+    } catch (e) {
+        orchToast('设置失败: ' + e.message);
     }
 }
 
@@ -862,150 +896,115 @@ function _orchAppendPublicExternalCard(parent, row, yamlName) {
     parent.appendChild(card);
 }
 
+function _orchNormalizeExternalRows(rows) {
+    return (rows || []).filter((row) => row && typeof row === 'object').map((row) => ({
+        name: row.name || row.global_name || '',
+        global_name: row.global_name || row.name || '',
+        tag: row.tag || '',
+        platform: row.platform || row.tag || '',
+        meta: row.meta || {},
+        model: row.model || (row.meta && row.meta.model) || '',
+        is_primary: !!row.is_primary,
+    })).filter((row) => row.global_name);
+}
+
+// Toggle "team primary agent" marker on an external (OpenClaw) team agent.
+async function orchToggleExternalPrimary(globalName, makePrimary) {
+    if (!orch.teamEnabled || !orch.teamName) {
+        orchToast('主 agent 标记仅在团队模式下可用');
+        return;
+    }
+    try {
+        const resp = await fetch('/teams/' + encodeURIComponent(orch.teamName) + '/members/external', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ global_name: globalName, is_primary: !!makePrimary }),
+        });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            orchToast('设置失败: ' + (data.error || resp.statusText));
+            return;
+        }
+        orchToast(makePrimary ? '✅ 已设为团队主 agent' : '✅ 已取消主 agent');
+        await orchLoadOpenClawSessions();
+    } catch (e) {
+        orchToast('设置失败: ' + e.message);
+    }
+}
+
 // ── External agent pool (OpenClaw + public HTTP/ACP), layered like mobile contacts ──
 async function orchLoadOpenClawSessions() {
     const list = document.getElementById('orch-expert-list-openclaw');
     if (!list) return;
     list.innerHTML = '<div style="padding:6px 10px;font-size:10px;color:#9ca3af;text-align:center;">⏳ ' + t('loading') + '</div>';
     try {
-        const [ocResp, acpxResp] = await Promise.all([
-            fetch('/proxy_openclaw_sessions'),
-            fetch('/proxy_acpx_sessions_all'),
-        ]);
-        const data = await ocResp.json().catch(() => ({}));
-        let acpxData = { sessions: [] };
-        try {
-            if (acpxResp.ok) acpxData = await acpxResp.json();
-        } catch (_) { /* ignore */ }
-
-        // When team mode is active, also load external_agents.json to get
-        // the authoritative name↔global_name mapping.
-        // global_name is the real OpenClaw agent name; name is the short display name.
-        // They do NOT necessarily have a prefix relationship.
         let extAgentMap = {};   // global_name (lowercase) → { name, global_name }
-        if (orch.teamEnabled && orch.teamName) {
-            try {
-                const extResp = await fetch('/team_openclaw_snapshot?team=' + encodeURIComponent(orch.teamName));
-                const extData = await extResp.json();
-                if (extData.ok && extData.agents) {
-                    for (const ea of extData.agents) {
-                        if (ea.global_name) {
-                            extAgentMap[ea.global_name.toLowerCase()] = ea;
-                        }
-                    }
-                }
-            } catch(e) { /* ignore, will fall back to prefix stripping */ }
-        }
-
-        // ACP agents source: team mode from /teams/${team}/members, non-team from /public_external_agents
-        let acpRows = [];
+        let allRows = [];
         if (orch.teamEnabled && orch.teamName) {
             try {
                 const teamResp = await fetch('/teams/' + encodeURIComponent(orch.teamName) + '/members');
                 const teamData = await teamResp.json().catch(() => ({}));
                 const members = teamData.members || [];
-                // Filter external members and transform to row format
-                acpRows = members
-                    .filter(m => (m.type || m.member_type || '') === 'ext')
-                    .map(m => ({
-                        name: m.name || m.global_name || '',
-                        global_name: m.global_name || m.name || '',
-                        tag: m.tag || '',
-                        platform: m.platform || m.tag || '',
-                        meta: m.meta || {}
-                    }));
-            } catch(e) { /* team fetch failed: clear acpRows so only team members are shown */ acpRows = []; }
+                allRows = _orchNormalizeExternalRows(
+                    members.filter((m) => (m.type || m.member_type || '') === 'ext')
+                );
+            } catch(e) { allRows = []; }
         } else {
-            // In public mode (no team), load from user's external_agents.json via /public_external_agents
             try {
                 const pubResp = await fetch('/public_external_agents');
                 const pubData = await pubResp.json().catch(() => ({}));
-                const agents = pubData.agents || [];
-                acpRows = agents.map(a => ({
-                    name: a.name || a.global_name || '',
-                    global_name: a.global_name || a.name || '',
-                    tag: a.tag || '',
-                    platform: a.platform || a.tag || '',
-                    meta: a.meta || {}
-                }));
-            } catch(e) { /* use empty list if fetch fails */ }
+                allRows = _orchNormalizeExternalRows(pubData.agents || []);
+            } catch(e) { allRows = []; }
         }
+
+        for (const row of allRows) {
+            extAgentMap[row.global_name.toLowerCase()] = row;
+        }
+
+        const agents = allRows.filter((row) => String(row.platform || '').trim().toLowerCase() === 'openclaw');
+        const acpRows = allRows.filter((row) => String(row.platform || '').trim().toLowerCase() !== 'openclaw');
         const acpByTool = _orchGroupPublicExternalAgents(acpRows);
         let acpTotal = 0;
         Object.values(acpByTool).forEach((arr) => {
             if (Array.isArray(arr)) acpTotal += arr.length;
         });
 
-        let agents = data.available ? (data.agents || []) : [];
-        if (orch.teamEnabled && orch.teamName) {
-            const prefix = orch.teamName.toLowerCase() + '_';
-            agents = agents.filter((a) => {
-                const aName = (a.name || '').toLowerCase();
-                return extAgentMap[aName] || aName.startsWith(prefix);
-            });
-        }
-
         if (agents.length === 0 && acpTotal === 0) {
             list.innerHTML = '<div style="padding:6px 10px;font-size:10px;color:#d1d5db;text-align:center;">' + escapeHtml(t('orch_ext_pool_empty')) + '</div>';
             return;
         }
 
-        const openclawUrl = data.openclaw_api_url || '';
         list.innerHTML = '';
 
         const appendOpenClawAgentCard = (parent, a) => {
             const card = document.createElement('div');
             card.className = 'orch-expert-card';
             card.draggable = true;
-            const agentName = a.name || 'unknown';
+            const agentName = a.global_name || a.name || 'unknown';
+            const yamlName = a.name || agentName;
             const mdl = (a.model && a.model !== 'unknown' && a.model !== 'auto') ? a.model : '';
-            const agentWs = a.workspace || '';
-
-            // Build subtitle with tools/skills summary
-            const toolProfile = (a.tools && a.tools.profile) ? a.tools.profile : '';
-            const skillCount = a.skills_all ? '∞' : (a.skills ? a.skills.length : 0);
-            let metaLine = '';
-            if (toolProfile) metaLine += '🔧' + toolProfile;
-            if (skillCount) metaLine += (metaLine ? ' · ' : '') + '🧩' + skillCount;
-
-            // Resolve display name (yamlName) from external_agents.json.
-            // The JSON "name" field is the authoritative short display name used in YAML;
-            // "global_name" is the real OpenClaw CLI agent name.
-            // They do NOT necessarily have a teamName_ prefix relationship.
-            let yamlName = agentName;
-            const extEntry = extAgentMap[agentName.toLowerCase()];
-            if (orch.teamEnabled && orch.teamName) {
-                if (extEntry && extEntry.name) {
-                    // Prefer the name from external_agents.json
-                    yamlName = extEntry.name;
-                } else {
-                    // Fallback: strip team prefix (for agents not yet in JSON)
-                    const prefix = orch.teamName + '_';
-                    if (agentName.startsWith(prefix)) {
-                        yamlName = agentName.slice(prefix.length);
-                    }
-                }
-            }
-            const title = yamlName + (a.is_default ? ' ⭐' : '');
-
-            card.innerHTML = `<span class="orch-emoji">🦞</span><div style="min-width:0;flex:1;"><div class="orch-name" title="${escapeHtml(agentName)}">${escapeHtml(title)}</div>${mdl ? '<div class="orch-tag" style="color:#10b981;font-family:monospace;">' + escapeHtml(mdl) + '</div>' : ''}${metaLine ? '<div class="orch-tag" style="color:#6b7280;font-size:9px;">' + escapeHtml(metaLine) + '</div>' : ''}</div><div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0;">${(orch.teamEnabled && orch.teamName) ? '<button class="orch-oc-snap-btn" data-agent="' + escapeHtml(agentName) + '" data-short="' + escapeHtml(yamlName) + '" title="Export to team snapshot" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;opacity:0.5;line-height:1;" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0.5">📤</button>' : ''}${agentWs ? '<button class="orch-oc-edit-btn" data-ws="' + escapeHtml(agentWs) + '" data-agent="' + escapeHtml(agentName) + '" title="' + t('orch_oc_edit_files') + '" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;opacity:0.5;line-height:1;" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0.5">📝</button>' : ''}<button class="orch-oc-cfg-btn" data-agent="${escapeHtml(agentName)}" title="${t('orch_oc_config')}" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;opacity:0.5;line-height:1;" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0.5">⚙️</button>${orchCanDeleteOpenClawAgent(agentName) ? '<button class="orch-oc-del-btn" data-agent="' + escapeHtml(agentName) + '" title="' + t('orch_oc_delete') + '" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;color:#dc2626;opacity:0.65;line-height:1;" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0.65">🗑️</button>' : ''}</div>`;
+            const isPrimaryExt = !!a.is_primary;
+            const primaryStarExt = (orch.teamEnabled && orch.teamName)
+                ? `<button class="orch-oc-primary-btn" data-agent="${escapeHtml(agentName)}" data-is-primary="${isPrimaryExt ? '1' : '0'}" title="${isPrimaryExt ? '取消团队主 agent' : '设为团队主 agent'}" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;line-height:1;${isPrimaryExt ? 'color:#f59e0b;opacity:1;' : 'color:#d1d5db;opacity:0.6;'}" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=${isPrimaryExt ? 1 : 0.6}">${isPrimaryExt ? '⭐' : '☆'}</button>`
+                : '';
+            card.innerHTML = `<span class="orch-emoji">🦞</span><div style="min-width:0;flex:1;"><div class="orch-name" title="${escapeHtml(agentName)}">${escapeHtml(yamlName)}${isPrimaryExt ? ' <span style="color:#f59e0b;font-size:10px;">⭐ 主</span>' : ''}</div>${mdl ? '<div class="orch-tag" style="color:#10b981;font-family:monospace;">' + escapeHtml(mdl) + '</div>' : ''}<div class="orch-tag" style="color:#6b7280;font-size:9px;font-family:monospace;">${escapeHtml(agentName)}</div></div><div style="display:flex;flex-direction:column;gap:2px;flex-shrink:0;">${primaryStarExt}${(orch.teamEnabled && orch.teamName) ? '<button class="orch-oc-snap-btn" data-agent="' + escapeHtml(agentName) + '" data-short="' + escapeHtml(yamlName) + '" title="Export to team snapshot" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;opacity:0.5;line-height:1;" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0.5">📤</button>' : ''}<button class="orch-oc-cfg-btn" data-agent="${escapeHtml(agentName)}" title="${t('orch_oc_config')}" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;opacity:0.5;line-height:1;" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0.5">⚙️</button>${orchCanDeleteOpenClawAgent(agentName) ? '<button class="orch-oc-del-btn" data-agent="' + escapeHtml(agentName) + '" title="' + t('orch_oc_delete') + '" style="background:none;border:none;cursor:pointer;font-size:12px;padding:1px 3px;color:#dc2626;opacity:0.65;line-height:1;" onmouseenter="this.style.opacity=1" onmouseleave="this.style.opacity=0.65">🗑️</button>' : ''}</div>`;
             // model format: agent:<name> (CLI uses --agent <name>, no session-id)
             const modelStr = 'agent:' + yamlName;
             const nodeData = {
                 type: 'external', name: yamlName, tag: 'openclaw', platform: 'openclaw', emoji: '🦞', temperature: 0.7,
-                api_url: openclawUrl, api_key: '****',
+                api_url: '', api_key: '****',
                 model: modelStr,
                 ext_id: yamlName,  // use agent name as ext_id to distinguish different agents
             };
             orchBindCardEvents(card, nodeData);
-            // Bind edit button (stop propagation so it doesn't trigger card add)
-            const editBtn = card.querySelector('.orch-oc-edit-btn');
-            if (editBtn) {
-                editBtn.addEventListener('click', (e) => {
+            // Bind primary toggle (team mode only)
+            const starBtnExt = card.querySelector('.orch-oc-primary-btn');
+            if (starBtnExt) {
+                starBtnExt.addEventListener('click', async (e) => {
                     e.stopPropagation();
-                    orchShowWorkspaceEditor(editBtn.dataset.agent, editBtn.dataset.ws);
+                    await orchToggleExternalPrimary(starBtnExt.dataset.agent, starBtnExt.dataset.isPrimary !== '1');
                 });
-                editBtn.addEventListener('dblclick', (e) => e.stopPropagation());
+                starBtnExt.addEventListener('dblclick', (e) => e.stopPropagation());
             }
             // Bind config button
             const cfgBtn = card.querySelector('.orch-oc-cfg-btn');
@@ -1028,7 +1027,6 @@ async function orchLoadOpenClawSessions() {
                 });
                 delBtn.addEventListener('dblclick', (e) => e.stopPropagation());
             }
-            // Bind snapshot export button (team mode only)
             const snapBtn = card.querySelector('.orch-oc-snap-btn');
             if (snapBtn) {
                 snapBtn.addEventListener('click', async (e) => {
@@ -1039,7 +1037,8 @@ async function orchLoadOpenClawSessions() {
                     sBtn.textContent = '⏳';
                     try {
                         const r = await fetch('/team_openclaw_snapshot/export', {
-                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
                             body: JSON.stringify({ team: orch.teamName, agent_name: fullName, short_name: shortName }),
                         });
                         const res = await r.json();
@@ -1091,7 +1090,7 @@ async function orchLoadOpenClawSessions() {
         }
 
         // Team mode: add Export All / Restore All buttons
-        if (orch.teamEnabled && orch.teamName && data.available) {
+        if (orch.teamEnabled && orch.teamName) {
             const btnBar = document.createElement('div');
             btnBar.style.cssText = 'display:flex;gap:4px;padding:6px 8px;border-top:1px solid #e5e7eb;';
             btnBar.innerHTML = `

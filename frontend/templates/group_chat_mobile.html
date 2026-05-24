@@ -1589,6 +1589,61 @@
     display: none;
   }
 
+  /* ── Run Mode (per-group permission mode picker) ── */
+  .run-mode-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #e8eefc;
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 600;
+    vertical-align: middle;
+  }
+  .run-mode-badge.plan { background: #fef3c7; color: #92400e; }
+  .run-mode-badge.manual { background: #fee2e2; color: #b91c1c; }
+  .run-mode-option {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 4px;
+    border-bottom: 0.5px solid var(--border);
+    cursor: pointer;
+  }
+  .run-mode-option:last-of-type { border-bottom: none; }
+  .run-mode-option:active { background: #f3f4f6; }
+  .run-mode-option-info { flex: 1; }
+  .run-mode-option-title { font-size: 15px; font-weight: 600; }
+  .run-mode-option-desc { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .run-mode-option-check {
+    width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px;
+    border: 1.5px solid var(--border);
+    color: transparent;
+    font-size: 14px; font-weight: 700;
+  }
+  .run-mode-option.active .run-mode-option-check {
+    background: var(--primary); border-color: var(--primary); color: #fff;
+  }
+  .run-mode-hint {
+    margin-top: 10px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: #f9fafb;
+    border-radius: 8px;
+  }
+  .run-mode-warning {
+    margin-top: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: #92400e;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 8px;
+  }
+
   /* ── Mention popup ── */
   .mention-popup {
     position: fixed;
@@ -2328,6 +2383,134 @@
   .msg-avatar.clickable:hover { opacity: .8; }
   .member-avatar.clickable:hover { opacity: .8; }
 
+  /* ── Agent history overlay (mirrors main frontend chat-box history) ── */
+  .agent-history-overlay {
+    position: fixed; inset: 0; z-index: 10010;
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    transform: translateX(100%);
+    transition: transform .28s cubic-bezier(.4,0,.2,1);
+  }
+  .agent-history-overlay.open { transform: translateX(0); }
+  .agent-history-dialog {
+    flex: 1; display: flex; flex-direction: column;
+    background: var(--bg); overflow: hidden;
+    width: 100%; max-width: 100%; max-height: 100%;
+  }
+  .agent-history-header {
+    display: flex; align-items: center;
+    height: var(--header-h);
+    padding: 0 6px; background: var(--bg-card);
+    border-bottom: 0.5px solid var(--border); flex-shrink: 0;
+  }
+  .agent-history-header h3 {
+    flex: 1; text-align: center; font-size: 17px; font-weight: 600; color: var(--text);
+    margin: 0; margin-right: 40px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agent-history-close {
+    display: flex; align-items: center;
+    background: none; border: none; color: var(--text);
+    cursor: pointer; padding: 8px 6px; border-radius: 6px; line-height: 1;
+  }
+  .agent-history-close:active { background: rgba(0,0,0,0.06); }
+  .agent-history-body {
+    flex: 1; overflow-y: auto;
+    padding: 12px;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg);
+  }
+  .agent-history-empty,
+  .agent-history-loading {
+    display: flex; align-items: center; justify-content: center;
+    padding: 40px; color: #9ca3af; font-size: 14px;
+  }
+  .agent-history-error {
+    padding: 20px; text-align: center; color: #ef4444; font-size: 13px;
+  }
+  .ah-row { display: flex; margin-bottom: 12px; }
+  .ah-row.user { justify-content: flex-end; }
+  .ah-row.assistant, .ah-row.tool { justify-content: flex-start; }
+  .ah-bubble {
+    max-width: 85%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.55;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    word-break: break-word;
+  }
+  .ah-bubble.user {
+    background: #1677ff; color: #fff;
+  }
+  .ah-bubble.assistant {
+    background: var(--bg-card); color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .ah-bubble.tool {
+    background: #f9fafb; color: #4b5563;
+    border: 1px dashed #d1d5db;
+    font-size: 12px;
+  }
+  .ah-bubble.assistant .markdown-body,
+  .ah-bubble.assistant .tc-markdown { color: var(--text); }
+  .ah-bubble img.ah-inline-image {
+    max-width: 100%;
+    border-radius: 6px;
+    display: block;
+    margin-bottom: 6px;
+  }
+  .ah-tool-title {
+    font-weight: 600; color: #374151; margin-bottom: 6px;
+    font-size: 12px;
+  }
+  .ah-tool-badges { margin-bottom: 6px; }
+  .ah-tool-badge {
+    display: inline-block;
+    background: #dbeafe; color: #1d4ed8;
+    font-size: 11px; padding: 2px 8px;
+    border-radius: 999px; margin: 0 4px 4px 0;
+  }
+  .ah-tool-details {
+    margin-top: 6px;
+    border: 1px solid #dbeafe;
+    border-radius: 10px;
+    background: #f8fbff;
+  }
+  .ah-tool-details summary {
+    cursor: pointer; list-style: none;
+    padding: 8px 10px; font-size: 12px; font-weight: 600;
+    color: #1d4ed8;
+  }
+  .ah-tool-details summary::-webkit-details-marker { display: none; }
+  .ah-tool-details > div { padding: 0 10px 10px 10px; }
+  .ah-pager-block { margin-top: 8px; }
+  .ah-pager-title {
+    font-weight: 600; color: #4b5563;
+    margin-bottom: 6px; font-size: 12px;
+  }
+  .ah-pager-content {
+    margin: 0;
+    max-height: 280px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 11px;
+    background: #fff;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+  }
+  .ah-pager-controls {
+    display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  }
+  .ah-pager-btn {
+    padding: 2px 8px; border: 1px solid #d1d5db; border-radius: 6px;
+    background: #fff; font-size: 11px; color: #374151; cursor: pointer;
+  }
+  .ah-pager-label { font-size: 11px; color: #6b7280; }
+
   /* ── Workflow selector popup ── */
   .workflow-popup {
     position: absolute;
@@ -2472,9 +2655,11 @@
     background: var(--bg);
     z-index: 281;
     display: flex; flex-direction: column;
-    transform: translate3d(100%, 0, 0);
-    -webkit-transform: translate3d(100%, 0, 0);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translate3d(calc(100% + 32px), 0, 0);
+    -webkit-transform: translate3d(calc(100% + 32px), 0, 0);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.16s ease;
     border-left: 0.5px solid var(--border);
     box-shadow: -8px 0 24px rgba(0,0,0,0.12);
     backface-visibility: hidden;
@@ -2483,6 +2668,8 @@
   .oasis-sidebar.show {
     transform: translate3d(0, 0, 0);
     -webkit-transform: translate3d(0, 0, 0);
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .oasis-header {
@@ -3963,6 +4150,487 @@
     letter-spacing: 0.2px;
     display: none;
   }
+
+  /* ── Desktop adaptation for the mobile message center ── */
+  .desktop-empty-chat {
+    display: none;
+  }
+  @media (min-width: 900px) {
+    :root {
+      --desktop-rail-w: 72px;
+      --desktop-list-w: clamp(300px, 24vw, 360px);
+      --desktop-shell-w: min(100vw - 48px, 1500px);
+      --desktop-shell-h: min(100vh - 48px, 920px);
+      --bottom-inset: 0px;
+    }
+    html,
+    body {
+      background: #d8d8d8;
+    }
+    .body-layout {
+      justify-content: center;
+      padding: 24px;
+    }
+    .top-inline-banner {
+      width: var(--desktop-shell-w);
+      max-width: var(--desktop-shell-w);
+      flex-shrink: 0;
+    }
+    .app-container {
+      width: var(--desktop-shell-w);
+      max-width: none;
+      height: var(--desktop-shell-h);
+      min-height: 620px;
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: var(--desktop-rail-w) var(--desktop-list-w) minmax(480px, 1fr);
+      background: #f5f5f5;
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 8px;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.16);
+    }
+    .tab-bar,
+    .tab-bar.hidden {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: auto;
+      bottom: 0;
+      width: var(--desktop-rail-w);
+      height: 100%;
+      padding: 14px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      background: #e2e2e2;
+      border-top: none;
+      border-right: 1px solid rgba(0,0,0,0.08);
+      z-index: 230;
+    }
+    .tab-item {
+      width: 100%;
+      flex: 0 0 58px;
+      padding: 0;
+      gap: 2px;
+    }
+    .tab-icon {
+      width: 38px;
+      height: 34px;
+      border-radius: 8px;
+    }
+    .tab-icon svg {
+      width: 24px;
+      height: 24px;
+      fill: #6c6c6c;
+    }
+    .tab-item.active .tab-icon {
+      background: rgba(255,255,255,0.72);
+    }
+    .tab-item.active .tab-icon svg {
+      fill: #374151;
+    }
+    .tab-label {
+      max-width: 58px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #6f6f6f;
+    }
+    .tab-item.active .tab-label {
+      color: #111827;
+    }
+    .tab-badge {
+      top: -5px;
+      right: -9px;
+    }
+    .tab-page {
+      top: 0;
+      left: var(--desktop-rail-w);
+      right: auto;
+      bottom: 0;
+      width: var(--desktop-list-w);
+      background: #f1f1f1;
+      border-right: 1px solid rgba(0,0,0,0.08);
+      z-index: 90;
+    }
+    .tab-page .header {
+      position: relative;
+      height: 58px;
+      padding: 0 14px;
+      background: #f1f1f1;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+      box-sizing: border-box;
+    }
+    .tab-page .header-title {
+      position: static;
+      transform: none;
+      max-width: none;
+      flex: 1;
+      text-align: left;
+      font-size: 18px;
+      pointer-events: auto;
+    }
+    .chat-search-bar {
+      margin-top: 0;
+      padding: 10px 12px;
+      background: #f1f1f1;
+    }
+    .chat-search-input {
+      height: 36px;
+      border: none;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    .group-list-area,
+    .contacts-area,
+    .discover-area,
+    .profile-area {
+      margin-top: 0;
+      margin-bottom: 0;
+    }
+    .contacts-area {
+      overflow-x: hidden;
+      background: #f1f1f1;
+    }
+    .contacts-search-bar {
+      padding: 10px 12px;
+      background: #f1f1f1;
+    }
+    .contacts-search-input {
+      height: 36px;
+      border: none;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    .contacts-team-switcher {
+      padding: 10px 12px;
+      gap: 8px;
+      background: #f1f1f1;
+    }
+    .contacts-team-label {
+      max-width: 70px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .contacts-team-switcher select {
+      min-width: 0;
+      height: 38px;
+      background: #ffffff;
+    }
+    .contact-section-title,
+    .contacts-cat-header {
+      position: static;
+      padding: 9px 12px;
+      font-size: 13px;
+      line-height: 1.25;
+      background: #ececec;
+    }
+    .contact-section-title.contact-section-l1-internal,
+    .contact-section-title.contact-section-l2-external,
+    .contact-section-title.contact-section-l3-custom,
+    .contact-section-title.contact-section-l4-preset,
+    .contacts-cat-header.contacts-ext-sub,
+    .contacts-cat-header.contacts-preset-sub {
+      background: #ececec;
+      box-shadow: inset 3px 0 0 #6b7280;
+    }
+    .group-item,
+    .contact-item,
+    .discover-card,
+    .profile-row {
+      background: transparent;
+    }
+    .swipe-wrapper {
+      background: transparent;
+    }
+    .swipe-wrapper .group-item {
+      padding: 12px 14px;
+    }
+    .contact-item {
+      min-width: 0;
+      padding: 11px 12px;
+      overflow: hidden;
+      gap: 10px;
+    }
+    .contact-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .contact-name {
+      min-width: 0;
+      margin-left: 0;
+      font-size: 15px;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .contact-main {
+      margin-left: 0;
+      min-width: 0;
+    }
+    .contact-meta-line {
+      flex-wrap: nowrap;
+      overflow: hidden;
+    }
+    .contact-meta-chip,
+    .contact-tag,
+    .contact-type-pill,
+    .platform-badge {
+      max-width: 132px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .contact-tag {
+      flex: 0 1 auto;
+      font-size: 10px;
+      padding: 3px 7px;
+    }
+    .contact-external-nested {
+      margin-left: 0;
+      padding-left: 0;
+      border-left: none;
+    }
+    .swipe-wrapper.active .group-item,
+    .group-item:hover,
+    .contact-item:hover,
+    .discover-card:hover,
+    .profile-row:hover {
+      background: #dedede;
+    }
+    .swipe-wrapper.active .group-name {
+      font-weight: 650;
+    }
+    .chat-page {
+      top: 0;
+      left: calc(var(--desktop-rail-w) + var(--desktop-list-w));
+      right: 0;
+      bottom: 0;
+      transform: none;
+      transition: none;
+      z-index: 110;
+      border-radius: 0 8px 8px 0;
+      background: #f5f5f5;
+    }
+    .chat-page.offscreen {
+      display: none;
+      transform: none;
+      pointer-events: none;
+    }
+    .chat-page:not(.offscreen) {
+      display: flex;
+    }
+    .chat-page .header {
+      height: 58px;
+      padding: 0 18px;
+      background: #f5f5f5;
+      border-bottom: 1px solid rgba(0,0,0,0.06);
+      box-sizing: border-box;
+    }
+    .chat-page .header-title {
+      position: static;
+      transform: none;
+      flex: 1;
+      max-width: none;
+      text-align: left;
+      font-size: 18px;
+    }
+    .chat-page .header-back-btn,
+    .swipe-back-indicator,
+    .swipe-back-dim {
+      display: none;
+    }
+    .chat-body {
+      margin-top: 0;
+      padding: 18px 32px 12px;
+      background: #f5f5f5;
+    }
+    .msg-body {
+      max-width: min(72%, 760px);
+    }
+    .msg-row.self .msg-body {
+      max-width: min(72%, 760px);
+    }
+    .msg-bubble {
+      font-size: 15px;
+    }
+    .input-bar-wrap {
+      padding-bottom: 0;
+      background: #f5f5f5;
+    }
+    .input-bar {
+      height: 66px;
+      padding: 10px 18px 14px;
+      gap: 10px;
+      background: #f5f5f5;
+    }
+    .input-bar textarea {
+      height: 42px;
+      border: none;
+      border-radius: 6px;
+      font-size: 15px;
+    }
+    .input-actions-menu {
+      bottom: 50px;
+    }
+    .desktop-empty-chat {
+      position: absolute;
+      top: 0;
+      left: calc(var(--desktop-rail-w) + var(--desktop-list-w));
+      right: 0;
+      bottom: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 14px;
+      color: #8b95a1;
+      background: #f7f7f7;
+      z-index: 80;
+      border-radius: 0 8px 8px 0;
+    }
+    #chat-page.offscreen + .desktop-empty-chat {
+      display: flex;
+    }
+    .desktop-empty-chat-icon {
+      display: none;
+    }
+    .desktop-empty-chat-logo {
+      width: 72px;
+      height: 72px;
+      border-radius: 18px;
+      opacity: 0.16;
+      filter: grayscale(1);
+    }
+    .desktop-empty-chat-title {
+      font-size: 15px;
+      color: #9aa1aa;
+    }
+    .chat-actions-sheet {
+      top: 70px;
+      right: 28px;
+      width: 250px;
+    }
+    .mention-popup {
+      left: calc(var(--desktop-rail-w) + var(--desktop-list-w) + 24px);
+      right: 24px;
+      bottom: 82px;
+      max-width: 520px;
+    }
+    .tc-sheet {
+      left: calc(var(--desktop-rail-w) + var(--desktop-list-w));
+      right: 0;
+      bottom: 24px;
+      max-width: min(560px, calc(100vw - var(--desktop-rail-w) - var(--desktop-list-w) - 64px));
+      border-radius: 14px;
+    }
+    .tc-sheet:not(.show) {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(calc(100% + 96px));
+    }
+    .tc-sheet.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+    .drawer:not(.side-drawer),
+    .settings-modal-overlay,
+    .agent-detail-overlay,
+    .agent-history-overlay,
+    .subagent-panel-overlay,
+    .profile-subpage {
+      left: calc(var(--desktop-rail-w) + var(--desktop-list-w));
+      right: 0;
+      width: auto;
+    }
+    .agent-detail-overlay {
+      background: #f7f7f7;
+      z-index: 140;
+    }
+    .agent-detail-dialog {
+      width: min(760px, 100%);
+      max-width: 100%;
+      margin: 0 auto;
+      background: #f7f7f7;
+    }
+    .agent-detail-header {
+      height: 58px;
+      padding: 0 18px;
+      background: #f7f7f7;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+    }
+    .agent-detail-header h3 {
+      text-align: left;
+      margin-right: 0;
+      font-size: 18px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .agent-detail-body {
+      padding: 16px 20px 22px;
+      overflow-x: hidden;
+    }
+    .agent-detail-section {
+      margin-bottom: 12px;
+      padding: 14px 16px;
+      border: 1px solid rgba(0,0,0,0.08);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    .agent-detail-value {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .agent-detail-value.mono,
+    .agent-detail-scroll-text {
+      max-width: 100%;
+      max-height: 38vh;
+      overflow: auto !important;
+      box-sizing: border-box;
+    }
+    .agent-detail-body > div[style*="padding:16px"] {
+      padding: 4px 0 0 !important;
+      display: flex !important;
+      flex-direction: row !important;
+      flex-wrap: wrap;
+      gap: 10px !important;
+    }
+    .agent-detail-body > div[style*="padding:16px"] > button {
+      width: auto !important;
+      min-width: 150px;
+      flex: 0 1 auto;
+      padding: 10px 14px !important;
+      border-radius: 8px !important;
+      font-size: 13px !important;
+    }
+    .side-drawer.drawer,
+    .oasis-sidebar {
+      width: min(420px, calc(100vw - var(--desktop-rail-w) - var(--desktop-list-w) - 32px));
+      min-width: 360px;
+    }
+    .oasis-sidebar {
+      top: 24px;
+      right: calc((100vw - var(--desktop-shell-w)) / 2);
+      bottom: 24px;
+      border-radius: 8px 0 0 8px;
+    }
+    .oasis-sidebar:not(.show) {
+      transform: translate3d(calc(100% + 72px), 0, 0);
+      -webkit-transform: translate3d(calc(100% + 72px), 0, 0);
+    }
+    .toast {
+      bottom: 34px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -4152,6 +4820,11 @@
   </div>
 </div>
 
+<div class="desktop-empty-chat" aria-hidden="true">
+  <img class="desktop-empty-chat-logo" src="/static/assets/clawcross-mark.svg" alt="">
+  <div class="desktop-empty-chat-title">选择一个对话开始聊天</div>
+</div>
+
 <!-- ═══════════════ Chat Actions Menu (inline popup) ═══════════════ -->
 <div class="chat-actions-overlay" id="chat-actions-overlay" onclick="closeChatActions()"></div>
 <div class="chat-actions-sheet" id="chat-actions-sheet">
@@ -4190,6 +4863,10 @@
   <div class="chat-action-item" onclick="closeChatActions(); openToolPolicySheet();">
     <span class="chat-action-icon">🛡️</span>
     <span data-i18n="tool_policy">工具权限管理</span>
+  </div>
+  <div class="chat-action-item" onclick="closeChatActions(); openRunModeSheet();">
+    <span class="chat-action-icon">🎚️</span>
+    <span><span data-i18n="run_mode_action">运行模式</span> <span id="run-mode-current-label" class="run-mode-badge"></span></span>
   </div>
   <div class="chat-action-item" onclick="closeChatActions(); openSessionRuntimeSheet();">
     <span class="chat-action-icon">🔍</span>
@@ -4274,6 +4951,41 @@
   </div>
   <div class="tc-sheet-footer">
     <button class="tc-btn-primary" id="tool-policy-save-btn" onclick="saveToolPolicy()" data-i18n="tool_policy_save">保存权限设置</button>
+  </div>
+</div>
+
+<!-- ═══════════════ Run Mode Bottom Sheet ═══════════════ -->
+<div class="tc-sheet-overlay" id="run-mode-sheet-overlay" onclick="closeRunModeSheet()"></div>
+<div class="tc-sheet" id="run-mode-sheet">
+  <div class="tc-sheet-handle"></div>
+  <div class="tc-sheet-header">
+    <span data-i18n="run_mode_title_sheet">运行模式</span>
+    <button class="tc-sheet-close" onclick="closeRunModeSheet()">✕</button>
+  </div>
+  <div class="tc-sheet-body">
+    <div class="run-mode-option" data-mode="bypass" onclick="selectRunMode('bypass')">
+      <div class="run-mode-option-info">
+        <div class="run-mode-option-title" data-i18n="run_mode_bypass">自动 (全工具)</div>
+        <div class="run-mode-option-desc" data-i18n="run_mode_bypass_desc">全部工具开放，所有权限自动批准（默认）</div>
+      </div>
+      <div class="run-mode-option-check">✓</div>
+    </div>
+    <div class="run-mode-option" data-mode="plan" onclick="selectRunMode('plan')">
+      <div class="run-mode-option-info">
+        <div class="run-mode-option-title" data-i18n="run_mode_plan">规划 (只读)</div>
+        <div class="run-mode-option-desc" data-i18n="run_mode_plan_desc">只读工具自动批准，写操作直接拒绝</div>
+      </div>
+      <div class="run-mode-option-check">✓</div>
+    </div>
+    <div class="run-mode-option" data-mode="manual" onclick="selectRunMode('manual')">
+      <div class="run-mode-option-info">
+        <div class="run-mode-option-title" data-i18n="run_mode_manual">手动 (无工具)</div>
+        <div class="run-mode-option-desc" data-i18n="run_mode_manual_desc">不调用任何工具，仅生成文字回复</div>
+      </div>
+      <div class="run-mode-option-check">✓</div>
+    </div>
+    <div class="run-mode-warning" id="run-mode-warning-manual" style="display:none;" data-i18n="run_mode_warning_manual">⚠️ 群聊中 manual 模式下 agent 无法回到群里发言（缺工具调用权限）。如需"先看再决定"请改用规划模式。</div>
+    <div class="run-mode-hint" data-i18n="run_mode_hint">该设置仅在本浏览器生效；CLI 与其他设备各自独立设置。</div>
   </div>
 </div>
 
@@ -4926,6 +5638,20 @@
   </div>
 </div>
 
+<div id="agent-history-overlay" class="agent-history-overlay" style="display:none;">
+  <div class="agent-history-dialog">
+    <div class="agent-history-header">
+      <button class="agent-history-close" onclick="closeAgentHistory()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <h3 id="agent-history-title">📜 历史</h3>
+    </div>
+    <div class="agent-history-body" id="agent-history-body">
+      <div class="agent-history-loading">加载中...</div>
+    </div>
+  </div>
+</div>
+
 <div class="settings-modal-overlay" id="mobile-update-modal-overlay">
   <div class="settings-modal">
     <div class="settings-header">
@@ -5263,6 +5989,19 @@ const I18N = {
     tool_policy_save: '保存权限设置',
     tool_policy_saved: '✅ 权限设置已保存',
     tool_policy_hint: '默认策略是兜底规则；单个工具可单独覆盖为允许、手动批准或拒绝',
+    run_mode_action: '运行模式',
+    run_mode_title_sheet: '运行模式',
+    run_mode_bypass: '自动 (全工具)',
+    run_mode_plan: '规划 (只读)',
+    run_mode_manual: '手动 (无工具)',
+    run_mode_bypass_desc: '全部工具开放，所有权限自动批准（默认）',
+    run_mode_plan_desc: '只读工具自动批准，写操作直接拒绝',
+    run_mode_manual_desc: '不调用任何工具，仅生成文字回复',
+    run_mode_hint: '该设置仅在本浏览器生效；CLI 与其他设备各自独立设置。',
+    run_mode_warning_manual: '⚠️ 群聊中 manual 模式下 agent 无法回到群里发言（缺工具调用权限）。如需"先看再决定"请改用规划模式。',
+    run_mode_badge_bypass: '自动',
+    run_mode_badge_plan: '规划',
+    run_mode_badge_manual: '手动',
     approval_required_title: '工具调用需要批准',
     approval_reason: '原因',
     approval_approve: '批准',
@@ -5376,6 +6115,22 @@ const I18N = {
     all_skills: '全部技能',
     no_detail_info: '未获取到详细信息',
     agent_detail_title: '🤖 Agent 详情',
+
+    // ── Agent history ──
+    view_main_history: '📜 查看主端历史',
+    agent_history_title: '📜 主端历史',
+    agent_history_loading: '加载历史消息...',
+    agent_history_empty: '（此对话暂无消息记录）',
+    agent_history_error: '加载失败',
+    agent_history_no_session: '此 Agent 没有可用的会话 ID',
+    ah_tool_return: '工具返回',
+    ah_tool_full_output: '完整输出',
+    ah_tool_call_args: '调用参数',
+    ah_tool_calling: '（调用工具中）',
+    ah_image_placeholder: '图片',
+    ah_page_prev: '上一页',
+    ah_page_next: '下一页',
+    ah_page_label: '第 {current} / {total} 页',
 
     // ── Contacts ──
     no_agents: '暂无 Agent',
@@ -5898,6 +6653,19 @@ const I18N = {
     tool_policy_save: 'Save Permissions',
     tool_policy_saved: '✅ Permissions saved',
     tool_policy_hint: 'Default policy is the fallback; each tool can override it with allow, manual, or deny',
+    run_mode_action: 'Run mode',
+    run_mode_title_sheet: 'Run mode',
+    run_mode_bypass: 'Auto (all tools)',
+    run_mode_plan: 'Plan (read-only)',
+    run_mode_manual: 'Manual (no tools)',
+    run_mode_bypass_desc: 'All tools available, all permissions auto-approved (default)',
+    run_mode_plan_desc: 'Read-only tools approved; writes denied non-interactively',
+    run_mode_manual_desc: 'No tool calls — text reply only',
+    run_mode_hint: 'Only applies in this browser. CLI and other devices each store their own setting.',
+    run_mode_warning_manual: '⚠️ In manual mode, agents in this group cannot post replies back (no tool-call permission). Use Plan mode if you want "look-then-decide" behavior.',
+    run_mode_badge_bypass: 'Auto',
+    run_mode_badge_plan: 'Plan',
+    run_mode_badge_manual: 'Manual',
     approval_required_title: 'Tool call needs approval',
     approval_reason: 'Reason',
     approval_approve: 'Approve',
@@ -6007,6 +6775,21 @@ const I18N = {
     all_skills: 'All Skills',
     no_detail_info: 'No details available',
     agent_detail_title: '🤖 Agent Details',
+
+    view_main_history: '📜 View Main History',
+    agent_history_title: '📜 Main History',
+    agent_history_loading: 'Loading messages...',
+    agent_history_empty: '(No messages in this conversation)',
+    agent_history_error: 'Failed to load',
+    agent_history_no_session: 'This agent has no associated session ID',
+    ah_tool_return: 'Tool return',
+    ah_tool_full_output: 'Full output',
+    ah_tool_call_args: 'Call args',
+    ah_tool_calling: '(calling tool)',
+    ah_image_placeholder: 'image',
+    ah_page_prev: 'Prev',
+    ah_page_next: 'Next',
+    ah_page_label: 'Page {current} / {total}',
 
     no_agents: 'No Agents',
     search_contacts: 'Search contacts...',
@@ -6349,6 +7132,8 @@ function setLang(lang) {
   document.querySelectorAll('.tab-label[data-i18n]').forEach(el => {
     el.textContent = t(el.dataset.i18n);
   });
+  // The run-mode badge is set dynamically; refresh it on language change.
+  if (typeof refreshRunModeUI === 'function') refreshRunModeUI();
 }
 
 /** Scan all elements with data-i18n and apply translated text. */
@@ -6468,6 +7253,7 @@ let mutedGroupIds = new Set();  // Track muted groups for list display
 let groups = [];
 let currentMembers = [];  // Store members for @ mention
 let currentGroupMuteAllAgents = false;
+let currentGroupPrimaryAgent = '';  // 主 agent 的 global_id，空串=未设置
 let senderNameMap = {};   // sender key -> display name 映射
 let remoteClaudeSessions = [];
 let remoteClaudePayload = null;
@@ -6571,6 +7357,10 @@ function renderOasisLoadingSkeleton(lineCount = 4) {
 
 function getGroupId(group) {
   return (group && (group.group_id || group.id) || '').toString();
+}
+
+function isDesktopMessageLayout() {
+  return window.matchMedia && window.matchMedia('(min-width: 900px)').matches;
 }
 
 function normalizeGroupMessageCount(value) {
@@ -8300,9 +9090,10 @@ function renderGroupList(list) {
     const unreadCount = getUnreadCount(gid);
     const escapedGid = gid.replace(/'/g, "\\'");
     const escapedName = name.replace(/'/g, "\\'");
+    const activeClass = currentGroupId && String(currentGroupId) === String(gid) ? ' active' : '';
 
     return `
-      <div class="swipe-wrapper${isPinned ? ' pinned' : ''}" data-gid="${esc(gid)}">
+      <div class="swipe-wrapper${isPinned ? ' pinned' : ''}${activeClass}" data-gid="${esc(gid)}">
         <div class="group-item" onclick="openChat('${escapedGid}', '${escapedName}')" ontouchstart="prefetchGroupDetail('${escapedGid}')" onmouseenter="prefetchGroupDetail('${escapedGid}')">
           ${avatarHtml}
           <div class="group-info">
@@ -9619,10 +10410,16 @@ async function openChat(groupId, name) {
 
   const chatPage = document.getElementById('chat-page');
   chatPage.classList.remove('offscreen');
-  document.querySelector('.tab-bar').classList.add('hidden');
+  if (!isDesktopMessageLayout()) {
+    document.querySelector('.tab-bar').classList.add('hidden');
+  } else {
+    document.querySelector('.tab-bar').classList.remove('hidden');
+  }
+  renderGroupList(groups);
   if (cachedDetail) {
     const groupName = cachedDetail.name || name || '';
     currentTeamName = groupName;
+    currentGroupPrimaryAgent = cachedDetail.primary_agent_global_id || '';
     renderMembers(cachedDetail.members || []);
     refreshPendingApprovalsForCurrentGroup();
     renderMessages(cachedDetail.messages || []);
@@ -9637,6 +10434,7 @@ async function openChat(groupId, name) {
     const groupName = data.name || name || '';
     currentTeamName = groupName;
     currentGroupMuteAllAgents = !!data.mute_all_agents;
+    currentGroupPrimaryAgent = data.primary_agent_global_id || '';
     renderMembers(data.members || []);
     await refreshPendingApprovalsForCurrentGroup();
     renderMessages(data.messages || []);
@@ -10284,6 +11082,9 @@ async function sendMessage() {
       clearWorkflow();
     } else {
       const body = { content: finalText || '(attachment)' };
+      // Forward the per-user run mode so every agent in the broadcast
+      // (internal + ACP) receives the same permission policy.
+      body.run_mode = getRunMode();
       if (attachToSend) body.attachments = attachToSend;
       // Append audio recordings as audio-type attachments
       if (audiosToSend) {
@@ -11596,19 +12397,19 @@ function openClawcrossCreator() {
 const MOBILE_CHATBOT_CHANNEL_FALLBACKS = [
   { id: 'telegram', label: 'Telegram', kind: 'nonebot', adapter: 'telegram', env_key: 'TELEGRAM_BOTS' },
   { id: 'qq', label: 'QQ', kind: 'nonebot', adapter: 'qq', env_key: 'QQ_BOTS' },
-  { id: 'onebotv11', label: 'OneBot V11', kind: 'nonebot', adapter: 'onebot.v11', env_key: 'ONEBOTV11_BOTS' },
-  { id: 'onebotv12', label: 'OneBot V12', kind: 'nonebot', adapter: 'onebot.v12', env_key: 'ONEBOTV12_BOTS' },
+  { id: 'onebotv11', label: 'OneBot V11', kind: 'nonebot', adapter: 'onebot.v11', env_key: '', requires_config: false },
+  { id: 'onebotv12', label: 'OneBot V12', kind: 'nonebot', adapter: 'onebot.v12', env_key: '', requires_config: false },
   { id: 'discord', label: 'Discord', kind: 'nonebot', adapter: 'discord', env_key: 'DISCORD_BOTS' },
-  { id: 'dingtalk', label: 'DingTalk', kind: 'nonebot', adapter: 'dingtalk', env_key: 'DINGTALK_BOTS' },
+  { id: 'dingtalk', label: 'DingTalk', kind: 'nonebot', adapter: 'ding', env_key: '', requires_config: false, required_env: ['DING_ACCESS_TOKEN'] },
   { id: 'feishu', label: 'Feishu', kind: 'nonebot', adapter: 'feishu', env_key: 'FEISHU_BOTS' },
   { id: 'kaiheila', label: 'Kaiheila / KOOK', kind: 'nonebot', adapter: 'kaiheila', env_key: 'KAIHEILA_BOTS' },
   { id: 'mail', label: 'Mail', kind: 'nonebot', adapter: 'mail', env_key: 'MAIL_BOTS' },
-  { id: 'minecraft', label: 'Minecraft', kind: 'nonebot', adapter: 'minecraft', env_key: 'MINECRAFT_BOTS' },
-  { id: 'github', label: 'GitHub', kind: 'nonebot', adapter: 'github', env_key: 'GITHUB_BOTS' },
+  { id: 'minecraft', label: 'Minecraft', kind: 'nonebot', adapter: 'minecraft', env_key: '', requires_config: false, required_env: ['MINECRAFT_WS_URLS'] },
+  { id: 'github', label: 'GitHub', kind: 'nonebot', adapter: 'github', env_key: 'GITHUB_APPS' },
   { id: 'villa', label: 'Villa', kind: 'nonebot', adapter: 'villa', env_key: 'VILLA_BOTS' },
   { id: 'yunhu', label: 'Yunhu', kind: 'nonebot', adapter: 'yunhu', env_key: 'YUNHU_BOTS' },
   { id: 'heybox', label: 'Heybox', kind: 'nonebot', adapter: 'heybox', env_key: 'HEYBOX_BOTS' },
-  { id: 'console', label: 'Console', kind: 'nonebot', adapter: 'console', env_key: 'CONSOLE_BOTS' },
+  { id: 'console', label: 'Console', kind: 'nonebot', adapter: 'console', env_key: '', requires_config: false },
   { id: 'weclaw', label: '微信 / WeClaw', kind: 'weclaw', adapter: 'weclaw', env_key: '' },
   { id: 'webhook', label: 'Custom Webhook', kind: 'webhook', adapter: 'webhook', env_key: '' },
 ];
@@ -11699,6 +12500,9 @@ function normalizeMobileChatbotChannels(rawChannels, whitelist) {
       kind: ch.kind || 'nonebot',
       adapter: ch.adapter || ch.id,
       env_key: ch.env_key || '',
+      env_aliases: Array.isArray(ch.env_aliases) ? ch.env_aliases : [],
+      requires_config: ch.requires_config !== false,
+      required_env: Array.isArray(ch.required_env) ? ch.required_env : [],
       emoji: ch.emoji || '',
       help: ch.help || '',
       fields: Array.isArray(ch.fields) ? ch.fields : [],
@@ -11779,6 +12583,10 @@ function getMobileChatbotChannelKeys(channel) {
   if (!channel) return [];
   const config = getMobileChatbotChannelConfig(channel);
   if (Array.isArray(config.fields) && config.fields.length) {
+    if (channel.env_key && config.fields.some(field => (field.target || 'bot') !== 'env')) {
+      MOBILE_CHATBOT_TEXTAREA_KEYS.add(channel.env_key);
+      MOBILE_CHATBOT_JSON_KEYS.add(channel.env_key);
+    }
     return config.fields.map(field => getMobileChatbotInputKey(channel, field)).filter(Boolean);
   }
   if (Array.isArray(config.keys) && config.keys.length) {
@@ -11810,6 +12618,9 @@ function getMobileChatbotChannelHelp(channel) {
   if (channel.kind === 'webhook') {
     return 'Webhook 渠道由 *_WEBHOOK_URL 环境变量启用；白名单 channel 名应与变量前缀小写一致。';
   }
+  if (channel.kind === 'nonebot' && channel.requires_config === false) {
+    return `NoneBot 渠道需要在 NONEBOT_ADAPTERS 加入 ${escapeHtml(channel.adapter || channel.id)}。该 adapter 使用环境变量、反向连接或自身默认配置，不使用 *_BOTS JSON。`;
+  }
   const envKey = channel.env_key || `${String(channel.adapter || channel.id).replace(/[._-]/g, '').toUpperCase()}_BOTS`;
   return `NoneBot 渠道需要两步：1) 在 NONEBOT_ADAPTERS 加入 ${escapeHtml(channel.adapter || channel.id)}；2) 在 ${escapeHtml(envKey)} 填该渠道 bot JSON 数组。还需要安装对应 nonebot-adapter 包。`;
 }
@@ -11826,6 +12637,7 @@ function renderMobileChatbotChannelSummary() {
   lines.push(`类型：${channel.kind || 'nonebot'}`);
   if (channel.adapter) lines.push(`adapter：${channel.adapter}`);
   if (channel.env_key) lines.push(`连接配置：${channel.env_key}`);
+  if (channel.kind === 'nonebot' && channel.requires_config === false && !channel.env_key) lines.push('连接配置：adapter / env-only');
   if (channel.kind === 'weclaw') {
     const enabled = String(mobileChatbotSettings.WECLAW_ENABLED || '').toLowerCase();
     lines.push(`状态：${enabled === 'true' ? '已启用（重启后生效）' : '未启用'}`);
@@ -11937,6 +12749,8 @@ function renderMobileChatbotSettings(containerId, keys) {
     const placeholder = isMasked ? `已保存（${val}），留空不修改` : (fieldMeta.placeholder || MOBILE_CHATBOT_DEFAULTS[key] || key);
     const tag = fieldMeta.type === 'textarea' || MOBILE_CHATBOT_TEXTAREA_KEYS.has(key) ? 'textarea' : 'input';
     const type = getMobileChatbotInputType(key, fieldMeta, tag);
+    const patternAttr = fieldMeta.pattern && tag === 'input' ? ` pattern="${escapeHtml(fieldMeta.pattern)}"` : '';
+    const titleAttr = fieldMeta.invalid_message && tag === 'input' ? ` title="${escapeHtml(fieldMeta.invalid_message)}"` : '';
     const helpLines = [];
     if (fieldMeta.help) helpLines.push(fieldMeta.help);
     if (MOBILE_CHATBOT_JSON_KEYS.has(key)) helpLines.push('保存前会校验 JSON 数组格式；.env 会写成 shell / python-dotenv 都可读取的引号格式。');
@@ -11948,7 +12762,7 @@ function renderMobileChatbotSettings(containerId, keys) {
     if (tag === 'textarea') {
       return `<div class="chatbot-config-field"><label>${escapeHtml(label)}</label><textarea class="chatbot-config-input" data-chatbot-setting="${escapeHtml(key)}" spellcheck="false" placeholder="${escapeHtml(placeholder)}">${escapeHtml(displayVal)}</textarea>${help}</div>`;
     }
-    return `<div class="chatbot-config-field"><label>${escapeHtml(label)}</label><input class="chatbot-config-input" data-chatbot-setting="${escapeHtml(key)}" type="${type}" value="${escapeHtml(displayVal)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off">${help}</div>`;
+    return `<div class="chatbot-config-field"><label>${escapeHtml(label)}</label><input class="chatbot-config-input" data-chatbot-setting="${escapeHtml(key)}" type="${type}" value="${escapeHtml(displayVal)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"${patternAttr}${titleAttr}>${help}</div>`;
   }).join('');
 }
 
@@ -11988,16 +12802,55 @@ function isMobileChatbotTruthy(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
+function getMobileChatbotObjectPath(field, fallbackName) {
+  return String(field?.path || fallbackName || '').split('.').filter(Boolean);
+}
+
+function getMobileChatbotNestedValue(obj, pathParts) {
+  let current = obj || {};
+  for (const part of pathParts) {
+    if (!current || typeof current !== 'object' || current[part] === undefined) return '';
+    current = current[part];
+  }
+  return current;
+}
+
+function setMobileChatbotNestedValue(obj, pathParts, value) {
+  if (!pathParts.length) return;
+  let current = obj;
+  pathParts.slice(0, -1).forEach(part => {
+    if (!current[part] || typeof current[part] !== 'object' || Array.isArray(current[part])) current[part] = {};
+    current = current[part];
+  });
+  current[pathParts[pathParts.length - 1]] = value;
+}
+
+function coerceMobileChatbotFieldValue(value, fieldMeta = {}) {
+  if (fieldMeta.type === 'boolean') return isMobileChatbotTruthy(value);
+  if (fieldMeta.type === 'number' && String(value || '').trim()) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  }
+  return value;
+}
+
+function getMobileChatbotIntentKey(target) {
+  if (target === 'bot_intent') return 'intent';
+  if (target === 'bot_intents') return 'intents';
+  return '';
+}
+
 function getMobileChatbotSettingValue(key) {
   const parsed = parseMobileChatbotInputKey(key);
   if (parsed) {
     const field = getMobileChatbotFieldMeta(key);
     const bot = getMobileChatbotFirstBot(parsed.envKey);
     let val = '';
-    if (parsed.target === 'bot_intents') {
-      val = bot.intents && bot.intents[parsed.name] !== undefined ? bot.intents[parsed.name] : '';
+    const intentKey = getMobileChatbotIntentKey(parsed.target);
+    if (intentKey) {
+      val = getMobileChatbotNestedValue(bot[intentKey] || {}, getMobileChatbotObjectPath(field, parsed.name));
     } else {
-      val = bot[parsed.name] !== undefined ? bot[parsed.name] : '';
+      val = getMobileChatbotNestedValue(bot, getMobileChatbotObjectPath(field, parsed.name));
     }
     if (val !== undefined && val !== null && String(val) !== '') return String(val);
     return field.default || '';
@@ -12084,6 +12937,38 @@ function readMobileChatbotInputValue(input, fieldMeta = {}) {
   return (input.value || '').trim();
 }
 
+function validateMobileChatbotChannelFields() {
+  const channel = getMobileChatbotChannel();
+  const config = getMobileChatbotChannelConfig(channel);
+  const fields = Array.isArray(config.fields) ? config.fields : [];
+  const rawBotConfigMasked = Boolean(channel?.env_key && String(mobileChatbotSettings[channel.env_key] || '').includes('****'));
+  for (const field of fields) {
+    if (!field) continue;
+    const target = field.target || (channel.kind === 'nonebot' ? 'bot' : 'env');
+    let value = '';
+    if (target === 'env') {
+      value = String(mobileChatbotSettings[field.env_key || field.name] || '').trim();
+    } else if (channel.env_key) {
+      const bot = getMobileChatbotFirstBot(channel.env_key);
+      const intentKey = getMobileChatbotIntentKey(target);
+      if (intentKey) {
+        value = String(getMobileChatbotNestedValue(bot[intentKey] || {}, getMobileChatbotObjectPath(field, field.name)) || '').trim();
+      } else {
+        value = String(getMobileChatbotNestedValue(bot, getMobileChatbotObjectPath(field, field.name)) || '').trim();
+      }
+    }
+    if (field.required && !value && !(target !== 'env' && rawBotConfigMasked)) return `${field.label || field.name} 不能为空`;
+    if (!value || value.includes('****')) continue;
+    if (!field.pattern) continue;
+    try {
+      if (!(new RegExp(field.pattern)).test(value)) {
+        return field.invalid_message || `${field.label || field.name} 格式不正确`;
+      }
+    } catch (_) {}
+  }
+  return '';
+}
+
 function collectMobileChatbotChannelFieldsFromDom() {
   const channel = getMobileChatbotChannel();
   if (!channel || !channel.env_key) return;
@@ -12116,18 +13001,20 @@ function collectMobileChatbotChannelFieldsFromDom() {
     if (fieldMeta.required && val) hasRequiredValue = true;
     if (fieldMeta.type !== 'boolean' && !val && !fieldMeta.default) return;
     touched = true;
-    if (parsed.target === 'bot_intents') {
-      bot.intents = bot.intents && typeof bot.intents === 'object' ? bot.intents : {};
-      bot.intents[parsed.name] = isMobileChatbotTruthy(val);
+    const coerced = coerceMobileChatbotFieldValue(val, fieldMeta);
+    const intentKey = getMobileChatbotIntentKey(parsed.target);
+    if (intentKey) {
+      bot[intentKey] = bot[intentKey] && typeof bot[intentKey] === 'object' ? bot[intentKey] : {};
+      setMobileChatbotNestedValue(bot[intentKey], getMobileChatbotObjectPath(fieldMeta, parsed.name), coerced);
     } else {
-      bot[parsed.name] = fieldMeta.type === 'boolean' ? isMobileChatbotTruthy(val) : val;
+      setMobileChatbotNestedValue(bot, getMobileChatbotObjectPath(fieldMeta, parsed.name), coerced);
       if (val) hasTopLevelValue = true;
     }
   });
 
   if (!touched) return;
   if (!bots.length && !hasRequiredValue && !hasTopLevelValue) return;
-  if (rawMasked && !hasRequiredValue && !Object.keys(bot).length) return;
+  if (rawMasked && !hasRequiredValue) return;
   bots[0] = bot;
   mobileChatbotSettings[channel.env_key] = JSON.stringify(bots.filter(x => x && Object.keys(x).length));
 }
@@ -12145,6 +13032,11 @@ async function saveMobileChatbotConfig() {
       mobileChatbotStatus(`${key} 必须是 JSON 数组`, true);
       return false;
     }
+  }
+  const fieldError = validateMobileChatbotChannelFields();
+  if (fieldError) {
+    mobileChatbotStatus(fieldError, true);
+    return false;
   }
   const allKeys = new Set([...MOBILE_CHATBOT_COMMON_KEYS]);
   mobileChatbotChannels.forEach(ch => getMobileChatbotPersistKeysForChannel(ch).forEach(k => allKeys.add(k)));
@@ -12172,8 +13064,20 @@ async function saveMobileChatbotConfig() {
     const whitelistData = await whitelistResp.json();
     if (!whitelistResp.ok || whitelistData.error) throw new Error(whitelistData.error || `whitelist HTTP ${whitelistResp.status}`);
     mobileChatbotWhitelist = normalizeMobileChatbotWhitelist(whitelistData.whitelist || mobileChatbotWhitelist);
-    mobileChatbotStatus('已保存。重启服务后渠道运行配置会生效。');
-    toast('Channel 设置已保存');
+    mobileChatbotStatus('已保存，正在重启 chatbot 使配置生效...');
+    try {
+      const restartResp = await fetch('/proxy_restart_chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const restartData = await restartResp.json().catch(() => ({}));
+      if (!restartResp.ok || restartData.error) throw new Error(restartData.error || `HTTP ${restartResp.status}`);
+      mobileChatbotStatus('已保存，chatbot 正在后台重启。');
+      toast('Channel 设置已保存，chatbot 正在重启');
+    } catch (restartError) {
+      mobileChatbotStatus('已保存，但 chatbot 自动重启失败: ' + restartError.message, true);
+      toast('Channel 设置已保存，但需要手动重启 chatbot');
+    }
     return true;
   } catch (e) {
     mobileChatbotStatus('保存失败: ' + e.message, true);
@@ -12252,9 +13156,18 @@ async function stopMobileWeClaw() {
 
 function syncMobileChatbotAdapterSetting() {
   const channel = getMobileChatbotChannel();
-  if (!channel || channel.kind !== 'nonebot' || !channel.adapter || !channel.env_key) return;
-  const botConfig = (mobileChatbotSettings[channel.env_key] || '').trim();
-  if (!botConfig || botConfig.includes('****')) return;
+  if (!channel || channel.kind !== 'nonebot' || !channel.adapter) return;
+  let hasConfig = false;
+  if (channel.env_key) {
+    const botConfig = (mobileChatbotSettings[channel.env_key] || '').trim();
+    hasConfig = Boolean(botConfig && !botConfig.includes('****'));
+  } else if (channel.requires_config === false) {
+    const requiredEnv = Array.isArray(channel.required_env) ? channel.required_env : [];
+    hasConfig = requiredEnv.length
+      ? requiredEnv.every(key => String(mobileChatbotSettings[key] || '').trim())
+      : true;
+  }
+  if (!hasConfig) return;
   const adapters = String(mobileChatbotSettings.NONEBOT_ADAPTERS || '')
     .split(',')
     .map(x => x.trim())
@@ -12594,8 +13507,12 @@ function renderMembers(members) {
     const typeLabel = type === 'ext' ? t('external') : type === 'owner' ? t('owner') : t('internal');
     const initial = getInitial(name);
     const isAgent = type !== 'owner';
+    const isPrimary = isAgent && globalId && globalId === currentGroupPrimaryAgent;
     const muteBtn = isAgent
       ? `<button onclick="event.stopPropagation();toggleMemberMute('${globalId.replace(/'/g, "\\'")}', ${m.muted ? 'false' : 'true'}, '${name.replace(/'/g, "\\'")}')" class="member-action-btn ${m.muted ? 'member-action-danger' : ''}" title="${m.muted ? '解除禁言' : '禁言'}">${m.muted ? '解除禁言' : '禁言'}</button>`
+      : '';
+    const primaryBtn = isAgent
+      ? `<button onclick="event.stopPropagation();togglePrimaryAgent('${globalId.replace(/'/g, "\\'")}', '${name.replace(/'/g, "\\'")}')" class="member-action-btn" title="${isPrimary ? '取消主 agent' : '设为主 agent（其他 agent 发言只投递给主 agent）'}" style="${isPrimary ? 'background:#fde68a;color:#92400e;border-color:#fcd34d;' : ''}">${isPrimary ? '⭐ 取消主' : '⭐ 设为主'}</button>`
       : '';
     const removeBtn = isAgent ? `<button onclick="event.stopPropagation();removeMemberFromGroup('${globalId.replace(/'/g, "\\'")}','${name.replace(/'/g, "\\'")}')" style="background:none;border:none;color:var(--text-secondary);font-size:16px;padding:4px 8px;cursor:pointer;" title="${t('tip_remove')}">✕</button>` : '';
     const detailInfo = JSON.stringify({
@@ -12635,9 +13552,10 @@ function renderMembers(members) {
         <div class="member-avatar ${type} ${isAgent ? 'clickable' : ''}"${isAgent ? ` onclick="event.stopPropagation();showAgentDetail(JSON.parse(this.dataset.info))" data-info="${detailInfo}" title="${t('tip_view_detail')}"` : ''}>${esc(initial)}</div>
         <div class="member-info" style="flex:1;">
           <div class="member-name">${esc(name)}</div>
-          <div class="member-tag">${typeLabel} · ${tag ? esc(tag) + ' · ' : ''}${esc(globalId)}${m.muted ? ' · 已禁言' : ''}</div>
+          <div class="member-tag">${typeLabel} · ${tag ? esc(tag) + ' · ' : ''}${esc(globalId)}${m.muted ? ' · 已禁言' : ''}${isPrimary ? ' · ⭐ 主 agent' : ''}</div>
           ${actionBtns}
         </div>
+        ${primaryBtn}
         ${muteBtn}
         ${removeBtn}
       </div>`;
@@ -12650,6 +13568,7 @@ async function toggleMemberMute(globalId, muted, name) {
     await api('POST', `/proxy_groups/${encodeURIComponent(currentGroupId)}/members/mute`, { global_id: globalId, muted });
     const groupData = await api('GET', `/proxy_groups/${encodeURIComponent(currentGroupId)}`);
     currentGroupMuteAllAgents = !!groupData.mute_all_agents;
+    currentGroupPrimaryAgent = groupData.primary_agent_global_id || '';
     renderMembers(groupData.members || []);
     toast(`${name}${muted ? ' 已禁言' : ' 已解除禁言'}`);
   } catch (e) {
@@ -12665,10 +13584,30 @@ async function toggleMuteAllMembers() {
     currentGroupMuteAllAgents = nextMuted;
     const groupData = await api('GET', `/proxy_groups/${encodeURIComponent(currentGroupId)}`);
     currentGroupMuteAllAgents = !!groupData.mute_all_agents;
+    currentGroupPrimaryAgent = groupData.primary_agent_global_id || '';
     renderMembers(groupData.members || []);
     toast(nextMuted ? '已开启全员禁言' : '已解除全员禁言');
   } catch (e) {
     toast((nextMuted ? '全员禁言失败' : '解除全员禁言失败') + ': ' + e.message);
+  }
+}
+
+async function togglePrimaryAgent(globalId, name) {
+  if (!currentGroupId || !globalId) return;
+  const isPrimary = currentGroupPrimaryAgent === globalId;
+  try {
+    if (isPrimary) {
+      await api('DELETE', `/proxy_groups/${encodeURIComponent(currentGroupId)}/primary`);
+    } else {
+      await api('POST', `/proxy_groups/${encodeURIComponent(currentGroupId)}/primary`, { global_id: globalId });
+    }
+    const groupData = await api('GET', `/proxy_groups/${encodeURIComponent(currentGroupId)}`);
+    currentGroupMuteAllAgents = !!groupData.mute_all_agents;
+    currentGroupPrimaryAgent = groupData.primary_agent_global_id || '';
+    renderMembers(groupData.members || []);
+    toast(isPrimary ? `已取消主 agent` : `已设 ${name} 为主 agent`);
+  } catch (e) {
+    toast((isPrimary ? '取消主 agent 失败' : '设置主 agent 失败') + ': ' + e.message);
   }
 }
 
@@ -13956,6 +14895,367 @@ function closeAgentDetail() {
   setTimeout(() => { overlay.style.display = 'none'; }, 300);
 }
 
+// ── Agent main-frontend history viewer ──
+// Mirrors main frontend's switchToSession() history rendering against
+// /proxy_session_history, using agentInfo.global_id as the session_id.
+const AH_PAGER_CHARS = 1800;
+let _ahPagerSeq = 0;
+const _ahPagerStore = {};
+
+function _ahNormalize(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value, null, 2); }
+  catch (_) { return String(value); }
+}
+
+function _ahSplitPages(value, pageChars = AH_PAGER_CHARS) {
+  const text = _ahNormalize(value);
+  if (!text) return [''];
+  const pages = [];
+  for (let i = 0; i < text.length; i += pageChars) {
+    pages.push(text.slice(i, i + pageChars));
+  }
+  return pages.length ? pages : [''];
+}
+
+function _ahPagerRegister(value) {
+  const key = `ahpager-${++_ahPagerSeq}`;
+  _ahPagerStore[key] = { pages: _ahSplitPages(value), current: 0 };
+  return key;
+}
+
+function _ahPagerLabel(current, total) {
+  return esc(t('ah_page_label', { current: current + 1, total }));
+}
+
+function _ahRenderPager(value, title) {
+  const text = _ahNormalize(value);
+  if (!text) return '';
+  const key = _ahPagerRegister(text);
+  const store = _ahPagerStore[key];
+  const total = store.pages.length;
+  const page = esc(store.pages[0] || '');
+  const titleHtml = title ? `<div class="ah-pager-title">${esc(title)}</div>` : '';
+  const pager = total > 1
+    ? `<div class="ah-pager-controls">
+         <button type="button" class="ah-pager-btn" onclick="ahPagerPrev('${key}')">${esc(t('ah_page_prev'))}</button>
+         <span id="${key}-label" class="ah-pager-label">${_ahPagerLabel(0, total)}</span>
+         <button type="button" class="ah-pager-btn" onclick="ahPagerNext('${key}')">${esc(t('ah_page_next'))}</button>
+       </div>`
+    : '';
+  return `<div class="ah-pager-block">
+    ${titleHtml}
+    <pre id="${key}-content" class="ah-pager-content">${page}</pre>
+    ${pager}
+  </div>`;
+}
+
+function ahPagerSetPage(key, nextIndex) {
+  const store = _ahPagerStore[key];
+  if (!store || !store.pages.length) return;
+  const total = store.pages.length;
+  const current = ((Number(nextIndex) % total) + total) % total;
+  store.current = current;
+  const contentEl = document.getElementById(`${key}-content`);
+  const labelEl = document.getElementById(`${key}-label`);
+  if (contentEl) contentEl.textContent = store.pages[current] || '';
+  if (labelEl) labelEl.innerHTML = _ahPagerLabel(current, total);
+}
+
+function ahPagerPrev(key) {
+  const store = _ahPagerStore[key];
+  if (!store) return;
+  ahPagerSetPage(key, store.current - 1);
+}
+
+function ahPagerNext(key) {
+  const store = _ahPagerStore[key];
+  if (!store) return;
+  ahPagerSetPage(key, store.current + 1);
+}
+
+function _ahRenderToolCallBadges(toolCalls) {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return '';
+  return `<div class="ah-tool-badges">` + toolCalls.map((tc) => {
+    const name = esc((tc && tc.name) || '');
+    return `<span class="ah-tool-badge">🔧 ${name}</span>`;
+  }).join('') + `</div>`;
+}
+
+function _ahRenderToolCallDetails(toolCalls) {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) return '';
+  const items = toolCalls.map((tc, idx) => {
+    const name = esc((tc && tc.name) || ('tool_' + (idx + 1)));
+    const args = (tc && Object.prototype.hasOwnProperty.call(tc, 'args')) ? tc.args : {};
+    return `<details class="ah-tool-details">
+      <summary>🔧 ${name}</summary>
+      <div>${_ahRenderPager(args, t('ah_tool_call_args'))}</div>
+    </details>`;
+  }).join('');
+  return _ahRenderToolCallBadges(toolCalls) + `<div class="ah-tool-list">${items}</div>`;
+}
+
+function _ahRenderMarkdown(content) {
+  if (window.ClawcrossMarkdown && typeof window.ClawcrossMarkdown.render === 'function') {
+    return window.ClawcrossMarkdown.render(content || '');
+  }
+  if (typeof marked !== 'undefined' && content) {
+    let raw = String(content);
+    if (raw.indexOf('\\') !== -1) {
+      raw = raw.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\r/g, '\n').replace(/\\t/g, '\t');
+    }
+    try { return marked.parse(raw); } catch (_) { return esc(raw); }
+  }
+  return esc(content || '');
+}
+
+function _ahHighlight(root) {
+  if (!root) return;
+  if (window.ClawcrossMarkdown && typeof window.ClawcrossMarkdown.highlight === 'function') {
+    try { window.ClawcrossMarkdown.highlight(root); } catch (_) { /* ignore */ }
+  }
+}
+
+function _ahRenderMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  const parts = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    if (msg.role === 'user') {
+      let textContent = '';
+      let imagesHtml = '';
+      if (typeof msg.content === 'string') {
+        textContent = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (!part || typeof part !== 'object') continue;
+          if (part.type === 'text') textContent = part.text || '';
+          else if (part.type === 'image_url' && part.image_url && part.image_url.url) {
+            imagesHtml += `<img src="${esc(part.image_url.url)}" class="ah-inline-image">`;
+          }
+        }
+      }
+      const body = textContent ? esc(textContent) : `(${esc(t('ah_image_placeholder'))})`;
+      parts.push(`<div class="ah-row user">
+        <div class="ah-bubble user">${imagesHtml}${body}</div>
+      </div>`);
+    } else if (msg.role === 'tool') {
+      const toolName = esc(msg.tool_name || '');
+      parts.push(`<div class="ah-row tool">
+        <div class="ah-bubble tool">
+          <div class="ah-tool-title">🔧 ${esc(t('ah_tool_return'))}: ${toolName}</div>
+          ${_ahRenderPager(msg.content, t('ah_tool_full_output'))}
+        </div>
+      </div>`);
+    } else {
+      const toolCallsHtml = _ahRenderToolCallDetails(msg.tool_calls);
+      const contentHtml = msg.content
+        ? `<div class="markdown-body tc-markdown">${_ahRenderMarkdown(msg.content)}</div>`
+        : `<span style="color:#9ca3af;font-size:12px;">${esc(t('ah_tool_calling'))}</span>`;
+      parts.push(`<div class="ah-row assistant">
+        <div class="ah-bubble assistant">${toolCallsHtml}${contentHtml}</div>
+      </div>`);
+    }
+  }
+  return parts.join('');
+}
+
+// Render OpenClaw external history (each msg has direction/role/content).
+function _ahRenderOpenclawMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  const parts = [];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    const direction = String(msg.direction || '');
+    const role = String(msg.role || '');
+    const content = String(msg.content || '');
+    if (!content) continue;
+    if (direction === 'send' || role === 'user') {
+      parts.push(`<div class="ah-row user"><div class="ah-bubble user">${esc(content)}</div></div>`);
+    } else if (direction === 'recv' || role === 'assistant') {
+      parts.push(`<div class="ah-row assistant"><div class="ah-bubble assistant"><div class="markdown-body tc-markdown">${_ahRenderMarkdown(content)}</div></div></div>`);
+    } else if (direction === 'error') {
+      parts.push(`<div class="ah-row assistant"><div class="ah-bubble assistant" style="background:#fef2f2;border-color:#fecaca;color:#b91c1c;">⚠️ ${esc(content)}</div></div>`);
+    }
+  }
+  if (!parts.length) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  return parts.join('');
+}
+
+// Render ACPX history entries (each entry has role + textPreview with [tool:NAME] markers).
+function _ahExtractAcpxPreview(text) {
+  const raw = String(text || '');
+  const toolUses = [];
+  const cleaned = raw.replace(/\[tool:([\s\S]*?)\]/g, (_, inner) => {
+    const cmd = String(inner || '').trim();
+    if (cmd) toolUses.push(cmd);
+    return '';
+  });
+  return { text: cleaned.trim(), toolUses };
+}
+
+function _ahRenderAcpxEntries(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  const parts = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const role = String(entry.role || '').toLowerCase();
+    const parsed = _ahExtractAcpxPreview(entry.textPreview || '');
+    const text = parsed.text;
+    const toolBadges = parsed.toolUses.length
+      ? `<div class="ah-tool-badges">` + parsed.toolUses.map((name) => `<span class="ah-tool-badge">🛠 ${esc(name)}</span>`).join('') + `</div>`
+      : '';
+    if (!text && !toolBadges) continue;
+    if (role === 'user') {
+      parts.push(`<div class="ah-row user"><div class="ah-bubble user">${esc(text)}</div></div>`);
+    } else {
+      const contentHtml = text
+        ? `<div class="markdown-body tc-markdown">${_ahRenderMarkdown(text)}</div>`
+        : `<span style="color:#9ca3af;font-size:12px;">${esc(t('ah_tool_calling'))}</span>`;
+      parts.push(`<div class="ah-row assistant"><div class="ah-bubble assistant">${toolBadges}${contentHtml}</div></div>`);
+    }
+  }
+  if (!parts.length) {
+    return `<div class="agent-history-empty">${esc(t('agent_history_empty'))}</div>`;
+  }
+  return parts.join('');
+}
+
+// Map a platform key to the acpx CLI tool name (claude-code / codex / gemini-cli / ...).
+function _ahAcpxToolFromAgentInfo(info) {
+  const rawCandidates = [
+    info && info.platform,
+    info && info.platform_hint,
+    info && info.tag,
+  ].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean);
+  for (const raw of rawCandidates) {
+    if (raw === 'claude-code' || raw === 'claudecode') return 'claude-code';
+    if (raw === 'gemini-cli' || raw === 'gemini') return 'gemini-cli';
+    if (raw === 'codex') return 'codex';
+    if (raw === 'openclaw') return 'openclaw';
+    if (raw && raw !== 'http' && raw !== 'api' && raw !== 'ext') return raw;
+  }
+  if (typeof normalizePlatformKey === 'function') {
+    const k = normalizePlatformKey((info && (info.platform || info.platform_hint)) || '');
+    if (k === 'claudecode') return 'claude-code';
+    if (k && k !== 'default' && k !== 'unknown') return k;
+  }
+  return '';
+}
+
+async function showAgentHistory(agentInfo) {
+  if (!agentInfo) return;
+  const globalId = String(agentInfo.global_id || '').trim();
+  if (!globalId) {
+    toast(t('agent_history_no_session'));
+    return;
+  }
+  const overlay = document.getElementById('agent-history-overlay');
+  const body = document.getElementById('agent-history-body');
+  const titleEl = document.getElementById('agent-history-title');
+  if (!overlay || !body) return;
+
+  const displayName = agentInfo.short_name || agentInfo.name || globalId;
+  if (titleEl) titleEl.textContent = `📜 ${displayName}`;
+
+  body.innerHTML = `<div class="agent-history-loading">${esc(t('agent_history_loading'))}</div>`;
+  overlay.style.display = 'flex';
+  requestAnimationFrame(() => { overlay.classList.add('open'); });
+
+  const memberType = String(agentInfo.type || '').toLowerCase();
+  const isExt = memberType === 'ext';
+  const platformKey = isExt
+    ? (typeof resolveExternalPlatformKey === 'function' ? resolveExternalPlatformKey(agentInfo) : '')
+    : '';
+
+  try {
+    if (isExt && platformKey === 'openclaw') {
+      // OpenClaw: session_key = agent:<global_id>:<suffix>; suffix derived from model or 'clawcrosschat'.
+      const model = (typeof externalAgentModel === 'function') ? externalAgentModel(agentInfo) : (agentInfo.model || '');
+      const suffix = (typeof externalAgentSessionSuffix === 'function') ? externalAgentSessionSuffix(model) : 'clawcrosschat';
+      const sessionKey = `agent:${globalId}:${suffix}`;
+      const url = `/proxy_external_history/messages?platform=openclaw&session_key=${encodeURIComponent(sessionKey)}&limit=200`;
+      const resp = await fetch(url);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.ok === false) {
+        const errMsg = (data && data.error) ? String(data.error) : (`HTTP ${resp.status}`);
+        body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(errMsg)}</div>`;
+        return;
+      }
+      body.innerHTML = _ahRenderOpenclawMessages(data && data.messages);
+      _ahHighlight(body);
+      body.scrollTop = body.scrollHeight;
+      return;
+    }
+    if (isExt) {
+      // ACPX (claude-code / codex / gemini-cli / ...).
+      // Backend group chat dispatch uses session_key = `agent:<global_id>:<suffix>` and
+      // passes it as the acpx CLI session name (acpx_adapter.to_acpx_session_name is identity).
+      // So that same string is what we must pass to /proxy_acpx_session_history?name=...
+      // Suffix is parsed from the agent's `model` field (e.g. `agent:foo:custom`) or 'clawcrosschat'.
+      const tool = _ahAcpxToolFromAgentInfo(agentInfo);
+      if (!tool) {
+        body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: unknown platform</div>`;
+        return;
+      }
+      const model = (typeof externalAgentModel === 'function') ? externalAgentModel(agentInfo) : (agentInfo.model || '');
+      const suffix = (typeof externalAgentSessionSuffix === 'function') ? externalAgentSessionSuffix(model) : 'clawcrosschat';
+      const sessionName = `agent:${globalId}:${suffix}`;
+      const url = `/proxy_acpx_session_history?tool=${encodeURIComponent(tool)}&name=${encodeURIComponent(sessionName)}&limit=200`;
+      const resp = await fetch(url);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.ok === false) {
+        const errMsg = (data && data.error) ? String(data.error) : (`HTTP ${resp.status}`);
+        body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(errMsg)}</div>`;
+        return;
+      }
+      const entries = (data && data.history && data.history.entries) || [];
+      body.innerHTML = _ahRenderAcpxEntries(entries);
+      _ahHighlight(body);
+      body.scrollTop = body.scrollHeight;
+      return;
+    }
+
+    // Internal/oasis path: same as main frontend's switchToSession history.
+    const resp = await fetch('/proxy_session_history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: globalId }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const errMsg = (data && data.error) ? String(data.error) : (`HTTP ${resp.status}`);
+      body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(errMsg)}</div>`;
+      return;
+    }
+    body.innerHTML = _ahRenderMessages(data && data.messages);
+    _ahHighlight(body);
+    body.scrollTop = body.scrollHeight;
+  } catch (e) {
+    body.innerHTML = `<div class="agent-history-error">${esc(t('agent_history_error'))}: ${esc(e && e.message || String(e))}</div>`;
+  }
+}
+
+function closeAgentHistory() {
+  const overlay = document.getElementById('agent-history-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  setTimeout(() => {
+    overlay.style.display = 'none';
+    const body = document.getElementById('agent-history-body');
+    if (body) body.innerHTML = '';
+  }, 280);
+}
+
 function renderAgentDetailBody(name, agentId, memberType, data, agentInfo) {
   const config = data.config || {};
   const tools = config.tools || {};
@@ -14049,11 +15349,16 @@ function renderAgentDetailBody(name, agentId, memberType, data, agentInfo) {
 
   if (!html) html = `<div class="agent-detail-error">${t('no_detail_info')}</div>`;
 
-  // Add private chat button
+  // Add private chat button (and main-frontend history button when session_id available)
   const pcInfo = escapeHtml(JSON.stringify(agentInfo));
-  html += `<div style="padding:16px;">
-    <button onclick="startPrivateChat(JSON.parse(this.dataset.info))" data-info="${pcInfo}" style="width:100%;padding:14px;background:#07c160;color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('start_private_chat')}</button>
-  </div>`;
+  const hasGlobalId = !!(agentInfo && agentInfo.global_id);
+  html += `<div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
+    <button onclick="startPrivateChat(JSON.parse(this.dataset.info))" data-info="${pcInfo}" style="width:100%;padding:14px;background:#07c160;color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('start_private_chat')}</button>`;
+  if (hasGlobalId) {
+    html += `
+    <button onclick="showAgentHistory(JSON.parse(this.dataset.info))" data-info="${pcInfo}" style="width:100%;padding:14px;background:transparent;color:#1d4ed8;border:2px solid #1d4ed8;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('view_main_history')}</button>`;
+  }
+  html += `</div>`;
   return html;
 }
 
@@ -14163,6 +15468,12 @@ function renderAgentBasicInfo(name, memberType, agentInfo) {
     const pcInfo = escapeHtml(JSON.stringify(agentInfo));
     html += `<div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
       <button onclick="startPrivateChat(JSON.parse(this.dataset.info))" data-info="${pcInfo}" ${needsTrackFirst ? 'disabled' : ''} style="width:100%;padding:14px;background:${needsTrackFirst ? '#9ca3af' : '#07c160'};color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:${needsTrackFirst ? 'not-allowed' : 'pointer'};">${needsTrackFirst ? (_currentLang === 'zh' ? '先追踪再私聊' : 'Track before chat') : t('start_private_chat')}</button>`;
+
+    if (globalId) {
+      const histInfo = escapeHtml(JSON.stringify(agentInfo));
+      html += `
+      <button onclick="showAgentHistory(JSON.parse(this.dataset.info))" data-info="${histInfo}" style="width:100%;padding:14px;background:transparent;color:#1d4ed8;border:2px solid #1d4ed8;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;">${t('view_main_history')}</button>`;
+    }
 
     if (memberType === 'ext') {
       const editInfo = escapeHtml(JSON.stringify({
@@ -14548,6 +15859,66 @@ async function importPersonalSkill() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ════════════════════════════════════════════════════
+// ── Run Mode (manual / plan / bypass) ──
+// Shares localStorage key 'clawRunMode' with PC main chat so the
+// three surfaces (CLI / PC web / mobile) stay in sync.
+// ════════════════════════════════════════════════════
+const RUN_MODE_VALID = ['manual', 'plan', 'bypass'];
+const RUN_MODE_DEFAULT = 'bypass';
+const RUN_MODE_STORAGE_KEY = 'clawRunMode';
+
+function getRunMode() {
+  try {
+    const raw = (localStorage.getItem(RUN_MODE_STORAGE_KEY) || '').trim().toLowerCase();
+    return RUN_MODE_VALID.includes(raw) ? raw : RUN_MODE_DEFAULT;
+  } catch (e) {
+    return RUN_MODE_DEFAULT;
+  }
+}
+
+function setRunMode(mode) {
+  const normalized = RUN_MODE_VALID.includes(mode) ? mode : RUN_MODE_DEFAULT;
+  try { localStorage.setItem(RUN_MODE_STORAGE_KEY, normalized); } catch (e) {}
+  refreshRunModeUI();
+}
+
+function refreshRunModeUI() {
+  const mode = getRunMode();
+  // Update active highlight on the option rows (if the sheet is mounted)
+  document.querySelectorAll('#run-mode-sheet .run-mode-option').forEach(el => {
+    el.classList.toggle('active', el.dataset.mode === mode);
+  });
+  // Manual mode in group chat = agent can't post replies back; warn explicitly.
+  const warn = document.getElementById('run-mode-warning-manual');
+  if (warn) warn.style.display = (mode === 'manual') ? '' : 'none';
+  // Update the chat-actions inline badge
+  const badge = document.getElementById('run-mode-current-label');
+  if (badge) {
+    badge.className = 'run-mode-badge ' + (mode === 'bypass' ? '' : mode);
+    badge.textContent = t('run_mode_badge_' + mode) || mode;
+  }
+}
+
+function openRunModeSheet() {
+  refreshRunModeUI();
+  document.getElementById('run-mode-sheet-overlay').classList.add('show');
+  document.getElementById('run-mode-sheet').classList.add('show');
+}
+
+function closeRunModeSheet() {
+  document.getElementById('run-mode-sheet-overlay').classList.remove('show');
+  document.getElementById('run-mode-sheet').classList.remove('show');
+}
+
+function selectRunMode(mode) {
+  setRunMode(mode);
+  // For manual: keep the sheet open so the user has time to read the warning
+  // about agents not being able to reply back. For other modes, auto-dismiss.
+  if (mode === 'manual') return;
+  setTimeout(closeRunModeSheet, 120);
 }
 
 // ════════════════════════════════════════════════════
@@ -15069,43 +16440,11 @@ function invalidateContactsPrefetch() {
   __contactsPrefetchPromise = null;
 }
 
-/** Public external agents: OpenClaw from native list, ACP from active acpx sessions. */
+/** Public external agents: only read tracked entries from public external_agents.json. */
 async function loadPublicExternalAgentGroups() {
-  const [ocRes, acpxRes, trackedRes] = await Promise.all([
-    api('GET', '/proxy_openclaw_sessions').catch(() => ({ agents: [] })),
-    api('GET', '/proxy_acpx_sessions_all').catch(() => ({ sessions: [] })),
-    api('GET', '/public_external_agents').catch(() => ({ agents: [] }))
-  ]);
+  const trackedRes = await api('GET', '/public_external_agents').catch(() => ({ agents: [] }));
   const trackedRows = Array.isArray(trackedRes && trackedRes.agents) ? trackedRes.agents : [];
-  const trackedByGlobal = new Map();
-  trackedRows.forEach((row) => {
-    const key = String((row && row.global_name) || '').trim();
-    if (key) trackedByGlobal.set(key, row);
-  });
   const merged = new Map();
-  const mergeItem = (item) => {
-    const key = String((item && item.global_name) || '').trim();
-    if (!key) return;
-    const tracked = trackedByGlobal.get(key) || {};
-    merged.set(key, {
-      ...item,
-      ...tracked,
-      name: (tracked && tracked.name) || item.name,
-      tag: (tracked && tracked.tag) || item.tag || '',
-      platform: (tracked && tracked.platform) || item.platform || '',
-      meta: (tracked && tracked.meta) || item.meta || {},
-      tracked: trackedByGlobal.has(key),
-    });
-  };
-  const ocList = (ocRes.agents || []).map(s => ({
-    name: s.name || s.global_name || t('unnamed'),
-    type: 'ext',
-    tag: s.tag || 'openclaw',
-    global_name: s.global_name || s.name || '',
-    platform: 'openclaw'
-  }));
-  ocList.forEach(mergeItem);
-  // JSON entries (authoritative names) - only show agents that are tracked in JSON
   trackedRows.forEach((row) => {
     if (!row || typeof row !== 'object') return;
     const key = String(row.global_name || '').trim();
@@ -15116,7 +16455,6 @@ async function loadPublicExternalAgentGroups() {
       tracked: true,
     });
   });
-  // Don't read acpx sessions - only show agents that are in JSON
   const openclaw = [];
   const acpByTool = {};
   Array.from(merged.values()).forEach((item) => {
@@ -15415,11 +16753,9 @@ async function loadAllContactsForSearch() {
 
   try {
     // Load public agents
-    const [intData, extData, publicExperts, acpxAllData, publicExtData] = await Promise.all([
+    const [intData, publicExperts, publicExtData] = await Promise.all([
       api('GET', '/internal_agents').catch(() => ({agents: []})),
-      api('GET', '/proxy_openclaw_sessions').catch(() => ({agents: []})),
       api('GET', '/proxy_visual/experts').catch(() => []),
-      api('GET', '/proxy_acpx_sessions_all').catch(() => ({ sessions: [] })),
       api('GET', '/public_external_agents').catch(() => ({ agents: [] }))
     ]);
 
@@ -15429,17 +16765,6 @@ async function loadAllContactsForSearch() {
       tag: (a.meta && a.meta.tag) || '',
       global_name: a.session || '',
       team: '' // public
-    }));
-
-    (extData.agents || []).forEach(s => allAgents.push({
-      name: s.name || s.global_name || t('unnamed'),
-      type: 'ext',
-      tag: s.tag || 'openclaw',
-      global_name: s.global_name || s.name || '',
-      team: '',
-      platform: s.platform || 'openclaw',
-      model: s.model || (s.meta && s.meta.model) || '',
-      meta: s.meta || {}
     }));
 
     (publicExtData.agents || []).forEach(s => allAgents.push({
@@ -15452,21 +16777,6 @@ async function loadAllContactsForSearch() {
       model: s.model || (s.meta && s.meta.model) || '',
       meta: s.meta || {}
     }));
-
-    (acpxAllData.sessions || []).forEach(s => {
-      if (!s || typeof s !== 'object') return;
-      const gn = String(s.name || '').trim();
-      if (!gn) return;
-      allAgents.push({
-        name: gn,
-        type: 'ext',
-        tag: s.tool || '',
-        global_name: gn,
-        team: '',
-        platform: s.tool || 'unknown',
-        meta: {}
-      });
-    });
 
     (Array.isArray(publicExperts) ? publicExperts : []).forEach(exp => {
       allExperts.push({...exp, team: ''});
@@ -16250,6 +17560,32 @@ const SETTINGS_FIELD_HELP = {
     WHITELIST_FILE: 'sf_whitelist_file',
 };
 
+const RESTART_REQUIRED_SETTING_KEYS = new Set([
+    'LLM_API_KEY',
+    'LLM_BASE_URL',
+    'LLM_MODEL',
+    'LLM_PROVIDER',
+    'LLM_VISION_SUPPORT',
+    'NONEBOT_ADAPTERS',
+    'NONEBOT_HOST',
+    'NONEBOT_PORT',
+    'WHITELIST_FILE',
+    'TELEGRAM_BOTS',
+    'QQ_BOTS',
+    'QQ_IS_SANDBOX',
+    'WECLAW_ENABLED',
+    'WECLAW_BIN',
+    'WECLAW_USERNAME',
+    'WECLAW_CONFIG',
+    'WECLAW_PROXY_HOST',
+    'WECLAW_PROXY_PORT',
+    'WECLAW_AUTO_INSTALL',
+]);
+const RESTART_NOTICE_STORAGE_KEY = 'clawcross_restart_notice';
+const RESTART_POLL_INTERVAL_MS = 2000;
+const RESTART_POLL_MAX_MS = 45000;
+let _restartPollTimer = null;
+
 let _settingsCache = {};
 
 function _isMaskedSettingsSecretValue(value) {
@@ -16267,6 +17603,60 @@ function _getSettingsInputValueAndPlaceholder(value, fallbackPlaceholder, isPass
         value: value || '',
         placeholder: fallbackPlaceholder,
     };
+}
+
+function _formatRestartRequiredHint(updatedKeys) {
+    const keys = Array.isArray(updatedKeys)
+        ? updatedKeys.filter((key) => RESTART_REQUIRED_SETTING_KEYS.has(key))
+        : [];
+    if (!keys.length) return '';
+    return `\n⚠️ 这些配置需要重启后生效：${keys.join(', ')}`;
+}
+
+function _storeRestartPending() {
+    try {
+        sessionStorage.setItem(RESTART_NOTICE_STORAGE_KEY, JSON.stringify({ startedAt: Date.now() }));
+    } catch (_) {}
+}
+
+function _clearRestartPending() {
+    try {
+        sessionStorage.removeItem(RESTART_NOTICE_STORAGE_KEY);
+    } catch (_) {}
+}
+
+function _startRestartRecoveryPolling() {
+    if (_restartPollTimer) {
+        clearInterval(_restartPollTimer);
+        _restartPollTimer = null;
+    }
+    const startedAt = Date.now();
+    _restartPollTimer = setInterval(async () => {
+        if (Date.now() - startedAt > RESTART_POLL_MAX_MS) {
+            clearInterval(_restartPollTimer);
+            _restartPollTimer = null;
+            return;
+        }
+        try {
+            const resp = await fetch('/proxy_tunnel/status', { cache: 'no-store' });
+            if (!resp.ok) return;
+            await resp.json();
+            clearInterval(_restartPollTimer);
+            _restartPollTimer = null;
+            _clearRestartPending();
+            toast('✅ 重启完成', 3000);
+        } catch (_) {
+            // Still restarting.
+        }
+    }, RESTART_POLL_INTERVAL_MS);
+}
+
+function _resumePendingRestartNotice() {
+    try {
+        if (sessionStorage.getItem(RESTART_NOTICE_STORAGE_KEY)) {
+            _startRestartRecoveryPolling();
+        }
+    } catch (_) {}
 }
 
 function escapeHtml(str) {
@@ -17116,6 +18506,8 @@ async function saveSettings() {
         if (data.status === 'success') {
             let msg = t('settings_saved');
             if (data.updated?.length) msg += ': ' + data.updated.join(', ');
+            const restartHint = _formatRestartRequiredHint(data.updated || []);
+            if (restartHint) msg += restartHint;
             toast(msg);
             for (const k of (data.updated || [])) {
                 const inp = document.querySelector('#settings-body .settings-input[data-key="' + k + '"]');
@@ -17134,6 +18526,7 @@ async function restartServices() {
     if (!confirm(t('confirm_restart'))) return;
     const btn = document.getElementById('restart-btn');
     if (btn) { btn.disabled = true; btn.textContent = t('restarting'); }
+    _storeRestartPending();
     try {
         const r = await fetch('/proxy_restart', {
             method: 'POST',
@@ -17141,8 +18534,9 @@ async function restartServices() {
         });
         const data = await r.json();
         if (data.status === 'success') {
-            toast(t('restart_success'), RESTART_PENDING_TOAST_MS);
+            toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
             closeSettings();
+            _startRestartRecoveryPolling();
             setTimeout(() => location.reload(), 20000);
         } else {
             toast(t('restart_failed') + ': ' + (data.detail || data.error || ''));
@@ -17150,8 +18544,9 @@ async function restartServices() {
         }
     } catch (e) {
         // 网络断开说明服务已在重启中
-        toast(t('restart_success'), RESTART_PENDING_TOAST_MS);
+        toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
         closeSettings();
+        _startRestartRecoveryPolling();
         setTimeout(() => location.reload(), 20000);
     }
 }
@@ -17341,16 +18736,19 @@ async function resetAllGroupAgents() {
 async function restartClawcross() {
     if (!confirm(t('confirm_restart_clawcross'))) return;
     toast(t('restarting_clawcross'));
+    _storeRestartPending();
     try {
         await fetch('/proxy_restart', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
         });
-        toast(t('restart_signal_sent'), RESTART_PENDING_TOAST_MS);
+        toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
+        _startRestartRecoveryPolling();
         setTimeout(() => location.reload(), 20000);
     } catch (e) {
         // 网络断开说明服务已在重启中
-        toast(t('restart_success'), RESTART_PENDING_TOAST_MS);
+        toast('✅ 重启信号已发送，正在等待服务恢复...', RESTART_PENDING_TOAST_MS);
+        _startRestartRecoveryPolling();
         setTimeout(() => location.reload(), 20000);
     }
 }
@@ -17625,6 +19023,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.documentElement.lang = _currentLang === 'zh' ? 'zh-CN' : 'en';
   document.title = t('page_title');
   applyLangToDOM();
+  _resumePendingRestartNotice();
+  refreshRunModeUI();
 
   window.addEventListener('message', (event) => {
     try {

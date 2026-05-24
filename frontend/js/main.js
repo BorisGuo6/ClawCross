@@ -841,6 +841,12 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         oc_acp_session_ready: 'ACP 会话已就绪',
         oc_acp_session_failed: '预热失败',
         oc_internal_session_refresh_title: '从服务器刷新 WeBot 会话列表',
+        // Run mode (permission mode)
+        run_mode_label: '模式',
+        run_mode_bypass: '自动 (全工具)',
+        run_mode_plan: '规划 (只读)',
+        run_mode_manual: '手动 (无工具)',
+        run_mode_title: '工具权限模式：自动=全工具+全自动批准；规划=只读不写；手动=完全不调用工具，仅文字回复',
     },
     'en': {
         // General
@@ -1645,6 +1651,12 @@ orch_openclaw_sessions: '🦞 OpenClaw',
         oc_acp_session_ready: 'ACP session ready',
         oc_acp_session_failed: 'Warm up failed',
         oc_internal_session_refresh_title: 'Refresh WeBot session list from server',
+        // Run mode (permission mode)
+        run_mode_label: 'Mode',
+        run_mode_bypass: 'Auto (all tools)',
+        run_mode_plan: 'Plan (read-only)',
+        run_mode_manual: 'Manual (no tools)',
+        run_mode_title: 'Tool permission mode: Auto = all tools, all approved; Plan = read-only; Manual = no tool calls, text only',
     }
 };
 
@@ -4895,8 +4907,34 @@ const SETTINGS_FIELD_HELP_KEYS = {
     WHITELIST_FILE: 'settings_help_whitelist_file',
 };
 
+const RESTART_REQUIRED_SETTING_KEYS = new Set([
+    'LLM_API_KEY',
+    'LLM_BASE_URL',
+    'LLM_MODEL',
+    'LLM_PROVIDER',
+    'LLM_VISION_SUPPORT',
+    'NONEBOT_ADAPTERS',
+    'NONEBOT_HOST',
+    'NONEBOT_PORT',
+    'WHITELIST_FILE',
+    'TELEGRAM_BOTS',
+    'QQ_BOTS',
+    'QQ_IS_SANDBOX',
+    'WECLAW_ENABLED',
+    'WECLAW_BIN',
+    'WECLAW_USERNAME',
+    'WECLAW_CONFIG',
+    'WECLAW_PROXY_HOST',
+    'WECLAW_PROXY_PORT',
+    'WECLAW_AUTO_INSTALL',
+]);
+const RESTART_NOTICE_STORAGE_KEY = 'clawcross_restart_notice';
+const RESTART_POLL_INTERVAL_MS = 2000;
+const RESTART_POLL_MAX_MS = 45000;
+
 let _settingsCache = {};
 let _settingsFocusTarget = '';
+let _restartPollTimer = null;
 
 function _isMaskedSettingsSecretValue(value) {
     return typeof value === 'string' && value.includes('****');
@@ -4913,6 +4951,67 @@ function _getSettingsInputValueAndPlaceholder(value, fallbackPlaceholder, isPass
         value: value || '',
         placeholder: fallbackPlaceholder,
     };
+}
+
+function _formatRestartRequiredHint(updatedKeys) {
+    const keys = Array.isArray(updatedKeys)
+        ? updatedKeys.filter((key) => RESTART_REQUIRED_SETTING_KEYS.has(key))
+        : [];
+    if (!keys.length) return '';
+    return `\n⚠️ 这些配置需要重启后生效：${keys.join(', ')}`;
+}
+
+function _storeRestartPending() {
+    try {
+        sessionStorage.setItem(RESTART_NOTICE_STORAGE_KEY, JSON.stringify({ startedAt: Date.now() }));
+    } catch (_) {}
+}
+
+function _clearRestartPending() {
+    try {
+        sessionStorage.removeItem(RESTART_NOTICE_STORAGE_KEY);
+    } catch (_) {}
+}
+
+function _showRestartCompletedNotice() {
+    appendMessage('✅ 重启完成', false);
+}
+
+function _startRestartRecoveryPolling() {
+    if (_restartPollTimer) {
+        clearInterval(_restartPollTimer);
+        _restartPollTimer = null;
+    }
+    const startedAt = Date.now();
+    _restartPollTimer = setInterval(async () => {
+        if (Date.now() - startedAt > RESTART_POLL_MAX_MS) {
+            clearInterval(_restartPollTimer);
+            _restartPollTimer = null;
+            return;
+        }
+        try {
+            const resp = await fetch('/proxy_tunnel/status', { cache: 'no-store' });
+            if (!resp.ok) return;
+            await resp.json();
+            clearInterval(_restartPollTimer);
+            _restartPollTimer = null;
+            _clearRestartPending();
+            _showRestartCompletedNotice();
+        } catch (_) {
+            // Still restarting.
+        }
+    }, RESTART_POLL_INTERVAL_MS);
+}
+
+function _resumePendingRestartNotice() {
+    let pending = null;
+    try {
+        pending = JSON.parse(sessionStorage.getItem(RESTART_NOTICE_STORAGE_KEY) || 'null');
+    } catch (_) {
+        pending = null;
+    }
+    if (!pending) return;
+    _startRestartRecoveryPolling();
 }
 
 async function openSettings(options = {}) {
@@ -5930,6 +6029,10 @@ async function saveSettings() {
             if (data.updated?.length) {
                 msg += '\n' + data.updated.join(', ');
             }
+            const restartHint = _formatRestartRequiredHint(data.updated || []);
+            if (restartHint) {
+                msg += restartHint;
+            }
             appendMessage(msg, false);
             // 更新缓存
             for (const k of (data.updated || [])) {
@@ -5952,6 +6055,7 @@ async function restartServices() {
         btn.disabled = true;
         btn.textContent = t('settings_restarting');
     }
+    _storeRestartPending();
     try {
         const r = await fetch('/proxy_restart', {
             method: 'POST',
@@ -5959,8 +6063,9 @@ async function restartServices() {
         });
         const data = await r.json();
         if (data.status === 'success') {
-            appendMessage(t('settings_restart_ok'), false);
+            appendMessage('✅ 重启信号已发送，正在等待服务恢复...', false);
             closeSettings();
+            _startRestartRecoveryPolling();
             setTimeout(() => location.reload(), 20000);
         } else {
             alert(t('settings_restart_fail') + ': ' + (data.detail || data.error || ''));
@@ -5968,8 +6073,9 @@ async function restartServices() {
         }
     } catch (e) {
         // 网络断开说明服务已在重启中，属于正常现象
-        appendMessage(t('settings_restart_ok'), false);
+        appendMessage('✅ 重启信号已发送，正在等待服务恢复...', false);
         closeSettings();
+        _startRestartRecoveryPolling();
         setTimeout(() => location.reload(), 20000);
     }
 }
@@ -6251,6 +6357,60 @@ function getEnabledTools() {
     return Array.from(enabledToolSet);
 }
 
+// ── Run mode (permission mode) ──────────────────────────────────────────────
+// Mirrors the CLI's manual / plan / bypass. Persisted in localStorage.
+const RUN_MODE_VALID = ['manual', 'plan', 'bypass'];
+const RUN_MODE_DEFAULT = 'bypass';
+const RUN_MODE_STORAGE_KEY = 'clawRunMode';
+
+function getRunMode() {
+    const raw = (localStorage.getItem(RUN_MODE_STORAGE_KEY) || '').trim().toLowerCase();
+    return RUN_MODE_VALID.includes(raw) ? raw : RUN_MODE_DEFAULT;
+}
+
+function setRunMode(mode) {
+    const normalized = RUN_MODE_VALID.includes(mode) ? mode : RUN_MODE_DEFAULT;
+    localStorage.setItem(RUN_MODE_STORAGE_KEY, normalized);
+    const sel = document.getElementById('oc-run-mode');
+    if (sel) {
+        sel.value = normalized;
+        sel.dataset.activeMode = normalized;
+    }
+}
+
+function onRunModeChange() {
+    const sel = document.getElementById('oc-run-mode');
+    setRunMode(sel ? sel.value : RUN_MODE_DEFAULT);
+}
+
+function initRunModeUI() {
+    const sel = document.getElementById('oc-run-mode');
+    if (!sel) return;
+    setRunMode(getRunMode());
+}
+
+// Apply run-mode semantics to an outgoing chat payload.
+// endpoint: 'acp' for /proxy_acpx_chat, 'internal' for /v1/chat/completions.
+function applyRunModeToPayload(payload, endpoint) {
+    const mode = getRunMode();
+    if (endpoint === 'internal') {
+        payload.session_mode = mode;
+        if (mode === 'manual') {
+            payload.enabled_tools = [];
+        }
+    } else if (endpoint === 'acp') {
+        if (mode === 'plan') {
+            payload.permission_policy = 'approve-reads';
+            payload.non_interactive_permissions = 'deny';
+        } else {
+            payload.permission_policy = 'approve-all';
+        }
+        if (mode === 'manual') {
+            payload.allowed_tools = '';
+        }
+    }
+}
+
 async function loadTools() {
     try {
         const resp = await fetch('/proxy_tools');
@@ -6258,10 +6418,14 @@ async function loadTools() {
         const data = await resp.json();
         const tools = data.tools || [];
         const toolList = document.getElementById('tool-list');
-        const wrapper = document.getElementById('tool-panel-wrapper');
+        const toggleBtn = document.getElementById('tool-toggle-btn');
+        const toolPanel = document.getElementById('tool-panel');
 
         if (tools.length === 0) {
-            wrapper.style.display = 'none';
+            // Keep the wrapper visible so the mode selector stays in view;
+            // only hide the tool-toggle button and the (collapsed) panel.
+            if (toggleBtn) toggleBtn.style.display = 'none';
+            if (toolPanel) toolPanel.style.display = 'none';
             return;
         }
 
@@ -6277,7 +6441,8 @@ async function loadTools() {
             toolList.appendChild(tag);
         });
         updateToolCount();
-        wrapper.style.display = 'block';
+        if (toggleBtn) toggleBtn.style.display = '';
+        if (toolPanel) toolPanel.style.display = '';
     } catch (e) {
         console.warn('Failed to load tools:', e);
     }
@@ -7374,6 +7539,7 @@ async function handleSend() {
                 if (acpNameRaw) openaiPayload.acp_session_name = acpNameRaw;
             }
             acpRememberResolvedSessionName(acpComputeSessionNameFromInputs());
+            applyRunModeToPayload(openaiPayload, 'acp');
             chatEndpoint = '/proxy_acpx_chat';
         } else {
             openaiPayload = {
@@ -7383,6 +7549,7 @@ async function handleSend() {
                 session_id: currentSessionId,
                 enabled_tools: getEnabledTools(),
             };
+            applyRunModeToPayload(openaiPayload, 'internal');
             chatEndpoint = '/v1/chat/completions';
         }
 
@@ -11548,19 +11715,26 @@ async function loadTeamMembers() {
             const safeName = escapeHtml(m.name || '-');
             const safeTag = escapeHtml(m.tag || '-');
             const safeGlobalName = escapeHtml(m.global_name || '-');
-            
+            const isPrimary = !!m.is_primary;
+            const isAgentRow = (m.type === 'oasis' || m.type === 'ext');
+            const primaryBtn = isAgentRow
+                ? `<button onclick="toggleTeamMemberPrimary('${m.type}', '${escapeHtml(m.global_name)}', ${isPrimary ? 'false' : 'true'})" class="${isPrimary ? 'text-amber-700 bg-amber-50 border border-amber-300 hover:bg-amber-100' : 'text-gray-500 hover:text-amber-600 hover:bg-amber-50'} text-xs px-2 py-1 rounded" title="${isPrimary ? '点击取消团队主 agent' : '设为团队主 agent（创群时自动作为主 agent）'}">${isPrimary ? '取消主' : '设为主'}</button>`
+                : '';
+            const primaryBadge = isPrimary ? ' <span class="text-xs text-amber-600" title="团队主 agent">· 主 agent</span>' : '';
+
             // For openclaw type, use the full orchestration config modal (files/tools/channels)
             const configBtn = m.tag === 'openclaw'
                 ? `<button onclick="orchShowAgentConfigModal('${escapeHtml(m.global_name)}')" class="text-purple-500 hover:text-purple-700 text-xs px-2 py-1 rounded hover:bg-purple-50" title="OpenClaw 配置 (Files / Tools / Channels)">🦞⚙️</button>`
                 : `<button onclick="showAgentConfigModal('${m.type}', '${escapeHtml(m.global_name)}', '${escapeHtml(m.name)}', '${escapeHtml(m.tag || '')}', '${escapeHtml(apiUrl)}', '${escapeHtml(apiKey)}', '${escapeHtml(model)}', '${escapeHtml(typeof headers === 'object' ? JSON.stringify(headers).replace(/"/g, '&quot;').replace(/'/g, "\\'") : headers)}', '${escapeHtml(m.platform || '')}')" class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 rounded hover:bg-blue-50" title="配置">⚙️</button>`;
-            
+
             return `
                 <tr>
-                    <td class="team-member-cell font-medium text-gray-800" title="${safeName}">${safeName}</td>
+                    <td class="team-member-cell font-medium text-gray-800" title="${safeName}">${safeName}${primaryBadge}</td>
                     <td>${typeBadge}</td>
                     <td class="team-member-cell" title="${safeTag}">${safeTag}</td>
                     <td class="team-member-cell team-member-cell--mono" title="${safeGlobalName}">${safeGlobalName}</td>
                     <td class="team-member-cell team-member-cell--actions">
+                        ${primaryBtn}
                         ${configBtn}
                         <button onclick="deleteTeamMember('${m.type}', '${escapeHtml(m.global_name)}', '${escapeHtml(m.name)}', '${escapeHtml(m.tag || '')}', '${escapeHtml(m.platform || '')}')" class="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded hover:bg-red-50" title="${deleteTitle}">🗑️</button>
                     </td>
@@ -11569,6 +11743,47 @@ async function loadTeamMembers() {
     } catch (e) {
         console.error('Failed to load team members:', e);
         tbody.innerHTML = '<tr><td colspan="5" class="text-center text-red-400 py-8">加载失败: ' + e.message + '</td></tr>';
+    }
+}
+
+/**
+ * Toggle the "team primary agent" marker on a team member.
+ * Backend enforces at-most-one primary per team file via preemption.
+ *   - oasis: PUT /internal_agents/<sid>?team=<team>  body={meta:{is_primary}}
+ *   - ext:   PUT /teams/<team>/members/external     body={global_name, is_primary}
+ */
+async function toggleTeamMemberPrimary(type, globalName, makePrimary) {
+    if (!currentGroupId || !globalName) return;
+    try {
+        let resp;
+        if (type === 'oasis') {
+            const url = `/internal_agents/${encodeURIComponent(globalName)}?team=${encodeURIComponent(currentGroupId)}`;
+            resp = await fetch(url, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ meta: { is_primary: !!makePrimary } }),
+            });
+        } else {
+            resp = await fetch(`/teams/${encodeURIComponent(currentGroupId)}/members/external`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ global_name: globalName, is_primary: !!makePrimary }),
+            });
+        }
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            if (typeof orchToast === 'function') orchToast('设置失败: ' + (data.error || resp.statusText));
+            else alert('设置失败: ' + (data.error || resp.statusText));
+            return;
+        }
+        if (typeof orchToast === 'function') {
+            orchToast(makePrimary ? '✅ 已设为团队主 agent' : '✅ 已取消团队主 agent');
+        }
+        await loadTeamMembers();
+    } catch (e) {
+        console.error('Toggle primary failed:', e);
+        if (typeof orchToast === 'function') orchToast('设置失败: ' + e.message);
+        else alert('设置失败: ' + e.message);
     }
 }
 
@@ -12344,6 +12559,8 @@ window.addEventListener('load', () => {
     _consumeHubReturnParams().catch((e) => {
         console.warn('Hub return import bootstrap failed:', e && e.message);
     });
+    _resumePendingRestartNotice();
+    initRunModeUI();
 });
 
 window.addEventListener('message', (event) => {

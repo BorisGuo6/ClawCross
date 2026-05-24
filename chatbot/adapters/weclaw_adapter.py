@@ -60,6 +60,11 @@ logger = logging.getLogger("chatbot.weclaw")
 # QR ASCII 块字符（unicode 半/全块、白/黑、阴影）
 _QR_CHARS = set("█▀▄▌▐░▒▓ ▉▊▋▍▎▏▔▕")
 _INSTALL_SCRIPT_RELPATH = "scripts/weclaw_install.sh"
+# 失效账号自动清理：sync.json ≤ 该字节数视为"从未成功 long-poll"
+_STALE_SYNC_MAX_BYTES = 32
+# 且 mtime 距今超过该小时数才动手（避免误伤刚扫码、还没收消息的新号）
+_STALE_SYNC_AGE_HOURS = 24
+_DISABLED_ACCOUNTS_DIRNAME = "accounts.disabled"
 
 
 def _looks_like_qr_line(line: str) -> bool:
@@ -191,6 +196,65 @@ class WeClawAdapter(ChannelAdapter):
         with open(self._config_path, "w", encoding="utf-8") as f:
             json.dump(existing, f, indent=2, ensure_ascii=False)
         logger.info(f"已写入 weclaw 配置: {self._config_path} (agent endpoint=proxy@{self._proxy_port})")
+
+    def _account_files(self) -> list[Path]:
+        accounts_dir = Path(self._config_path).expanduser().parent / "accounts"
+        if not accounts_dir.is_dir():
+            return []
+        return sorted(
+            p for p in accounts_dir.glob("*.json")
+            if not p.name.endswith(".sync.json")
+        )
+
+    def _prune_stale_accounts(self) -> None:
+        # weclaw 内置 monitor 会为每个 accounts/*.json 起一个 long-poll goroutine；
+        # 服务端已失效的 bot_token 会让 monitor 反复打 "session expired" WARNING 并
+        # 自重启进入死循环。启动前把 sync.json 长期空闲的账号移到 accounts.disabled/，
+        # 让 weclaw 只为还活着的账号起 monitor。
+        accounts_dir = Path(self._config_path).expanduser().parent / "accounts"
+        if not accounts_dir.is_dir():
+            return
+        now = time.time()
+        age_cutoff = _STALE_SYNC_AGE_HOURS * 3600
+        stale: list[Path] = []
+        for acct_file in sorted(accounts_dir.glob("*.json")):
+            if acct_file.name.endswith(".sync.json"):
+                continue
+            sync_file = accounts_dir / f"{acct_file.stem}.sync.json"
+            if not sync_file.exists():
+                continue
+            try:
+                st = sync_file.stat()
+            except OSError:
+                continue
+            if st.st_size > _STALE_SYNC_MAX_BYTES:
+                continue
+            if now - st.st_mtime < age_cutoff:
+                continue
+            stale.append(acct_file)
+        if not stale:
+            return
+        disabled_dir = accounts_dir.parent / _DISABLED_ACCOUNTS_DIRNAME
+        try:
+            disabled_dir.mkdir(exist_ok=True)
+        except Exception as e:
+            logger.warning(f"创建 {disabled_dir} 失败，跳过失效账号清理: {e}")
+            return
+        for acct_file in stale:
+            sync_file = accounts_dir / f"{acct_file.stem}.sync.json"
+            try:
+                acct_file.rename(disabled_dir / acct_file.name)
+                if sync_file.exists():
+                    sync_file.rename(disabled_dir / sync_file.name)
+            except Exception as e:
+                logger.warning(f"禁用失效账号 {acct_file.stem} 失败: {e}")
+                continue
+            logger.warning(
+                f"已禁用失效 weclaw 账号 {acct_file.stem}"
+                f"（sync 文件 ≤{_STALE_SYNC_MAX_BYTES}B 且超过 {_STALE_SYNC_AGE_HOURS}h 未更新），"
+                f"已移至 {disabled_dir}/；如要恢复请运行 `weclaw login` 重新扫码，"
+                f"或手动 mv 回 {accounts_dir}/。"
+            )
 
     # ── proxy: 拦截 /front，其余透传 ─────────────────────────────────
 
@@ -374,6 +438,11 @@ class WeClawAdapter(ChannelAdapter):
         except Exception as e:
             logger.error(f"写入 weclaw 配置失败: {e}")
             return
+
+        try:
+            self._prune_stale_accounts()
+        except Exception as e:
+            logger.warning(f"清理失效 weclaw 账号时出错（继续启动）: {e}")
 
         logger.info(f"启动 weclaw 子进程: {bin_path} start -f")
         try:

@@ -41,6 +41,9 @@ class GroupMessageRequest(BaseModel):
     sender_display: Optional[str] = ""  # agent 发言显示名: tag#type#short_name
     mentions: Optional[list[str]] = None  # 被 @ 的 agent global_id 列表
     attachments: Optional[list[Attachment]] = None  # 附件列表（图片/音频/文件）
+    # Permission mode forwarded to broadcast recipients:
+    # "manual" | "plan" | "bypass". None = no override (use each agent's default).
+    run_mode: Optional[str] = None
 
 
 class GroupAddMemberRequest(BaseModel):
@@ -60,3 +63,8 @@ class GroupMuteMemberRequest(BaseModel):
 class GroupMuteAllRequest(BaseModel):
     """全员禁言/解禁（仅 agent）"""
     muted: bool = True
+
+
+class GroupSetPrimaryRequest(BaseModel):
+    """设置群主 agent（主 agent 之外的 agent 发消息只投递给主 agent + 被 @ 的人）"""
+    global_id: str

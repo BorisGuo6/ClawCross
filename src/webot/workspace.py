@@ -35,7 +35,45 @@ def _user_root(user_id: str) -> Path:
     else:
         root = USER_FILES_DIR / safe_user
     root.mkdir(parents=True, exist_ok=True)
+    _ensure_runtime_aliases(user_id, root)
     return root
+
+
+def _ensure_runtime_aliases(user_id: str, workspace_root: Path) -> None:
+    """Expose stable runtime paths inside the shared workspace.
+
+    Team-building personas and docs assume the session sandbox root contains a
+    ``teams/`` subtree. The real runtime loader, however, reads from
+    ``USER_FILES_DIR/<user>/teams``. We bridge that gap here with a best-effort
+    directory alias so relative paths like ``teams/<team>/oasis_experts.json``
+    resolve to the actual runtime team storage.
+    """
+    runtime_user_root = USER_FILES_DIR / os.path.basename(user_id or "anonymous")
+    teams_target = runtime_user_root / "teams"
+    teams_target.mkdir(parents=True, exist_ok=True)
+
+    alias_path = workspace_root / "teams"
+    if alias_path.exists() or alias_path.is_symlink():
+        return
+
+    try:
+        os.symlink(teams_target, alias_path, target_is_directory=True)
+        return
+    except (AttributeError, NotImplementedError, OSError):
+        pass
+
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(alias_path), str(teams_target)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except Exception:
+            # Best effort only. Without link support the workspace still works,
+            # but relative `teams/...` paths won't bridge to runtime storage.
+            pass
 
 
 def _ensure_within(base: Path, candidate: Path) -> Path:

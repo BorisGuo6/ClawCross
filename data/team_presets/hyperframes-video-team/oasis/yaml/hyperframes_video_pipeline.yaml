@@ -1,0 +1,31 @@
+# hyperframes-video-team — HyperFrames video production pipeline
+version: 2
+repeat: false
+plan:
+- id: v0
+  manual:
+    author: begin
+    content: "请描述你要做的视频：用途/平台（短视频竖屏 1080×1920 / 横屏 1920×1080 / 方形 1080×1080）、时长、风格基调、关键场景或脚本、是否有配音/字幕、必须出现的元素。HyperFrames 工坊将按 导演分镜 → 工程实现 → 渲染审校 的节奏交付一份可 npx hyperframes render 跑通的项目。"
+- id: v1
+  expert: director#oasis#Video Director
+- id: v2
+  expert: engineer#oasis#HyperFrames Engineer
+- id: v3
+  expert: reviewer#oasis#Video Reviewer
+- id: v4
+  expert: director#oasis#Video Director
+- id: v5
+  manual:
+    author: bend
+    content: "HyperFrames 工坊已经走完一次视频交付闭环：分镜清单、HTML/CSS/GSAP 工程、渲染前自检与实际渲染结果都在上面。如需迭代镜头或重渲染，告诉导演调整哪段即可。"
+edges:
+- - v0
+  - v1
+- - v1
+  - v2
+- - v2
+  - v3
+- - v3
+  - v4
+- - v4
+  - v5

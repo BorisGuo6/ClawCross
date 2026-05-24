@@ -41,7 +41,7 @@ if get_chatbot_env_keys is not None:
         if _key not in SETTINGS_WHITELIST:
             SETTINGS_WHITELIST.append(_key)
 
-MASK_FIELDS = {"LLM_API_KEY", "TELEGRAM_BOTS", "QQ_BOTS", "TINYFISH_API_KEY"}
+MASK_FIELDS = {"LLM_API_KEY", "TELEGRAM_BOTS", "QQ_BOTS", "GITHUB_APPS", "TINYFISH_API_KEY"}
 FULL_MASK_PATTERNS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
 
 

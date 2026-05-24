@@ -2806,6 +2806,18 @@ def cmd_status(args):
 #  参数解析
 # ═══════════════════════════════════════════════════════════════════════
 
+def cmd_channel(args):
+    """Chatbot channel setup/status command."""
+    from clawcross_cli.channel_cmd import handle_channel_command
+
+    output = handle_channel_command(
+        getattr(args, "channel_args", []) or [],
+        interactive=sys.stdin.isatty(),
+    )
+    if output:
+        print(output)
+
+
 def build_parser():
     """构建命令行参数解析器"""
     p = argparse.ArgumentParser(
@@ -3041,6 +3053,11 @@ def build_parser():
                    choices=["status", "start", "stop"],
                    help="操作 (默认: status)")
 
+    # channel
+    c = sub.add_parser("channel", help="Chatbot / NoneBot / WeClaw channel 管理")
+    c.add_argument("channel_args", nargs=argparse.REMAINDER,
+                   help="子命令: list/status/show/setup/clear/login/logout")
+
     # status
     sub.add_parser("status", help="检查各服务状态")
 
@@ -3101,6 +3118,7 @@ def main():
         "personas": cmd_experts,
         "workflows": cmd_workflows,
         "tunnel": cmd_tunnel,
+        "channel": cmd_channel,
         "token": cmd_token,
         "status": cmd_status,
     }

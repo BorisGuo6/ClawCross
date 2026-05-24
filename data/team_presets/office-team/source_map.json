@@ -1,0 +1,29 @@
+{
+  "preset_id": "office-team",
+  "roles": {
+    "coordinator": {
+      "name": "Office Coordinator",
+      "source_file": "clawcross/custom/office-team#coordinator"
+    },
+    "writer": {
+      "name": "Document Writer",
+      "source_file": "clawcross/custom/office-team#writer"
+    },
+    "analyst": {
+      "name": "Data Analyst",
+      "source_file": "clawcross/custom/office-team#analyst"
+    },
+    "pdf_master": {
+      "name": "PDF & Print Master",
+      "source_file": "clawcross/custom/office-team#pdf_master"
+    },
+    "designer": {
+      "name": "Visual Designer",
+      "source_file": "clawcross/custom/office-team#designer"
+    },
+    "reviewer": {
+      "name": "Office Reviewer",
+      "source_file": "clawcross/custom/office-team#reviewer"
+    }
+  }
+}

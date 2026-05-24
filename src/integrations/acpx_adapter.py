@@ -75,6 +75,48 @@ def _coerce_bool(value: Any) -> bool | None:
     return None
 
 
+_PERMISSION_POLICIES = ("approve-all", "approve-reads", "deny-all")
+
+
+def _coerce_permission_policy(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    raw = str(value).strip().lower().replace("_", "-")
+    return raw if raw in _PERMISSION_POLICIES else None
+
+
+def _apply_permission_flags(
+    cmd: list[str],
+    *,
+    approve_all: bool | None,
+    permission_policy: str | None,
+    non_interactive_permissions: str | None,
+    allowed_tools: str | None = None,
+) -> None:
+    """Append acpx permission / tool-visibility flags to cmd in-place.
+
+    Precedence: explicit ``permission_policy`` > legacy ``approve_all`` bool.
+    ``approve-reads`` / ``deny-all`` have no legacy bool equivalent.
+    ``allowed_tools`` is forwarded verbatim when not None; the empty string is
+    a legitimate value (acpx interprets it as "no tools advertised").
+    """
+    policy = _coerce_permission_policy(permission_policy)
+    if policy is None:
+        if approve_all:
+            policy = "approve-all"
+    if policy == "approve-all":
+        cmd.append("--approve-all")
+    elif policy == "approve-reads":
+        cmd.append("--approve-reads")
+    elif policy == "deny-all":
+        cmd.append("--deny-all")
+    nip = (non_interactive_permissions or "").strip()
+    if nip:
+        cmd.extend(["--non-interactive-permissions", nip])
+    if allowed_tools is not None:
+        cmd.extend(["--allowed-tools", allowed_tools])
+
+
 def normalize_acpx_run_options(
     options: dict[str, Any] | None = None,
     *,
@@ -88,7 +130,10 @@ def normalize_acpx_run_options(
       - timeout_sec / acp_timeout_sec
       - ttl_sec
       - approve_all
+      - permission_policy (approve-all / approve-reads / deny-all; wins over approve_all)
       - non_interactive_permissions
+      - allowed_tools (csv string forwarded to acpx ``--allowed-tools``; ""
+        means no tools)
     """
     options = options or {}
     timeout_raw = options.get("timeout_sec", options.get("acp_timeout_sec"))
@@ -96,6 +141,7 @@ def normalize_acpx_run_options(
     approve_all = _coerce_bool(options.get("approve_all"))
     if approve_all is None:
         approve_all = _env_bool("ACPX_APPROVE_ALL", True)
+    permission_policy = _coerce_permission_policy(options.get("permission_policy"))
     nip = str(
         options.get(
             "non_interactive_permissions",
@@ -103,11 +149,21 @@ def normalize_acpx_run_options(
         )
         or ""
     ).strip()
+    allowed_tools_raw = options.get("allowed_tools")
+    allowed_tools: str | None
+    if allowed_tools_raw is None:
+        allowed_tools = None
+    elif isinstance(allowed_tools_raw, (list, tuple)):
+        allowed_tools = ",".join(str(x).strip() for x in allowed_tools_raw if str(x).strip())
+    else:
+        allowed_tools = str(allowed_tools_raw)
     return {
         "timeout_sec": _coerce_optional_int(timeout_raw, default_timeout_sec, min_value=5, max_value=3600),
         "ttl_sec": _coerce_int(ttl_raw, default_ttl_sec, min_value=60, max_value=604800),
         "approve_all": approve_all,
+        "permission_policy": permission_policy,
         "non_interactive_permissions": nip,
+        "allowed_tools": allowed_tools,
     }
 
 
@@ -129,8 +185,17 @@ def acpx_options_from_agent(
     for src in (agent_info, meta, acp, overrides or {}):
         if not isinstance(src, dict):
             continue
-        for key in ("timeout_sec", "acp_timeout_sec", "ttl_sec", "approve_all", "non_interactive_permissions"):
-            if key in src and src[key] not in (None, ""):
+        for key in (
+            "timeout_sec",
+            "acp_timeout_sec",
+            "ttl_sec",
+            "approve_all",
+            "permission_policy",
+            "non_interactive_permissions",
+            "allowed_tools",
+        ):
+            # allowed_tools="" is a meaningful "no tools" signal — keep it.
+            if key in src and (key == "allowed_tools" or src[key] not in (None, "")):
                 merged[key] = src[key]
     return normalize_acpx_run_options(merged, default_timeout_sec=default_timeout_sec)
 
@@ -163,7 +228,9 @@ class AcpxAdapter:
         system_prompt: str | None = None,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> bool:
         existed_before = await self._session_exists(tool=tool, acpx_session=acpx_session)
         await self._run_json(
@@ -172,7 +239,9 @@ class AcpxAdapter:
             allow_nonzero=False,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
         created = existed_before is False
         if created and system_prompt and system_prompt.strip():
@@ -188,7 +257,9 @@ class AcpxAdapter:
         timeout_sec: int = 10,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> None:
         # Safety first: cancel any in-flight prompt before closing the transport
         # session record. Missing/idle sessions should not fail callers.
@@ -200,7 +271,9 @@ class AcpxAdapter:
                 timeout_sec=timeout_sec,
                 ttl_sec=ttl_sec,
                 approve_all=approve_all,
+                permission_policy=permission_policy,
                 non_interactive_permissions=non_interactive_permissions,
+                allowed_tools=allowed_tools,
             )
         except AcpxError as e:
             logger.warning("acpx cancel before close failed for %s: %s", acpx_session, e)
@@ -210,7 +283,9 @@ class AcpxAdapter:
             allow_nonzero=True,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
     async def cancel_session(
@@ -222,7 +297,9 @@ class AcpxAdapter:
         timeout_sec: int = 10,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> None:
         await self._run_json(
             self._command_prefix(tool=tool, session_key=session_key) + ["cancel", "-s", acpx_session],
@@ -230,7 +307,9 @@ class AcpxAdapter:
             allow_nonzero=True,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
     # ── OpsService /acp_control only (do not use from group_chat prompt path) ──
@@ -243,7 +322,9 @@ class AcpxAdapter:
         timeout_sec: int = 180,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> None:
         """``acpx … --agent 'openclaw acp --session <key>' exec '/new'|'/stop'``; no acpx ``-s``."""
         raw = f"openclaw acp --session {shlex.quote(session_key)}"
@@ -253,7 +334,9 @@ class AcpxAdapter:
             allow_nonzero=True,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
     async def ops_non_openclaw_reset_session(
@@ -264,7 +347,9 @@ class AcpxAdapter:
         timeout_sec: int = 15,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> None:
         """``sessions close`` only; let the next real prompt recreate the session."""
         acpx_session = self.to_acpx_session_name(tool=tool, session_key=session_key)
@@ -275,7 +360,9 @@ class AcpxAdapter:
             allow_nonzero=True,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
     async def ops_non_openclaw_cancel(
@@ -286,7 +373,9 @@ class AcpxAdapter:
         timeout_sec: int = 25,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> None:
         """``<tool> cancel -s <name>``."""
         acpx_session = self.to_acpx_session_name(tool=tool, session_key=session_key)
@@ -297,7 +386,9 @@ class AcpxAdapter:
             allow_nonzero=True,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
     async def _ops_run_acpx(
@@ -308,11 +399,13 @@ class AcpxAdapter:
         allow_nonzero: bool,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> str:
         """Ops-only: ``--format quiet`` (control output is not JSON-RPC)."""
         assert self._acpx_bin is not None
-        if approve_all is None:
+        if approve_all is None and not permission_policy:
             approve_all = _env_bool("ACPX_APPROVE_ALL", True)
         nip = (non_interactive_permissions or os.getenv("ACPX_NON_INTERACTIVE_PERMISSIONS", "") or "").strip()
         cmd: list[str] = [
@@ -322,10 +415,13 @@ class AcpxAdapter:
             "--ttl",
             str(ttl_sec),
         ]
-        if approve_all:
-            cmd.append("--approve-all")
-        if nip:
-            cmd.extend(["--non-interactive-permissions", nip])
+        _apply_permission_flags(
+            cmd,
+            approve_all=approve_all,
+            permission_policy=permission_policy,
+            non_interactive_permissions=nip,
+            allowed_tools=allowed_tools,
+        )
         cmd.extend(["--format", "quiet", *args])
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -468,7 +564,9 @@ class AcpxAdapter:
         attachments: list[dict] | None = None,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> str:
         """
         Send a prompt to the agent.
@@ -493,7 +591,9 @@ class AcpxAdapter:
                 acpx_session=acpx_session,
                 ttl_sec=ttl_sec,
                 approve_all=approve_all,
+                permission_policy=permission_policy,
                 non_interactive_permissions=non_interactive_permissions,
+                allowed_tools=allowed_tools,
             )
 
         # Ensure transport session on every call
@@ -504,7 +604,9 @@ class AcpxAdapter:
             system_prompt=system_prompt,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
         pending_prompt = self._pending_initial_prompt.pop(
@@ -524,7 +626,9 @@ class AcpxAdapter:
             attachments=attachments,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
         text = self._extract_text(output)
@@ -544,7 +648,9 @@ class AcpxAdapter:
         attachments: list[dict] | None = None,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> AcpxPromptTrace:
         acpx_session = self.to_acpx_session_name(tool=tool, session_key=session_key)
         if reset_session:
@@ -554,7 +660,9 @@ class AcpxAdapter:
                 acpx_session=acpx_session,
                 ttl_sec=ttl_sec,
                 approve_all=approve_all,
+                permission_policy=permission_policy,
                 non_interactive_permissions=non_interactive_permissions,
+                allowed_tools=allowed_tools,
             )
 
         await self.ensure_session(
@@ -564,7 +672,9 @@ class AcpxAdapter:
             system_prompt=system_prompt,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
 
         pending_prompt = self._pending_initial_prompt.pop(
@@ -584,7 +694,9 @@ class AcpxAdapter:
             attachments=attachments,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
         return self._extract_trace(output)
 
@@ -613,7 +725,9 @@ class AcpxAdapter:
         attachments: list[dict] | None,
         ttl_sec: int,
         approve_all: bool | None,
+        permission_policy: str | None,
         non_interactive_permissions: str | None,
+        allowed_tools: str | None,
     ) -> str:
         prompt_args, temp_path = self.prepare_prompt_command(
             tool=tool,
@@ -623,7 +737,9 @@ class AcpxAdapter:
             attachments=attachments,
             ttl_sec=ttl_sec,
             approve_all=approve_all,
+            permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
+            allowed_tools=allowed_tools,
         )
         try:
             return await self._run_json_command(
@@ -647,7 +763,9 @@ class AcpxAdapter:
         attachments: list[dict] | None,
         ttl_sec: int,
         approve_all: bool | None,
+        permission_policy: str | None,
         non_interactive_permissions: str | None,
+        allowed_tools: str | None,
     ) -> tuple[list[str], str]:
         """Build the exact acpx prompt command plus temp JSON payload path."""
         assert self._acpx_bin is not None
@@ -698,7 +816,7 @@ class AcpxAdapter:
         with open(temp_path, 'w', encoding='utf-8') as f:
             f.write(json_content)
         
-        if approve_all is None:
+        if approve_all is None and not permission_policy:
             approve_all = _env_bool("ACPX_APPROVE_ALL", True)
         nip = (non_interactive_permissions or os.getenv("ACPX_NON_INTERACTIVE_PERMISSIONS", "") or "").strip()
         cmd: list[str] = [
@@ -708,10 +826,13 @@ class AcpxAdapter:
             "--ttl",
             str(ttl_sec),
         ]
-        if approve_all:
-            cmd.append("--approve-all")
-        if nip:
-            cmd.extend(["--non-interactive-permissions", nip])
+        _apply_permission_flags(
+            cmd,
+            approve_all=approve_all,
+            permission_policy=permission_policy,
+            non_interactive_permissions=nip,
+            allowed_tools=allowed_tools,
+        )
         cmd.extend(["--format", "json", "--json-strict"])
         cmd.extend(self._command_prefix(tool=tool, session_key=session_key))
         cmd.extend(["prompt", "-s", acpx_session, "--file", temp_path])
@@ -725,12 +846,15 @@ class AcpxAdapter:
         allow_nonzero: bool,
         ttl_sec: int = 300,
         approve_all: bool | None = None,
+        permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
+        allowed_tools: str | None = None,
     ) -> str:
         assert self._acpx_bin is not None
         # Headless subprocess: no TTY for permission prompts — default --approve-all so tool/exec turns can finish.
         # Opt out: ACPX_APPROVE_ALL=0|false|no|off. Optional: ACPX_NON_INTERACTIVE_PERMISSIONS=<policy>.
-        if approve_all is None:
+        # An explicit permission_policy (approve-reads / deny-all) suppresses the default approve-all fallback.
+        if approve_all is None and not permission_policy:
             approve_all = _env_bool("ACPX_APPROVE_ALL", True)
         nip = (non_interactive_permissions or os.getenv("ACPX_NON_INTERACTIVE_PERMISSIONS", "") or "").strip()
         cmd: list[str] = [
@@ -740,10 +864,13 @@ class AcpxAdapter:
             "--ttl",
             str(ttl_sec),
         ]
-        if approve_all:
-            cmd.append("--approve-all")
-        if nip:
-            cmd.extend(["--non-interactive-permissions", nip])
+        _apply_permission_flags(
+            cmd,
+            approve_all=approve_all,
+            permission_policy=permission_policy,
+            non_interactive_permissions=nip,
+            allowed_tools=allowed_tools,
+        )
         cmd.extend(
             [
                 "--format",

@@ -57,6 +57,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 from src.utils.runtime_paths import ENV_FILE, PID_DIR, WORKSPACE_DIR, ensure_runtime_dirs, set_subprocess_env
+from src.utils.chatbot_channel_catalog import get_nonebot_adapter_meta, get_chatbot_channel
 ENV_FILE_PATH = str(ENV_FILE)
 ensure_runtime_dirs()
 WORKING_DIR = str(WORKSPACE_DIR)
@@ -427,6 +428,10 @@ def launch_services(services):
     wait_for_started_services(services)
 
 
+def _channel_disabled():
+    return (os.getenv("CLAWCROSS_NO_CHANNEL") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def start_chatbot_if_configured(platforms):
     if not platforms:
         return None
@@ -440,6 +445,7 @@ def start_chatbot_if_configured(platforms):
         stderr=None,
     )
     proc._cc_optional = True
+    proc._cc_chatbot = True
     child_procs.append(proc)
     print(f"   ✅ 社交媒体机器人已启动 (PID: {proc.pid})")
     return proc
@@ -466,6 +472,56 @@ def start_harness_conductor_if_configured():
     child_procs.append(proc)
     print(f"   ✅ Harness 主控已启动 (PID: {proc.pid})")
     return proc
+
+
+def stop_chatbot_processes():
+    chatbot_procs = [p for p in child_procs if getattr(p, "_cc_chatbot", False)]
+    if not chatbot_procs:
+        return
+    for proc in chatbot_procs:
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+    for _ in range(50):
+        if all(p.poll() is not None for p in chatbot_procs):
+            break
+        time.sleep(0.1)
+    for proc in chatbot_procs:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    for proc in chatbot_procs:
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+    child_procs[:] = [p for p in child_procs if p not in chatbot_procs]
+
+
+def restart_chatbot_only():
+    print("\n🔄 检测到 chatbot 重启信号，正在重启社交媒体机器人...")
+    stop_chatbot_processes()
+    load_dotenv(dotenv_path=ENV_FILE_PATH, override=True)
+    if _channel_disabled():
+        print("💬 [skip] CLAWCROSS_NO_CHANNEL 已设置，聊天机器人已停止")
+        return
+    platforms = _detect_chatbot_platforms()
+    if not platforms:
+        print("💬 [skip] 未检测到聊天机器人配置，聊天机器人已停止")
+        return
+    if not os.path.exists(chatbot_main):
+        print("💬 [skip] chatbot/main.py 不存在")
+        return
+    nonebot_names = _configured_nonebot_adapter_names()
+    if nonebot_names and not _ensure_nonebot_deps(nonebot_names):
+        print("💬 [skip] NoneBot 依赖未就绪，跳过 chatbot（不影响其他服务）")
+        return
+    start_chatbot_if_configured(platforms)
+    print("✅ chatbot 已重启！")
 
 
 # 注册退出清理函数
@@ -527,7 +583,7 @@ services = [
         "label": "OASIS 论坛服务",
         "script": "oasis/server.py",
         "port": PORT_OASIS,
-        "timeout": 20.0,
+        "timeout": 45.0,
         "health_url": f"http://127.0.0.1:{PORT_OASIS}/experts",
     },
     {
@@ -580,9 +636,16 @@ def _looks_placeholder(value):
 
 
 def _nonebot_env_keys(name):
-    name_lower = name.lower().replace(" ", "")
+    meta = get_nonebot_adapter_meta(name)
+    keys = [
+        str(meta.get("env_key") or ""),
+        *[str(x) for x in meta.get("env_aliases") or []],
+    ]
+    adapter_name = str(meta.get("adapter") or name)
+    name_lower = adapter_name.lower().replace(" ", "")
     std_name = name_lower.replace("-", "").replace("_", "").replace(".", "")
-    return [f"{std_name.upper()}_BOTS", f"{name.upper()}_BOTS"]
+    keys.extend([f"{std_name.upper()}_BOTS", f"{adapter_name.upper()}_BOTS"])
+    return [key for i, key in enumerate(keys) if key and key not in keys[:i]]
 
 
 def _bots_json_for_nonebot_adapter(name):
@@ -593,7 +656,27 @@ def _bots_json_for_nonebot_adapter(name):
     return "", ""
 
 
+def _nonebot_required_fields(name):
+    channel = get_chatbot_channel(name) or {}
+    fields = []
+    for field in channel.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        target = str(field.get("target") or "bot")
+        if target in {"bot", "bot_intents"} and field.get("required"):
+            fields.append(str(field.get("name") or ""))
+    return [field for field in fields if field]
+
+
 def _has_real_nonebot_bots(name):
+    meta = get_nonebot_adapter_meta(name)
+    requires_config = bool(meta.get("requires_config", True))
+    if not requires_config:
+        required_env = [str(x) for x in meta.get("required_env") or [] if str(x)]
+        missing = [key for key in required_env if _looks_placeholder(os.getenv(key, ""))]
+        if missing:
+            return False
+        return True
     _key, raw = _bots_json_for_nonebot_adapter(name)
     if not raw:
         return False
@@ -604,8 +687,13 @@ def _has_real_nonebot_bots(name):
     bots = data if isinstance(data, list) else [data]
     if not bots:
         return False
+    required_fields = _nonebot_required_fields(name)
     for bot in bots:
         if not isinstance(bot, dict):
+            continue
+        if required_fields:
+            if all(bot.get(key) and not _looks_placeholder(bot.get(key)) for key in required_fields):
+                return True
             continue
         sensitive_values = [
             bot.get("token"),
@@ -613,6 +701,16 @@ def _has_real_nonebot_bots(name):
             bot.get("access_token"),
             bot.get("api_key"),
             bot.get("password"),
+            bot.get("app_id"),
+            bot.get("app_secret"),
+            bot.get("bot_id"),
+            bot.get("bot_secret"),
+            bot.get("pub_key"),
+            bot.get("private_key"),
+            bot.get("private_key_path"),
+            bot.get("webhook_secret"),
+            bot.get("host"),
+            bot.get("url"),
         ]
         if any(value and not _looks_placeholder(value) for value in sensitive_values):
             return True
@@ -642,16 +740,21 @@ def _ensure_nonebot_deps(adapter_names):
     """
     adapter_specs = []
     for n in adapter_names:
-        s = n.strip().replace("_", "-").lower()
+        s = str(get_nonebot_adapter_meta(n).get("adapter") or n).strip().replace("_", "-").lower()
         if s and s not in adapter_specs:
             adapter_specs.append(s)
 
     def _module_candidates(name):
-        dotted = name.replace("-", "_")
+        meta = get_nonebot_adapter_meta(name)
+        module = str(meta.get("module") or "").strip()
+        dotted = str(meta.get("adapter") or name).replace("-", "_")
         flat = dotted.replace(".", "_")
-        return [f"nonebot.adapters.{dotted}", f"nonebot_adapter_{flat}"]
+        return [m for m in [module, f"nonebot.adapters.{dotted}", f"nonebot_adapter_{flat}"] if m]
 
     def _package_name(name):
+        meta = get_nonebot_adapter_meta(name)
+        if meta.get("package"):
+            return str(meta["package"])
         package_base = name.split(".", 1)[0]
         return "nonebot-adapter-" + package_base.replace("_", "-").lower()
 
@@ -727,9 +830,8 @@ def _ensure_nonebot_deps(adapter_names):
     return True
 
 
-_no_channel = (os.getenv("CLAWCROSS_NO_CHANNEL") or "").strip().lower() in ("1", "true", "yes", "on")
 chatbot_platforms = _detect_chatbot_platforms()
-has_chatbot_config = bool(chatbot_platforms) and not _no_channel
+has_chatbot_config = bool(chatbot_platforms) and not _channel_disabled()
 
 chatbot_main = os.path.join(PROJECT_ROOT, "chatbot", "main.py")
 should_start_chatbot = has_chatbot_config and os.path.exists(chatbot_main)
@@ -754,7 +856,7 @@ if should_start_chatbot:
         }
     )
 else:
-    if _no_channel:
+    if _channel_disabled():
         print("💬 [skip] CLAWCROSS_NO_CHANNEL 已设置，跳过聊天机器人")
     elif not chatbot_platforms:
         print("💬 [skip] 未检测到聊天机器人配置（NONEBOT_ADAPTERS / *_WEBHOOK_URL 均为空）")
@@ -789,9 +891,12 @@ if (os.getenv("CLAWCROSS_OPEN_BROWSER") or "").strip().lower() in ("1", "true", 
 
 # 重启信号文件路径
 RESTART_FLAG = os.path.join(str(PID_DIR), "restart_flag")
+CHATBOT_RESTART_FLAG = os.path.join(str(PID_DIR), "chatbot_restart_flag")
 # 启动时清理残留的重启信号
 if os.path.isfile(RESTART_FLAG):
     os.remove(RESTART_FLAG)
+if os.path.isfile(CHATBOT_RESTART_FLAG):
+    os.remove(CHATBOT_RESTART_FLAG)
 
 # 主循环：监测子进程退出和重启信号
 try:
@@ -838,7 +943,7 @@ try:
             restart_chatbot_platforms = _detect_chatbot_platforms()
             restart_should_start_chatbot = (
                 bool(restart_chatbot_platforms)
-                and not _no_channel
+                and not _channel_disabled()
                 and os.path.exists(chatbot_main)
             )
             if restart_should_start_chatbot:
@@ -852,6 +957,12 @@ try:
                 start_chatbot_if_configured(restart_chatbot_platforms)
             print()
             print("✅ 所有服务已重启！")
+            print()
+            continue
+
+        if os.path.isfile(CHATBOT_RESTART_FLAG):
+            os.remove(CHATBOT_RESTART_FLAG)
+            restart_chatbot_only()
             print()
             continue
 

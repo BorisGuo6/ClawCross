@@ -26,6 +26,7 @@ from api.group_repository import (
     get_group_member_by_global_id,
     get_group_mute_state,
     get_group_owner,
+    get_group_primary_agent,
     group_exists,
     init_group_db as init_group_db_repo,
     insert_group_message,
@@ -37,6 +38,7 @@ from api.group_repository import (
     list_recent_group_messages,
     remove_group_member,
     set_group_mute_state,
+    set_group_primary_agent,
     upsert_http_agent_session,
     update_group_name,
 )
@@ -47,6 +49,7 @@ from api.group_models import (
     GroupMessageRequest,
     GroupMuteAllRequest,
     GroupMuteMemberRequest,
+    GroupSetPrimaryRequest,
     GroupUpdateRequest,
 )
 from utils.logging_utils import get_logger
@@ -79,6 +82,38 @@ _EXTERNAL_AGENT_PRIVATE_RULES_PATH = os.path.join(
 )
 _external_agent_private_rules_cache: str | None = None
 _external_agent_system_prompt_cache: str | None = None
+
+
+# Per-message permission mode → backend wire format. Mirrors scripts/clawcross.py
+# and frontend/js/main.js so CLI / PC web / mobile group chat are interchangeable.
+_VALID_RUN_MODES = ("manual", "plan", "bypass")
+_ACPX_OVERRIDES_BY_MODE: dict[str, dict[str, Any]] = {
+    "manual": {
+        # All three together: tools hidden, and even if an old agent ignores --allowed-tools,
+        # approve-all is moot because no tool calls happen on the manual UI side anyway.
+        "permission_policy": "approve-all",
+        "non_interactive_permissions": "",
+        "allowed_tools": "",
+    },
+    "plan": {
+        "permission_policy": "approve-reads",
+        # Plan mode: writes must error out, not hang waiting for a human approval.
+        "non_interactive_permissions": "deny",
+    },
+    "bypass": {
+        "permission_policy": "approve-all",
+        "non_interactive_permissions": "",
+    },
+}
+
+
+def _normalize_run_mode(mode: str | None) -> str | None:
+    """Return one of _VALID_RUN_MODES, or None when the input is empty/invalid.
+
+    None means "no override" — each member uses its own default.
+    """
+    raw = (mode or "").strip().lower()
+    return raw if raw in _VALID_RUN_MODES else None
 
 
 def _external_agent_group_rules_block() -> str:
@@ -285,6 +320,7 @@ def _load_team_internal_agents(user_id: str, team: str) -> list[dict]:
                 "short_name": a.get("name", ""),
                 "member_type": "oasis",
                 "tag": a.get("tag", ""),
+                "is_primary": bool(a.get("is_primary")),
             })
         return result
     except Exception:
@@ -329,6 +365,7 @@ def _parse_external_agents_file(path: str, *, owner_user_id: str = "", team: str
                 "api_key": ext_config.get("api_key", ""),
                 "model": ext_config.get("model", ""),
                 "meta": ext_config if isinstance(ext_config, dict) else {},
+                "is_primary": bool(a.get("is_primary")),
             })
         return result
     except Exception:
@@ -521,6 +558,7 @@ class GroupService:
         *,
         user_id: str = "",
         group_id: str = "",
+        run_mode: str | None = None,
         _retry_dead: bool = False,
     ) -> str | None:
         """Send message to external agent via acpx-backed ACP session."""
@@ -568,9 +606,14 @@ class GroupService:
                     for att in attachments
                 ]
 
+            acpx_overrides = _ACPX_OVERRIDES_BY_MODE.get(run_mode) if run_mode else None
             options = {
                 "cwd": str(WORKSPACE_DIR / "acpx"),
-                **acpx_options_from_agent(agent_info, default_timeout_sec=180),
+                **acpx_options_from_agent(
+                    agent_info,
+                    overrides=acpx_overrides,
+                    default_timeout_sec=180,
+                ),
                 "reset_session": bool(metadata and metadata.get("resetSession")),
                 "system_prompt": _external_agent_session_prompt(
                     agent_info,
@@ -771,6 +814,7 @@ class GroupService:
         metadata: dict | None = None,
         *,
         user_id: str = "",
+        run_mode: str | None = None,
     ):
         """Send message to external agent and handle reply.
 
@@ -799,6 +843,7 @@ class GroupService:
                     metadata=metadata,
                     user_id=user_id,
                     group_id=group_id,
+                    run_mode=run_mode,
                 )
                 if not reply:
                     logger.info(
@@ -850,13 +895,17 @@ class GroupService:
         mentions: list[str] | None = None,
         user_id: str = "",
         attachments: list[Attachment] | None = None,
+        run_mode: str | None = None,
     ):
         """向群内 agent 成员广播消息（异步 fire-and-forget）。
 
         members 直接从数据库读取，包含 global_id / short_name / tag / member_type。
         exclude_sender_display: 用 tag#type#short_name 格式排除发送者自己，
         避免 global_id 在不同 agent 平台间可能冲突的问题。
+        run_mode: optional permission override forwarded to each agent invocation
+        (manual / plan / bypass). None = use each agent's default.
         """
+        normalized_mode = _normalize_run_mode(run_mode)
         if group_id in self.group_muted:
             logger.info("群 %s 已静音，跳过广播", group_id)
             return
@@ -872,6 +921,38 @@ class GroupService:
         external_agents_map: dict[str, dict] = (
             build_external_agents_map_for_owner(user_id) if user_id else {}
         )
+
+        # 主 agent 机制（设了 primary 时收窄 mentions）：
+        #   主 agent 发     → 保持原 mentions（None=全员，@X=仅 X）
+        #   非主 agent 发   → sub-agent 模式：mentions 强制 = [primary]（忽略 @）
+        #   人类发 + 没 @  → mentions = [primary]
+        #   人类发 + @ X   → mentions = [X]（尊重人类显式选择）
+        primary_agent_gid = await get_group_primary_agent(self.group_db_path, group_id)
+        sender_global_id_for_filter = ""
+        if exclude_sender_display:
+            ex_parts = exclude_sender_display.split("#")
+            if len(ex_parts) >= 4:
+                sender_global_id_for_filter = ex_parts[-1].strip()
+        primary_short_name = ""
+        sub_agent_short_names: list[str] = []
+        if primary_agent_gid:
+            sender_is_human = not sender_global_id_for_filter
+            sender_is_primary = sender_global_id_for_filter == primary_agent_gid
+            sender_is_non_primary_agent = (
+                bool(sender_global_id_for_filter) and not sender_is_primary
+            )
+            if sender_is_non_primary_agent:
+                mentions = [primary_agent_gid]
+            elif sender_is_human and not mentions:
+                mentions = [primary_agent_gid]
+            # Build name lookups for role hint in the per-target prompt below
+            for _uid, _gid, _is_agent, _mtype, _sname, _tag in members:
+                if not _is_agent:
+                    continue
+                if _gid == primary_agent_gid:
+                    primary_short_name = _sname or _gid
+                else:
+                    sub_agent_short_names.append(_sname or _gid)
 
         for user_id_member, global_id, is_agent, member_type, short_name, tag in members:
             if group_id in self.group_muted:
@@ -900,6 +981,23 @@ class GroupService:
                 "不要写内部 global_id、session_id 或 tag#type#... 标识。"
             )
 
+            # 主/子 agent 身份提示（仅多人群聊且设置了主 agent 时注入）
+            role_hint = ""
+            if primary_agent_gid and not is_private_chat:
+                if global_id == primary_agent_gid:
+                    sub_list = "、".join(f"「{n}」" for n in sub_agent_short_names) or "（暂无）"
+                    role_hint = (
+                        f"\n你是本群【主 agent】，其他 agent 都是你的 sub-agent："
+                        f"{sub_list}。"
+                        "sub-agent 的所有发言（含 @）都只会送达你，由你统筹后再回复用户与群聊。\n"
+                    )
+                else:
+                    role_hint = (
+                        f"\n你是本群【sub-agent】，主 agent 是「{primary_short_name or primary_agent_gid}」。"
+                        "你的所有发言（含 @ 任何人）都只会送达主 agent，不会扩散给群里其他成员；"
+                        "请把汇报/请示当成主要交互模式。\n"
+                    )
+
             _ext_rules = _external_agent_group_rules_block()
             if is_private_chat:
                 # 私聊：不需要群聊标记，直接告知是私信
@@ -912,6 +1010,7 @@ class GroupService:
             elif mentions and global_id in mentions:
                 msg_prefix = f"[群聊 {group_id} 成员数:{member_count}] {sender} @你 说:\n"
                 msg_suffix = (f"\n\n⚠️ 这是专门 @你 的消息，你必须回复！{agent_identity}。\n"
+                              f"{role_hint}"
                               f"{human_user_hint}\n\n"
                               f"{mention_hint}\n"
                               "请先 cd 到项目目录，然后使用 CLI 工具发送消息到群里：\n"
@@ -921,6 +1020,7 @@ class GroupService:
                 msg_prefix = f"[群聊 {group_id} 成员数:{member_count}] {sender} 说:\n"
                 msg_suffix = (
                     f"\n\n{agent_identity}。\n"
+                    f"{role_hint}"
                     f"{human_user_hint}\n\n"
                     f"{mention_hint}\n"
                     "如需回复，请先 cd 到项目目录，然后使用 CLI 工具发送消息到群里：\n"
@@ -942,22 +1042,19 @@ class GroupService:
                 # External agent: use ACP or HTTP
                 agent_info = external_agents_map.get(global_id, {})
                 if not agent_info:
-                    tag_key = _canonical_external_platform(str(tag or ""))
-                    if tag_key != "openclaw":
-                        logger.info(
-                            "Skip untracked external ACP agent %s (%s); not found in tracked external agents map",
-                            short_name,
-                            global_id,
-                        )
-                        continue
-                    # Allow untracked public openclaw agents as a special case.
-                    agent_info = {"global_name": global_id, "name": short_name, "tag": tag, "platform": "openclaw"}
+                    logger.info(
+                        "Skip untracked external agent %s (%s); not found in tracked external agents map",
+                        short_name,
+                        global_id,
+                    )
+                    continue
                 asyncio.create_task(
                     self._handle_external_agent_reply(
                         group_id, agent_info, msg_text, short_name,
                         attachments=attachments,
                         metadata={"is_private_chat": is_private_chat},
                         user_id=owner_uid,
+                        run_mode=normalized_mode,
                     )
                 )
             else:
@@ -1011,6 +1108,11 @@ class GroupService:
                         trigger_body["attachments"] = [
                             a.model_dump() for a in attachments
                         ]
+                    if normalized_mode:
+                        trigger_body["session_mode"] = normalized_mode
+                        # Manual = no tool calls. Empty list is the explicit signal.
+                        if normalized_mode == "manual":
+                            trigger_body["enabled_tools"] = []
                     async with httpx.AsyncClient(timeout=30) as client:
                         await client.post(
                             trigger_url,
@@ -1050,7 +1152,24 @@ class GroupService:
             created_at=now,
             members=members,
         )
-        return {"group_id": group_id, "name": req.name, "owner": uid, "member_count": len(members)}
+        # Auto-pick primary agent: first member with is_primary=true from team config.
+        primary_gid = next(
+            (m.get("global_id") for m in members if m.get("is_primary") and m.get("global_id")),
+            None,
+        )
+        if primary_gid:
+            await set_group_primary_agent(
+                self.group_db_path,
+                group_id=group_id,
+                global_id=primary_gid,
+            )
+        return {
+            "group_id": group_id,
+            "name": req.name,
+            "owner": uid,
+            "member_count": len(members),
+            "primary_agent_global_id": primary_gid,
+        }
 
     async def list_groups(self, authorization: str | None):
         uid, _, _ = self.parse_group_auth(authorization)
@@ -1239,6 +1358,7 @@ class GroupService:
                 mentions=final_mentions,
                 user_id=broadcast_uid,
                 attachments=req.attachments,
+                run_mode=req.run_mode,
             )
         )
 
@@ -1376,6 +1496,50 @@ class GroupService:
             updated_at=time.time(),
         )
         return {"status": "ok", "group_id": group_id, "muted": bool(req.muted)}
+
+    async def set_primary_agent(self, group_id: str, req: GroupSetPrimaryRequest, authorization: str | None):
+        """设置群主 agent。主 agent 是可选的——未设置时所有 agent 正常广播。
+
+        设置后，非主 agent 发的消息只投递给主 agent 与显式被 @ 的成员。
+        非主 agent 仍可发消息（消息入库，人类前端拉取可见）。
+        """
+        uid, _, _ = self.parse_group_auth(authorization)
+        owner = await get_group_owner(self.group_db_path, group_id)
+        if not owner:
+            raise HTTPException(status_code=404, detail="群聊不存在")
+        if owner != uid:
+            raise HTTPException(status_code=403, detail="只有群主可以设置主 agent")
+
+        target_gid = (req.global_id or "").strip()
+        if not target_gid:
+            raise HTTPException(status_code=400, detail="需要提供 global_id")
+
+        member = await get_group_member_by_global_id(self.group_db_path, group_id, target_gid)
+        if not member or not bool(member.get("is_agent")):
+            raise HTTPException(status_code=400, detail="目标不是该群的 agent 成员")
+
+        await set_group_primary_agent(
+            self.group_db_path,
+            group_id=group_id,
+            global_id=target_gid,
+        )
+        return {"status": "ok", "group_id": group_id, "primary_agent_global_id": target_gid}
+
+    async def clear_primary_agent(self, group_id: str, authorization: str | None):
+        """清除主 agent，恢复全员正常广播。"""
+        uid, _, _ = self.parse_group_auth(authorization)
+        owner = await get_group_owner(self.group_db_path, group_id)
+        if not owner:
+            raise HTTPException(status_code=404, detail="群聊不存在")
+        if owner != uid:
+            raise HTTPException(status_code=403, detail="只有群主可以清除主 agent")
+
+        await set_group_primary_agent(
+            self.group_db_path,
+            group_id=group_id,
+            global_id=None,
+        )
+        return {"status": "ok", "group_id": group_id, "primary_agent_global_id": None}
 
     async def list_available_sessions(self, group_id: str, authorization: str | None):
         uid, _, _ = self.parse_group_auth(authorization)
