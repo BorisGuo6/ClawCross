@@ -365,6 +365,8 @@ class HarnessConductorLoopTests(unittest.TestCase):
     {
       "project_id": "project-alpha",
       "title": "Project Alpha",
+      "bucket": "active",
+      "status": "ongoing",
       "state_path": "dashboard/state/projects/project-alpha.json"
     }
   ]
@@ -452,6 +454,12 @@ class HarnessConductorLoopTests(unittest.TestCase):
                     for project in get_harness_state("test-user")["projects"]
                 }
                 self.assertEqual(project_titles["project-alpha"], "Dashboard Project Alpha")
+                project_metadata = {
+                    project["project_id"]: project.get("metadata", {})
+                    for project in get_harness_state("test-user")["projects"]
+                }
+                self.assertEqual(project_metadata["project-alpha"]["dashboard_bucket"], "active")
+                self.assertEqual(project_metadata["project-alpha"]["dashboard_status"], "ongoing")
                 verify = conductor.verify_finished_tasks("test-user", project_id="project-alpha")
                 self.assertEqual(verify["accepted"], 1)
                 state = get_harness_state("test-user")
@@ -811,7 +819,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
             "Project Gamma | surveyuser | Benchmark photo / text-to-3D...",
         )
 
-    def test_survey_pool_session_rename_uses_pool_label(self):
+    def test_survey_worker_session_rename_uses_project_label_by_default(self):
         state = {
             "tasks": [],
             "agents": [
@@ -843,7 +851,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
         self.assertEqual(len(renamed), 1)
         rename_mock.assert_called_once_with(
             "session_survey",
-            "Survey Pool | surveyuser",
+            "Project Survey A | surveyuser",
         )
 
     def test_cleanup_closes_paused_todo_session_and_deletes_agent(self):

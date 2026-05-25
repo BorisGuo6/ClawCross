@@ -86,10 +86,26 @@ def load_dashboard_tasks_doc(dashboard_root: Path | None = None) -> tuple[dict[s
         return json.loads(body), url
 
 
-def load_dashboard_project_titles(dashboard_root: Path | None = None) -> dict[str, str]:
-    """Read project titles from the dashboard state without importing content into code."""
+def load_dashboard_project_info(dashboard_root: Path | None = None) -> dict[str, dict[str, str]]:
+    """Read project display metadata from the dashboard state.
 
-    titles: dict[str, str] = {}
+    The harness stores this as generic dashboard metadata so frontend grouping can
+    follow the dashboard's buckets without baking project-specific content into
+    ClawCross.
+    """
+
+    info: dict[str, dict[str, str]] = {}
+
+    def merge(project_id: str, **values: str) -> None:
+        project_id = str(project_id or "").strip()
+        if not project_id:
+            return
+        item = info.setdefault(project_id, {})
+        for key, value in values.items():
+            clean = str(value or "").strip()
+            if clean:
+                item[key] = clean
+
     if dashboard_root is not None:
         portfolio_path = dashboard_root / "state" / "portfolio.json"
         if portfolio_path.exists():
@@ -99,35 +115,56 @@ def load_dashboard_project_titles(dashboard_root: Path | None = None) -> dict[st
                     continue
                 project_id = str(project.get("project_id") or "").strip()
                 title = str(project.get("title") or project.get("name") or "").strip()
-                if project_id and title:
-                    titles[project_id] = title
+                merge(
+                    project_id,
+                    title=title,
+                    bucket=str(project.get("bucket") or ""),
+                    status=str(project.get("status") or ""),
+                )
                 state_path = str(project.get("state_path") or "").strip()
                 if project_id and state_path:
                     project_path = dashboard_root.parent / state_path
                     if project_path.exists():
                         project_doc = load_json(project_path)
-                        doc_title = str(project_doc.get("title") or project_doc.get("name") or "").strip()
-                        if doc_title:
-                            titles[project_id] = doc_title
-        return titles
+                        merge(
+                            project_id,
+                            title=str(project_doc.get("title") or project_doc.get("name") or ""),
+                            bucket=str(project_doc.get("bucket") or ""),
+                            status=str(project_doc.get("status") or ""),
+                        )
+        return info
 
     try:
         base_url = default_dashboard_url()
     except RuntimeError:
-        return titles
+        return info
     try:
         with urllib.request.urlopen(f"{base_url}/state/portfolio.json", timeout=20) as response:
             portfolio = json.loads(response.read().decode("utf-8", errors="replace"))
     except Exception:
-        return titles
+        return info
     for project in portfolio.get("projects", []) or []:
         if not isinstance(project, dict):
             continue
         project_id = str(project.get("project_id") or "").strip()
         title = str(project.get("title") or project.get("name") or "").strip()
-        if project_id and title:
-            titles[project_id] = title
-    return titles
+        merge(
+            project_id,
+            title=title,
+            bucket=str(project.get("bucket") or ""),
+            status=str(project.get("status") or ""),
+        )
+    return info
+
+
+def load_dashboard_project_titles(dashboard_root: Path | None = None) -> dict[str, str]:
+    """Read project titles from the dashboard state without importing content into code."""
+
+    return {
+        project_id: meta["title"]
+        for project_id, meta in load_dashboard_project_info(dashboard_root).items()
+        if meta.get("title")
+    }
 
 
 def dashboard_repo_root(dashboard_root: Path | None = None) -> Path:
@@ -203,7 +240,26 @@ def import_dashboard_todos(
     created = 0
     updated = 0
     skipped = 0
-    project_titles = load_dashboard_project_titles(dashboard_root)
+    project_info = load_dashboard_project_info(dashboard_root)
+
+    for project, meta in project_info.items():
+        if project_id and project != project_id:
+            continue
+        if write:
+            apply_harness_event(
+                user_id,
+                {
+                    "action": "project_upsert",
+                    "project_id": project,
+                    "project_title": meta.get("title", ""),
+                    "metadata": {
+                        "project": {
+                            "dashboard_bucket": meta.get("bucket", ""),
+                            "dashboard_status": meta.get("status", ""),
+                        }
+                    },
+                },
+            )
 
     for task in tasks:
         if not isinstance(task, dict):
@@ -221,18 +277,25 @@ def import_dashboard_todos(
             skipped += 1
             continue
         project = str(task.get("project_id") or project_id or "default")
+        project_meta = project_info.get(project, {})
         local = existing.get(task_id)
         payload = {
             "action": "task_upsert",
             "project_id": project,
-            "project_title": project_titles.get(project, ""),
+            "project_title": project_meta.get("title", ""),
             "task_id": task_id,
             "title": str(task.get("title") or task_id),
             "description": str(task.get("description") or ""),
             "priority": str(task.get("priority") or "normal"),
             "assignee": str(task.get("assignee") or ""),
             "due_at": str(task.get("due_at") or ""),
-            "metadata": {"dashboard": {"imported_at": now_iso(), "source": "dashboard/state/tasks.json"}},
+            "metadata": {
+                "dashboard": {"imported_at": now_iso(), "source": "dashboard/state/tasks.json"},
+                "project": {
+                    "dashboard_bucket": project_meta.get("bucket", ""),
+                    "dashboard_status": project_meta.get("status", ""),
+                },
+            },
         }
         if not local:
             payload["status"] = status

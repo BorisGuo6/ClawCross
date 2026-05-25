@@ -63,8 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dashboard-supabase-sync",
         action=argparse.BooleanOptionalAction,
-        default=_env_bool("CLAWCROSS_HARNESS_DASHBOARD_SUPABASE_SYNC", True),
-        help="Sync dashboard/state/*.json into Supabase when the conductor changes dashboard task state.",
+        default=_env_bool("CLAWCROSS_HARNESS_DASHBOARD_SUPABASE_SYNC", False),
+        help="Sync dashboard/state/*.json into Supabase when the conductor changes dashboard task state. Disabled by default to avoid quota churn.",
     )
     parser.add_argument(
         "--llm-mode",

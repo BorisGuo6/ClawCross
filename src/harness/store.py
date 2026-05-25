@@ -166,6 +166,15 @@ def _ensure_project(state: dict[str, Any], project_id: str, event: dict[str, Any
     return project
 
 
+def _upsert_project(state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    project_id = _resolve_project_id(state, event)
+    project = _ensure_project(state, project_id, event)
+    status = _string(event.get("status"))
+    if status:
+        project["status"] = status
+    return project
+
+
 def _append_event(state: dict[str, Any], event: dict[str, Any], action: str) -> dict[str, Any]:
     now = _now_iso()
     entry = {
@@ -380,6 +389,8 @@ def apply_harness_event(user_id: str, event: dict[str, Any]) -> dict[str, Any]:
             changed = _update_agent(state, {**event, "status": "blocked"}, needs_user_override=True)
             if event.get("task_id") and _string(event.get("message") or event.get("summary")):
                 _append_task_comment(state, event, kind="blocker")
+        elif action == "project_upsert":
+            changed = _upsert_project(state, event)
         elif action == "task_upsert":
             changed = _upsert_task(state, event)
         elif action == "task_status":

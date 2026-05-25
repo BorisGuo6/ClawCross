@@ -554,6 +554,8 @@ def _agent_clawcross_metadata(agent: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _agent_is_survey_pool(agent: dict[str, Any] | None) -> bool:
+    if not _env_truthy("CLAWCROSS_HARNESS_ENABLE_SURVEY_POOL", False):
+        return False
     clawcross = _agent_clawcross_metadata(agent)
     capabilities = agent.get("capabilities") if isinstance(agent, dict) and isinstance(agent.get("capabilities"), list) else []
     return bool(clawcross.get("survey_pool")) or "survey-pool" in {str(item) for item in capabilities}
