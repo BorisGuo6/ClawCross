@@ -324,6 +324,30 @@ class HarnessConductorLoopTests(unittest.TestCase):
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
             dashboard = Path(tmpdir) / "dashboard"
             (dashboard / "state").mkdir(parents=True)
+            (dashboard / "state" / "portfolio.json").write_text(
+                """{
+  "schema_version": "portfolio.v1",
+  "projects": [
+    {
+      "project_id": "project-alpha",
+      "title": "Project Alpha",
+      "state_path": "dashboard/state/projects/project-alpha.json"
+    }
+  ]
+}
+""",
+                encoding="utf-8",
+            )
+            (dashboard / "state" / "projects").mkdir(parents=True)
+            (dashboard / "state" / "projects" / "project-alpha.json").write_text(
+                """{
+  "schema_version": "project.v1",
+  "project_id": "project-alpha",
+  "title": "Dashboard Project Alpha"
+}
+""",
+                encoding="utf-8",
+            )
             (dashboard / "state" / "tasks.json").write_text(
                 """{
   "schema_version": "tasks.v1",
@@ -389,6 +413,11 @@ class HarnessConductorLoopTests(unittest.TestCase):
 
                 pull = import_dashboard_todos("test-user", dashboard_root=dashboard, project_id="project-alpha")
                 self.assertEqual(pull["created"], 1)
+                project_titles = {
+                    project["project_id"]: project["title"]
+                    for project in get_harness_state("test-user")["projects"]
+                }
+                self.assertEqual(project_titles["project-alpha"], "Dashboard Project Alpha")
                 verify = conductor.verify_finished_tasks("test-user", project_id="project-alpha")
                 self.assertEqual(verify["accepted"], 1)
                 state = get_harness_state("test-user")

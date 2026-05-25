@@ -86,6 +86,50 @@ def load_dashboard_tasks_doc(dashboard_root: Path | None = None) -> tuple[dict[s
         return json.loads(body), url
 
 
+def load_dashboard_project_titles(dashboard_root: Path | None = None) -> dict[str, str]:
+    """Read project titles from the dashboard state without importing content into code."""
+
+    titles: dict[str, str] = {}
+    if dashboard_root is not None:
+        portfolio_path = dashboard_root / "state" / "portfolio.json"
+        if portfolio_path.exists():
+            portfolio = load_json(portfolio_path)
+            for project in portfolio.get("projects", []) or []:
+                if not isinstance(project, dict):
+                    continue
+                project_id = str(project.get("project_id") or "").strip()
+                title = str(project.get("title") or project.get("name") or "").strip()
+                if project_id and title:
+                    titles[project_id] = title
+                state_path = str(project.get("state_path") or "").strip()
+                if project_id and state_path:
+                    project_path = dashboard_root.parent / state_path
+                    if project_path.exists():
+                        project_doc = load_json(project_path)
+                        doc_title = str(project_doc.get("title") or project_doc.get("name") or "").strip()
+                        if doc_title:
+                            titles[project_id] = doc_title
+        return titles
+
+    try:
+        base_url = default_dashboard_url()
+    except RuntimeError:
+        return titles
+    try:
+        with urllib.request.urlopen(f"{base_url}/state/portfolio.json", timeout=20) as response:
+            portfolio = json.loads(response.read().decode("utf-8", errors="replace"))
+    except Exception:
+        return titles
+    for project in portfolio.get("projects", []) or []:
+        if not isinstance(project, dict):
+            continue
+        project_id = str(project.get("project_id") or "").strip()
+        title = str(project.get("title") or project.get("name") or "").strip()
+        if project_id and title:
+            titles[project_id] = title
+    return titles
+
+
 def dashboard_repo_root(dashboard_root: Path | None = None) -> Path:
     return (dashboard_root or default_dashboard_root()).resolve().parent
 
@@ -159,6 +203,7 @@ def import_dashboard_todos(
     created = 0
     updated = 0
     skipped = 0
+    project_titles = load_dashboard_project_titles(dashboard_root)
 
     for task in tasks:
         if not isinstance(task, dict):
@@ -175,10 +220,12 @@ def import_dashboard_todos(
         if not task_id:
             skipped += 1
             continue
+        project = str(task.get("project_id") or project_id or "default")
         local = existing.get(task_id)
         payload = {
             "action": "task_upsert",
-            "project_id": str(task.get("project_id") or project_id),
+            "project_id": project,
+            "project_title": project_titles.get(project, ""),
             "task_id": task_id,
             "title": str(task.get("title") or task_id),
             "description": str(task.get("description") or ""),

@@ -7757,7 +7757,7 @@ function harnessProjectRemoteLabel(tasks, agentsByTask, sessions = [], projectAg
     return `${normalized.user || ''}${normalized.user ? '@' : ''}${normalized.host || ''}`;
   }).find(Boolean);
   if (sessionRemote) return sessionRemote;
-  return tasks.map(task => task.assignee).find(Boolean) || '';
+  return '';
 }
 
 function harnessSessionProjectId(session) {
