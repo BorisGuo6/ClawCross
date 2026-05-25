@@ -8220,7 +8220,12 @@ function renderRemoteClaudeSessionCard(session, index) {
   const liveStatus = String(session.status || '').toLowerCase();
   const reviewOnly = !!session.harness_review_placeholder;
   const placeholderOnly = reviewOnly || !!session.harness_worker_placeholder || !key;
-  const status = reviewOnly ? 'review' : (liveStatus || harnessStatus || taskStatus || 'idle');
+  const workStatus = harnessStatus || taskStatus;
+  const status = reviewOnly
+    ? 'review'
+    : (['', 'idle', 'shell'].includes(liveStatus) && ['running', 'active', 'needs_user', 'blocked', 'review'].includes(workStatus)
+      ? workStatus
+      : (liveStatus || workStatus || 'idle'));
   const linkedLine = linked.task
     ? `${_currentLang === 'zh' ? '绑定 TODO' : 'Linked TODO'}: ${linked.task.title || linked.task.task_id}${taskStatus ? ' · ' + harnessStatusText(taskStatus) : ''}`
     : '';
