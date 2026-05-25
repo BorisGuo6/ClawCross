@@ -1256,8 +1256,7 @@ def assign_next_dashboard_todos(
             for task in open_tasks
             if str(task.get("task_id") or "") not in used_task_ids
             and (
-                bool(project_id)
-                or not agent_project_id
+                not agent_project_id
                 or str(task.get("project_id") or "").strip() in _agent_supported_project_ids(agent, state)
             )
         ]

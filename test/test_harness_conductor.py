@@ -158,6 +158,40 @@ class HarnessConductorDecisionTests(unittest.TestCase):
         self.assertIsNotNone(decision)
         self.assertEqual(decision.agent_id, "project-beta-remoteuser@192.0.2.29")
 
+    def test_project_scoped_assignment_respects_worker_project(self):
+        state = {
+            "tasks": [
+                {
+                    "task_id": "task_umi_next",
+                    "project_id": "umi-world-model",
+                    "title": "Continue UMI work",
+                    "status": "todo",
+                }
+            ],
+            "agents": [
+                {
+                    "agent_id": "self-improving@192.0.2.10",
+                    "project_id": "self-improving-agents",
+                    "current_task_id": "",
+                    "session_ref": "remote@192.0.2.10::session_self",
+                    "status": "idle",
+                    "needs_user": False,
+                    "metadata": {},
+                }
+            ],
+            "runs": [],
+        }
+
+        assignments = conductor.assign_next_dashboard_todos(
+            "boris",
+            [{"remote_key": "remote@192.0.2.10::session_self", "status": "idle"}],
+            state,
+            project_id="umi-world-model",
+            dry_run=True,
+        )
+
+        self.assertEqual(assignments, [])
+
     def test_mark_sent_prevents_immediate_duplicate_reply(self):
         session = {
             "display_id": "session_abc",
