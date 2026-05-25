@@ -7709,6 +7709,18 @@ function harnessProjectIsActive(project) {
   return !['done', 'completed', 'closed', 'archived', 'cancelled'].includes(status);
 }
 
+function harnessProjectOnlineWorkerCount(row) {
+  return (Array.isArray(row && row.sessions) ? row.sessions : []).filter(session => {
+    if (!session || session.harness_review_placeholder || session.harness_worker_placeholder) return false;
+    const status = String(session.status || '').toLowerCase();
+    return !['offline', 'error', 'closed', 'deleted'].includes(status);
+  }).length;
+}
+
+function harnessProjectBoundWorkerCount(row) {
+  return harnessUniqueAgents((row && row.agents) || []).filter(agent => harnessWorkerSessionRef(agent)).length;
+}
+
 function harnessAgentMatchesRemoteSession(agent, session) {
   const ref = harnessWorkerSessionRef(agent);
   if (!ref || !session) return false;
@@ -8020,6 +8032,12 @@ function renderHarnessState(payload) {
   });
   Array.from(projectRows.entries())
     .sort((a, b) => {
+      const onlineA = harnessProjectOnlineWorkerCount(a[1]);
+      const onlineB = harnessProjectOnlineWorkerCount(b[1]);
+      if (onlineA !== onlineB) return onlineB - onlineA;
+      const boundA = harnessProjectBoundWorkerCount(a[1]);
+      const boundB = harnessProjectBoundWorkerCount(b[1]);
+      if (boundA !== boundB) return boundB - boundA;
       const rankA = a[1].tasks.length ? Math.min(...a[1].tasks.map(harnessTaskRank)) : 6;
       const rankB = b[1].tasks.length ? Math.min(...b[1].tasks.map(harnessTaskRank)) : 6;
       return rankA - rankB || String(a[0]).localeCompare(String(b[0]));
