@@ -30,10 +30,7 @@ class SessionWorkspace:
 
 def _user_root(user_id: str) -> Path:
     safe_user = os.path.basename(user_id or "anonymous")
-    if WORKSPACE_DIR != _DEFAULT_WORKSPACE_DIR and USER_FILES_DIR == _DEFAULT_USER_FILES_DIR:
-        root = WORKSPACE_DIR / "users" / safe_user
-    else:
-        root = USER_FILES_DIR / safe_user
+    root = WORKSPACE_DIR / "users" / safe_user
     root.mkdir(parents=True, exist_ok=True)
     _ensure_runtime_aliases(user_id, root)
     return root
@@ -79,7 +76,9 @@ def _ensure_runtime_aliases(user_id: str, workspace_root: Path) -> None:
 def _ensure_within(base: Path, candidate: Path) -> Path:
     resolved_base = base.resolve()
     resolved_candidate = candidate.resolve()
-    if not str(resolved_candidate).startswith(str(resolved_base)):
+    try:
+        resolved_candidate.relative_to(resolved_base)
+    except ValueError:
         raise ValueError(f"非法工作目录: {candidate}")
     return resolved_candidate
 

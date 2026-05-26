@@ -14,7 +14,9 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-if "mcp.server.fastmcp" not in sys.modules:
+try:
+    from mcp.server.fastmcp import FastMCP as _ImportedFastMCP  # noqa: F401
+except Exception:
     fastmcp_module = types.ModuleType("mcp.server.fastmcp")
 
     class FastMCP:
@@ -31,9 +33,20 @@ if "mcp.server.fastmcp" not in sys.modules:
             return None
 
     fastmcp_module.FastMCP = FastMCP
+    fastmcp_module.__path__ = []
     sys.modules["mcp.server.fastmcp"] = fastmcp_module
 
-if "httpx" not in sys.modules:
+    fastmcp_tools_module = types.ModuleType("mcp.server.fastmcp.tools")
+
+    class Tool:
+        pass
+
+    fastmcp_tools_module.Tool = Tool
+    sys.modules["mcp.server.fastmcp.tools"] = fastmcp_tools_module
+
+try:
+    import httpx as _ImportedHttpx  # noqa: F401
+except Exception:
     httpx_module = types.ModuleType("httpx")
 
     class AsyncClient:
@@ -49,7 +62,9 @@ if "httpx" not in sys.modules:
     httpx_module.AsyncClient = AsyncClient
     sys.modules["httpx"] = httpx_module
 
-if "dotenv" not in sys.modules:
+try:
+    from dotenv import load_dotenv as _ImportedLoadDotenv  # noqa: F401
+except Exception:
     dotenv_module = types.ModuleType("dotenv")
 
     def load_dotenv(*args, **kwargs):

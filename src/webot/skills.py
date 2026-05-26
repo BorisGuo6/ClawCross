@@ -131,9 +131,11 @@ def _build_frontmatter(meta: dict[str, str], body: str) -> str:
 
 
 def _validate_skill_frontmatter(content: str) -> str:
+    if not content.startswith("---"):
+        return ""
     meta, _ = _parse_frontmatter(content)
     if not meta:
-        return "Skill content must include YAML frontmatter."
+        return "Skill frontmatter is malformed."
     if not (meta.get("name") or "").strip():
         return "Skill frontmatter must include name."
     if not (meta.get("description") or "").strip():

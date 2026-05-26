@@ -63,6 +63,19 @@ class WeBotWorkspaceTests(unittest.TestCase):
             self.assertEqual(workspace.mode, "isolated")
             self.assertTrue(str(workspace.cwd).endswith("repo/src"))
 
+    def test_shared_workspace_rejects_prefix_sibling_escape(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            original_workspace_dir = webot_workspace.WORKSPACE_DIR
+            original_user_files = webot_workspace.USER_FILES_DIR
+            self.addCleanup(setattr, webot_workspace, "WORKSPACE_DIR", original_workspace_dir)
+            self.addCleanup(setattr, webot_workspace, "USER_FILES_DIR", original_user_files)
+            webot_workspace.WORKSPACE_DIR = root / "workspace"
+            webot_workspace.USER_FILES_DIR = root / "user_files"
+
+            with self.assertRaisesRegex(ValueError, "非法工作目录"):
+                resolve_session_workspace("alice", "", explicit_cwd="../alice2")
+
     def test_worktree_workspace_creates_git_worktree(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace_root = Path(tmpdir) / "workspace"

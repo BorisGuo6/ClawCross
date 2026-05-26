@@ -42,7 +42,6 @@ from webot.policy import get_tool_policy, run_tool_policy_hooks
 from webot.runtime import normalize_session_mode
 from webot.runtime_store import (
     claim_run_worker,
-    clear_run_interrupt,
     create_inbox_message,
     create_run_record,
     delete_session_plan,
@@ -53,9 +52,7 @@ from webot.runtime_store import (
     get_session_mode as load_session_mode,
     get_session_plan,
     get_session_todos,
-    heartbeat_run,
     list_inbox_messages,
-    list_recoverable_runs,
     list_run_events,
     list_runs_for_parent_session,
     list_runs_for_session,
@@ -351,85 +348,8 @@ def _active_background_task(agent_id: str) -> asyncio.Task | None:
         return None
     return task
 
-async def _run_heartbeat_loop(
-    *,
-    run_id: str,
-    username: str,
-    stop_event: asyncio.Event,
-    interval_seconds: int = 15,
-) -> None:
-    while not stop_event.is_set():
-        await asyncio.sleep(max(5, interval_seconds))
-        if stop_event.is_set():
-            break
-        heartbeat_run(
-            run_id,
-            username,
-            worker_id=_WORKER_ID,
-            lease_seconds=max(20, interval_seconds * 3),
-        )
-
-def _schedule_background_run(
-    *,
-    run_id: str,
-    username: str,
-    agent_id: str,
-    session_id: str,
-    agent_type: str,
-    agent_name: str,
-    content: str,
-    parent_session: str,
-    timeout: int,
-    max_turns: int | None = None,
-) -> None:
-    _BACKGROUND_TASKS[agent_id] = asyncio.create_task(
-        _run_background_subagent(
-            run_id=run_id,
-            username=username,
-            agent_id=agent_id,
-            session_id=session_id,
-            agent_type=agent_type,
-            agent_name=agent_name,
-            content=content,
-            parent_session=parent_session,
-            timeout=timeout,
-            max_turns=max_turns,
-        )
-    )
-
 async def _recover_background_runs(username: str = "") -> None:
-    for run in list_recoverable_runs():
-        if username and run.user_id != username:
-            continue
-        if run.run_kind != "subagent" or run.wait_mode:
-            continue
-        if _active_background_task(run.agent_id) is not None:
-            continue
-        record = get_subagent(run.agent_id, run.user_id) or get_subagent_by_session(
-            run.session_id,
-            run.user_id,
-        )
-        _schedule_background_run(
-            run_id=run.run_id,
-            username=run.user_id,
-            agent_id=run.agent_id,
-            session_id=run.session_id,
-            agent_type=run.agent_type,
-            agent_name=record.name if record is not None else run.agent_id,
-            content=run.input_text,
-            parent_session=run.parent_session,
-            timeout=run.timeout_seconds,
-            max_turns=run.max_turns,
-        )
-        record_run_event(
-            run.user_id,
-            run.run_id,
-            run.session_id,
-            event_type="recovered",
-            status=run.status,
-            message="后台子 Agent 任务已恢复到本地调度器。",
-            worker_id=_WORKER_ID,
-        )
+    return None
 
 async def _call_internal_subagent(
     *,
@@ -493,7 +413,7 @@ async def _notify_parent_session(
         ),
     )
 
-async def _run_background_subagent(
+async def _dispatch_background_subagent(
     *,
     run_id: str,
     username: str,
@@ -503,183 +423,50 @@ async def _run_background_subagent(
     agent_name: str,
     content: str,
     parent_session: str,
-    timeout: int,
-    max_turns: int | None = None,
 ) -> None:
-    result = ""
-    heartbeat_stop = asyncio.Event()
-    heartbeat_task: asyncio.Task | None = None
+    current_run = update_run_status(
+        run_id,
+        username,
+        status="running",
+        attempt_delta=1,
+        parent_session=parent_session,
+    )
+    record_run_event(
+        username,
+        run_id,
+        session_id,
+        event_type="dispatched",
+        attempt=current_run.attempt_count if current_run is not None else 0,
+        status="running",
+        message=f"后台子 Agent 已交给主进程执行: {agent_name}",
+        details={
+            "agent_type": agent_type,
+            "parent_session": parent_session,
+        },
+    )
+    update_subagent_status(agent_id, username, status="running")
     try:
-        claimed = claim_run_worker(
-            run_id,
-            username,
-            worker_id=_WORKER_ID,
-            lease_seconds=max(30, min(timeout, 90)),
-            status="running",
-        )
-        if claimed is None:
-            return
-        current_run = update_run_status(
-            run_id,
-            username,
-            attempt_delta=1,
-            parent_session=parent_session,
-        )
-        record_run_event(
-            username,
-            run_id,
-            session_id,
-            event_type="started",
-            attempt=current_run.attempt_count if current_run is not None else 0,
-            status="running",
-            message=f"后台子 Agent 开始执行: {agent_name}",
-            details={
-                "worker_id": _WORKER_ID,
-                "agent_type": agent_type,
-                "parent_session": parent_session,
-            },
-        )
-        heartbeat_task = asyncio.create_task(
-            _run_heartbeat_loop(
-                run_id=run_id,
-                username=username,
-                stop_event=heartbeat_stop,
-                interval_seconds=min(20, max(10, timeout // 10 if timeout else 15)),
-            )
-        )
-        update_subagent_status(agent_id, username, status="running")
-        latest_state = get_run(run_id, username)
-        if latest_state is not None and latest_state.interrupt_requested:
-            raise asyncio.CancelledError
-        result = await _call_internal_subagent(
-            username=username,
-            session_id=session_id,
-            agent_type=agent_type,
-            content=content,
-            timeout=timeout,
-            max_turns=max_turns,
-        )
-        release_run_worker(
-            run_id,
-            username,
-            worker_id=_WORKER_ID,
-            status="completed",
-            last_result=result,
-            last_error="",
-            clear_interrupt=True,
-        )
-        record_run_event(
-            username,
-            run_id,
-            session_id,
-            event_type="completed",
-            status="completed",
-            message=f"后台子 Agent 执行完成: {agent_name}",
-        )
-        update_subagent_status(agent_id, username, status="completed", last_result=result)
-    except asyncio.CancelledError:
-        cancelled_text = "子 Agent 已取消。"
-        release_run_worker(
-            run_id,
-            username,
-            worker_id=_WORKER_ID,
-            status="cancelled",
-            last_result=cancelled_text,
-            last_error="cancelled",
-            clear_interrupt=True,
-        )
-        record_run_event(
-            username,
-            run_id,
-            session_id,
-            event_type="cancelled",
-            status="cancelled",
-            message=f"后台子 Agent 已取消: {agent_name}",
-        )
-        update_subagent_status(
-            agent_id,
-            username,
-            status="cancelled",
-            last_result=cancelled_text,
-        )
-        with contextlib.suppress(Exception):
-            await _notify_parent_session(
-                username=username,
-                parent_session=parent_session,
-                agent_id=agent_id,
-                agent_type=agent_type,
-                agent_name=agent_name,
-                result=cancelled_text,
-                status="cancelled",
-            )
-        raise
+        await _push_system_message(username=username, session_id=session_id, text=content)
     except Exception as exc:
-        error_text = f"子 Agent 运行失败: {exc}"
-        release_run_worker(
+        error_text = f"后台子 Agent 派发失败: {exc}"
+        update_run_status(
             run_id,
             username,
-            worker_id=_WORKER_ID,
             status="failed",
             last_error=error_text,
             last_result=error_text,
-            clear_interrupt=True,
+            clear_worker=True,
         )
+        update_subagent_status(agent_id, username, status="failed", last_result=error_text)
         record_run_event(
             username,
             run_id,
             session_id,
-            event_type="failed",
+            event_type="dispatch_failed",
             status="failed",
             message=error_text,
         )
-        update_subagent_status(
-            agent_id,
-            username,
-            status="failed",
-            last_result=error_text,
-        )
-        await _notify_parent_session(
-            username=username,
-            parent_session=parent_session,
-            agent_id=agent_id,
-            agent_type=agent_type,
-            agent_name=agent_name,
-            result=error_text,
-            status="failed",
-        )
-    else:
-        try:
-            await _notify_parent_session(
-                username=username,
-                parent_session=parent_session,
-                agent_id=agent_id,
-                agent_type=agent_type,
-                agent_name=agent_name,
-                result=result,
-                status="completed",
-            )
-        except Exception as exc:
-            update_subagent_status(
-                agent_id,
-                username,
-                status="completed",
-                last_result=f"{result}\n\n[系统提示] 父会话回调通知失败: {exc}",
-            )
-            record_run_event(
-                username,
-                run_id,
-                session_id,
-                event_type="callback_failed",
-                status="completed",
-                message=f"父会话回调失败: {exc}",
-            )
-    finally:
-        heartbeat_stop.set()
-        if heartbeat_task is not None:
-            heartbeat_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await heartbeat_task
-        _BACKGROUND_TASKS.pop(agent_id, None)
+        raise
 
 async def _cancel_internal_subagent(
     *,
@@ -1020,26 +807,19 @@ async def spawn_subagent(
                 f"error: {exc}"
             )
 
-    _schedule_background_run(
-        run_id=run_id,
-        username=username,
-        agent_id=agent_id,
-        session_id=session_id,
-        agent_type=profile.agent_type,
-        agent_name=record.name,
-        content=task,
-        parent_session=effective_parent_session,
-        timeout=timeout,
-        max_turns=max_turns,
-    )
-    record_run_event(
-        username,
-        run_id,
-        session_id,
-        event_type="scheduled",
-        status="queued",
-        message=f"后台子 Agent 已加入本地调度器: {record.name}",
-    )
+    try:
+        await _dispatch_background_subagent(
+            run_id=run_id,
+            username=username,
+            agent_id=agent_id,
+            session_id=session_id,
+            agent_type=profile.agent_type,
+            agent_name=record.name,
+            content=task,
+            parent_session=effective_parent_session,
+        )
+    except Exception as exc:
+        return f"❌ 后台子 Agent 派发失败: {exc}\nrun_id: {run_id}"
     return (
         f"🚀 {mode_label}子 Agent 已转后台运行\n"
         f"run_id: {run_id}\n"
@@ -1250,26 +1030,19 @@ async def send_subagent_message(
             )
             return f"❌ 子 Agent 续聊失败: {exc}\nrun_id: {run_id}"
 
-    _schedule_background_run(
-        run_id=run_id,
-        username=username,
-        agent_id=record.agent_id,
-        session_id=record.session_id,
-        agent_type=record.agent_type,
-        agent_name=record.name,
-        content=content,
-        parent_session=source_session or record.parent_session,
-        timeout=timeout,
-        max_turns=max_turns,
-    )
-    record_run_event(
-        username,
-        run_id,
-        record.session_id,
-        event_type="scheduled",
-        status="queued",
-        message=f"后台续聊已加入本地调度器: {record.name}",
-    )
+    try:
+        await _dispatch_background_subagent(
+            run_id=run_id,
+            username=username,
+            agent_id=record.agent_id,
+            session_id=record.session_id,
+            agent_type=record.agent_type,
+            agent_name=record.name,
+            content=content,
+            parent_session=source_session or record.parent_session,
+        )
+    except Exception as exc:
+        return f"❌ 子 Agent 后台续聊派发失败: {exc}\nrun_id: {run_id}"
     return (
         f"🚀 子 Agent 已收到后台续聊任务\n"
         f"run_id: {run_id}\n"

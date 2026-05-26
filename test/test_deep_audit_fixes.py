@@ -108,6 +108,7 @@ class TestBashSafetyRuntime:
         result = check_runtime_lists("npm run deploy --prod")
         assert result is not None
         assert result.risk_level.value == "high"
+        assert result.blocked
         remove_from_blocklist(r"npm\s+run\s+deploy")
 
     def test_detect_operator_chains(self):

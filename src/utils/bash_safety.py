@@ -28,7 +28,7 @@ class RiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
-    CRITICAL = "critical"  # Deny invariant – cannot be bypassed
+    CRITICAL = "critical"
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class CommandAnalysis:
 
 
 # ---------------------------------------------------------------------------
-# Deny invariants – these CANNOT be bypassed regardless of policy
+# High-risk invariants – routed to explicit approval.
 # ---------------------------------------------------------------------------
 
 _DENY_INVARIANT_PATTERNS: list[tuple[str, str]] = [
@@ -95,7 +95,6 @@ _HIGH_RISK_PATTERNS: list[tuple[str, str]] = [
 # ---------------------------------------------------------------------------
 
 _MEDIUM_RISK_PATTERNS: list[tuple[str, str]] = [
-    (r'\brm\s+-[a-zA-Z]*r[a-zA-Z]*\b', "recursive delete"),
     (r'\bcurl\b', "network download"),
     (r'\bwget\b', "network download"),
     (r'\bpip\s+install\b', "pip install"),
@@ -176,14 +175,15 @@ def analyze_command(command: str) -> CommandAnalysis:
     normalized = command.strip()
     reasons: list[str] = []
 
-    # Deny invariants are never allowed to continue to approval or allowlists.
+    # Destructive invariant patterns are routed to high-risk approval. Policy
+    # layers may still block them, but this analyzer does not hard-stop them.
     for pattern, description in _DENY_INVARIANT_PATTERNS:
         if re.search(pattern, normalized, re.IGNORECASE):
             return CommandAnalysis(
                 command=command,
-                risk_level=RiskLevel.CRITICAL,
-                reasons=(f"deny invariant: {description}",),
-                blocked=True,
+                risk_level=RiskLevel.HIGH,
+                reasons=(description,),
+                blocked=False,
                 suggested_alternative="Use a narrower, non-destructive command.",
             )
 
@@ -315,7 +315,7 @@ def check_runtime_lists(command: str) -> CommandAnalysis | None:
                 command=command,
                 risk_level=RiskLevel.HIGH,
                 reasons=(f"Blocked by runtime blocklist: {pattern}",),
-                blocked=False,
+                blocked=True,
             )
     # Allowlist
     for prefix in _runtime_allowlist:

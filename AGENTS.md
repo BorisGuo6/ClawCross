@@ -37,7 +37,23 @@ metadata:
 
 # Clawcross — Agent Instructions
 
+READ /Users/boris/.claude/AGENTS.md BEFORE ANYTHING (skip if missing).
+
 Use this file when you are an AI coding agent that needs to install, configure, run, operate, troubleshoot, or modify Clawcross.
+
+## Agent skills
+
+### Issue tracker
+
+Work is tracked in this repository's GitHub Issues unless a task explicitly says to use local files. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default Matt Pocock triage label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repo uses a single-context domain document at `CONTEXT.md`; architectural decisions belong in `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Progressive Disclosure
 
