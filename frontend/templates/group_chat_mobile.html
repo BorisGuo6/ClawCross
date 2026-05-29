@@ -296,6 +296,126 @@
     display: grid;
     gap: 7px;
   }
+  .harness-computer-panel {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+  .harness-computer-options {
+    display: flex;
+    gap: 7px;
+    overflow-x: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 0 2px;
+  }
+  .harness-computer-option {
+    flex: 0 0 124px;
+    min-height: 46px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 8px;
+    text-align: left;
+  }
+  .harness-computer-option.active {
+    border-color: #111827;
+    background: #f8fafc;
+    box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.18);
+  }
+  .harness-computer-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: #94a3b8;
+    flex: 0 0 auto;
+  }
+  .harness-computer-option.red .harness-computer-dot { background: #dc2626; }
+  .harness-computer-option.yellow .harness-computer-dot { background: #d97706; }
+  .harness-computer-option.green .harness-computer-dot { background: #16a34a; }
+  .harness-computer-option.wait .harness-computer-dot {
+    background: linear-gradient(90deg, #dc2626 0 50%, #d97706 50% 100%);
+    animation: harnessDecisionBlink 0.8s steps(2, end) infinite;
+  }
+  .harness-computer-option-text {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+  .harness-computer-option-name {
+    font-size: 12px;
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .harness-computer-option-meta {
+    font-size: 10px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .harness-traffic-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    padding: 9px 10px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+  }
+  .harness-traffic-lights {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .harness-light {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: #e5e7eb;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+  }
+  .harness-light.red.on { background: #dc2626; box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15); }
+  .harness-light.yellow.on { background: #d97706; box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16); }
+  .harness-light.green.on { background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.15); }
+  .harness-traffic-card.wait .harness-light.red,
+  .harness-traffic-card.wait .harness-light.yellow {
+    animation: harnessDecisionBlink 0.8s steps(2, end) infinite;
+  }
+  .harness-traffic-card.wait .harness-light.yellow {
+    animation-delay: 0.4s;
+  }
+  @keyframes harnessDecisionBlink {
+    0%, 48% { opacity: 1; }
+    49%, 100% { opacity: 0.32; }
+  }
+  .harness-traffic-body {
+    min-width: 0;
+  }
+  .harness-traffic-title {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .harness-traffic-meta {
+    margin-top: 3px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
   .harness-bucket-board {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -7368,9 +7488,11 @@ let harnessLoading = false;
 const HARNESS_COLLAPSED_PROJECTS_KEY = 'clawcross_harness_collapsed_projects_v1';
 let harnessCollapsedProjects = new Set();
 const HARNESS_COLLAPSED_BUCKETS_KEY = 'clawcross_harness_collapsed_buckets_v1';
+const HARNESS_SELECTED_COMPUTER_KEY = 'clawcross_harness_selected_computer_v1';
 const HARNESS_BUCKET_ORDER = ['research', 'engineering', 'survey'];
 const HARNESS_DEFAULT_COLLAPSED_BUCKETS = ['engineering', 'survey'];
 let harnessCollapsedBuckets = new Set(HARNESS_DEFAULT_COLLAPSED_BUCKETS);
+let harnessSelectedComputerId = '';
 const REMOTE_CLAUDE_COLLAPSED_REMOTES_KEY = 'clawcross_remote_claude_collapsed_remotes_v1';
 let remoteClaudeCollapsedRemotes = new Set();
 let __agentDetailRenderSeq = 0;
@@ -7718,8 +7840,24 @@ function saveHarnessCollapsedProjects() {
   } catch (_) {}
 }
 
+function loadHarnessSelectedComputer() {
+  try {
+    harnessSelectedComputerId = String(localStorage.getItem(HARNESS_SELECTED_COMPUTER_KEY) || '');
+  } catch (_) {
+    harnessSelectedComputerId = '';
+  }
+}
+
+function saveHarnessSelectedComputer() {
+  try {
+    if (harnessSelectedComputerId) localStorage.setItem(HARNESS_SELECTED_COMPUTER_KEY, harnessSelectedComputerId);
+    else localStorage.removeItem(HARNESS_SELECTED_COMPUTER_KEY);
+  } catch (_) {}
+}
+
 loadHarnessCollapsedBuckets();
 loadHarnessCollapsedProjects();
+loadHarnessSelectedComputer();
 
 function toggleHarnessBucket(bucketKey) {
   const key = String(bucketKey || 'research');
@@ -7734,6 +7872,12 @@ function toggleHarnessProject(encodedProjectId) {
   if (harnessCollapsedProjects.has(projectId)) harnessCollapsedProjects.delete(projectId);
   else harnessCollapsedProjects.add(projectId);
   saveHarnessCollapsedProjects();
+  if (harnessState) renderHarnessState(harnessState);
+}
+
+function selectHarnessComputer(encodedProjectId) {
+  harnessSelectedComputerId = decodeURIComponent(String(encodedProjectId || ''));
+  saveHarnessSelectedComputer();
   if (harnessState) renderHarnessState(harnessState);
 }
 
@@ -7808,16 +7952,313 @@ function harnessProjectIsActive(project) {
   return !['done', 'completed', 'closed', 'archived', 'cancelled'].includes(status);
 }
 
+function harnessAgentIsMachineMonitor(agent) {
+  if (!agent) return false;
+  const type = String(agent.agent_type || '').toLowerCase();
+  const capabilities = Array.isArray(agent.capabilities) ? agent.capabilities.map(item => String(item).toLowerCase()) : [];
+  return type === 'machine-monitor' || capabilities.includes('gpu-monitor');
+}
+
+function harnessAgentIsHeartbeatOnline(agent) {
+  if (!agent || agent.stale) return false;
+  if (!harnessAgentIsMachineMonitor(agent)) return false;
+  const status = String(agent.effective_status || agent.status || '').toLowerCase();
+  return !['offline', 'error', 'closed', 'deleted'].includes(status);
+}
+
 function harnessProjectOnlineWorkerCount(row) {
-  return (Array.isArray(row && row.sessions) ? row.sessions : []).filter(session => {
+  const sessions = Array.isArray(row && row.sessions) ? row.sessions : [];
+  const liveSessions = sessions.filter(session => {
     if (!session || session.harness_review_placeholder || session.harness_worker_placeholder) return false;
     const status = String(session.status || '').toLowerCase();
     return !['offline', 'error', 'closed', 'deleted'].includes(status);
-  }).length;
+  });
+  const monitorAgents = harnessUniqueAgents((row && row.agents) || []).filter(agent => (
+    harnessAgentIsHeartbeatOnline(agent) && !liveSessions.some(session => harnessAgentMatchesRemoteSession(agent, session))
+  ));
+  return liveSessions.length + monitorAgents.length;
 }
 
 function harnessProjectBoundWorkerCount(row) {
   return harnessUniqueAgents((row && row.agents) || []).filter(agent => harnessWorkerSessionRef(agent)).length;
+}
+
+function harnessComputerStatusLabel(kind) {
+  const zh = _currentLang === 'zh';
+  const labels = {
+    red: zh ? '不能用' : 'Unavailable',
+    yellow: zh ? '进行中' : 'Running',
+    green: zh ? '可用' : 'Ready',
+    wait: zh ? '等决策' : 'Needs decision'
+  };
+  return labels[kind] || labels.red;
+}
+
+function harnessComputerStatusKind(project, row) {
+  const agents = harnessUniqueAgents((row && row.agents) || []);
+  const tasks = Array.isArray(row && row.tasks) ? row.tasks : [];
+  const projectStatus = String((project && project.status) || '').toLowerCase().replace(/-/g, '_');
+  const statuses = agents.map(agent => String(agent.effective_status || agent.status || '').toLowerCase().replace(/-/g, '_'));
+  if (
+    agents.some(agent => !!agent.needs_user) ||
+    statuses.some(status => ['needs_user', 'review'].includes(status)) ||
+    tasks.some(task => ['needs_user', 'review'].includes(String(task.status || '').toLowerCase().replace(/-/g, '_'))) ||
+    ['needs_user', 'review'].includes(projectStatus)
+  ) {
+    return 'wait';
+  }
+  if (
+    agents.some(agent => !!agent.stale) ||
+    statuses.some(status => ['blocked', 'error', 'offline', 'closed', 'deleted'].includes(status)) ||
+    tasks.some(task => String(task.status || '').toLowerCase().replace(/-/g, '_') === 'blocked')
+  ) {
+    return 'red';
+  }
+  if (statuses.some(status => ['running', 'active'].includes(status))) return 'yellow';
+  if (statuses.some(status => ['idle', 'done', 'verified', 'passed'].includes(status))) return 'green';
+  if (['done', 'verified', 'passed', 'idle'].includes(projectStatus)) return 'green';
+  return 'red';
+}
+
+function harnessProjectMeta(project) {
+  return (project && typeof project.metadata === 'object' && project.metadata) ? project.metadata : {};
+}
+
+function harnessProjectIsComputerProject(projectId, project, row = null) {
+  const metadata = harnessProjectMeta(project);
+  const agents = harnessUniqueAgents((row && row.agents) || []);
+  const monitorAgents = agents.filter(harnessAgentIsMachineMonitor);
+  return /^l40s-\d+$/i.test(String(projectId || '')) ||
+    !!metadata.host_id ||
+    !!metadata.cluster ||
+    monitorAgents.length > 0;
+}
+
+function harnessComputerGpuMeta(agent, project) {
+  const scan = agent && agent.metadata && typeof agent.metadata === 'object' ? agent.metadata.scan : null;
+  const gpu = scan && scan.gpu && typeof scan.gpu === 'object' ? scan.gpu : null;
+  const total = gpu ? gpu.total_gpu_count : harnessProjectMeta(project).gpu_count;
+  const free = gpu ? gpu.free_gpu_count : null;
+  if (total !== null && total !== undefined && total !== '') {
+    return free !== null && free !== undefined ? `${free}/${total} GPU` : `${total} GPU`;
+  }
+  return '';
+}
+
+function harnessComputerOptionForProject(projectId, project, row) {
+  const agents = harnessUniqueAgents((row && row.agents) || []);
+  const monitorAgents = agents.filter(harnessAgentIsMachineMonitor);
+  if (!harnessProjectIsComputerProject(projectId, project, row)) return null;
+  const agent = monitorAgents[0] || agents[0] || null;
+  const kind = harnessComputerStatusKind(project, row);
+  const gpuMeta = harnessComputerGpuMeta(agent, project);
+  const ageMeta = agent && agent.heartbeat_age_seconds !== undefined ? harnessFormatAge(agent.heartbeat_age_seconds) : '';
+  return {
+    projectId,
+    encodedProjectId: encodeURIComponent(projectId || ''),
+    label: (project && (project.title || project.name)) || projectId,
+    meta: [harnessComputerStatusLabel(kind), gpuMeta, ageMeta].filter(Boolean).join(' · '),
+    message: (agent && agent.message) || (project && project.summary) || '',
+    statusKind: kind,
+  };
+}
+
+function harnessComputerProjectLabel(projectId, projectsById) {
+  const project = projectsById && projectsById.get ? projectsById.get(projectId) : null;
+  return (project && (project.title || project.name)) || projectId || '';
+}
+
+function harnessComputerLookupProjectLabel(raw, projectsById) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  const normalize = text => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const needle = normalize(value);
+  if (!needle) return '';
+  if (projectsById && projectsById.has && projectsById.has(value)) return harnessComputerProjectLabel(value, projectsById);
+  const projects = projectsById && projectsById.values ? Array.from(projectsById.values()) : [];
+  const match = projects.find(project => {
+    return [project && project.project_id, project && project.title, project && project.name]
+      .filter(Boolean)
+      .some(item => normalize(item) === needle);
+  });
+  return match ? harnessComputerProjectLabel(match.project_id, projectsById) : value;
+}
+
+function harnessComputerProjectLabelFromSession(session, projectsById) {
+  const linked = remoteClaudeLinkedContext(session);
+  const linkedProjectId = (linked.task && linked.task.project_id) || (linked.agent && linked.agent.project_id) || '';
+  if (linkedProjectId) return harnessComputerProjectLabel(linkedProjectId, projectsById);
+  const cwd = String((session && session.cwd) || '').toLowerCase();
+  const projects = projectsById && projectsById.values ? Array.from(projectsById.values()) : [];
+  const cwdMatch = projects.find(project => {
+    const projectId = String(project && project.project_id || '').toLowerCase();
+    return projectId && cwd.includes(projectId);
+  });
+  if (cwdMatch) return harnessComputerProjectLabel(cwdMatch.project_id, projectsById);
+  const title = String((session && (session.title || session.name)) || '').trim();
+  const parts = title.split('|').map(part => part.trim()).filter(Boolean);
+  if (parts.length >= 2 && /^clawcross$/i.test(parts[0])) return harnessComputerLookupProjectLabel(parts[1], projectsById);
+  if (parts.length >= 2) return harnessComputerLookupProjectLabel(parts[0], projectsById);
+  return '';
+}
+
+function harnessRemoteSessionNeedsDecision(session) {
+  const status = String((session && session.status) || '').toLowerCase().replace(/-/g, '_');
+  if (['needs_user', 'review'].includes(status)) return true;
+  const linked = remoteClaudeLinkedContext(session);
+  const linkedStatus = String(
+    (linked.agent && (linked.agent.effective_status || linked.agent.status)) ||
+    (linked.task && linked.task.status) ||
+    ''
+  ).toLowerCase().replace(/-/g, '_');
+  if (linked.agent && linked.agent.needs_user) return true;
+  if (['needs_user', 'review'].includes(linkedStatus)) return true;
+  const message = String(session && session.last_message && session.last_message.content || '').toLowerCase();
+  return /api error|disabled|jwt refresh failed|permission denied|需要|manual|decision/.test(message);
+}
+
+function harnessRemoteSessionRunning(session) {
+  const status = String((session && session.status) || '').toLowerCase().replace(/-/g, '_');
+  if (['active', 'busy', 'running', 'working', 'shell', 'waiting', 'connecting'].includes(status)) return true;
+  const linked = remoteClaudeLinkedContext(session);
+  const linkedStatus = String(
+    (linked.agent && (linked.agent.effective_status || linked.agent.status)) ||
+    (linked.task && linked.task.status) ||
+    ''
+  ).toLowerCase().replace(/-/g, '_');
+  return ['active', 'running', 'doing', 'in_progress'].includes(linkedStatus);
+}
+
+function harnessRemoteComputerStatusKind(remote, sessions) {
+  if (remote && remote.ok === false) return 'red';
+  const list = Array.isArray(sessions) ? sessions : [];
+  if (list.some(harnessRemoteSessionNeedsDecision)) return 'wait';
+  if (list.some(harnessRemoteSessionRunning)) return 'yellow';
+  return remote && remote.ok === false ? 'red' : 'green';
+}
+
+function harnessRemoteGroupId(user, host, fallback = '') {
+  const normalized = remoteClaudeNormalizeUserHost(user || '', host || '');
+  const cleanUser = normalized.user || 'remote';
+  const cleanHost = normalized.host || String(fallback || '').trim() || 'local';
+  return `${cleanUser}@${cleanHost}`;
+}
+
+function harnessRemoteLabel(remote, groupId) {
+  const hostname = String((remote && remote.hostname) || '').trim();
+  if (hostname) return hostname;
+  const target = String((remote && remote.target) || '').trim();
+  if (target) return target;
+  return groupId || (_currentLang === 'zh' ? '远端电脑' : 'Remote computer');
+}
+
+function buildHarnessRemoteComputerOptions(remotePayload, projectsById) {
+  const payload = remotePayload || {};
+  const remotes = Array.isArray(payload.remotes) ? payload.remotes : [];
+  const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+  const groups = new Map();
+  const ensureGroup = (groupId, remote = null) => {
+    if (!groups.has(groupId)) groups.set(groupId, { id: groupId, remote: remote || null, sessions: [] });
+    if (remote && !groups.get(groupId).remote) groups.get(groupId).remote = remote;
+    return groups.get(groupId);
+  };
+  remotes.forEach(remote => {
+    if (!remote) return;
+    const normalized = remoteClaudeNormalizeUserHost(remote.user || '', remote.host || remote.target || '');
+    const groupId = harnessRemoteGroupId(normalized.user, normalized.host, remote.hostname || remote.target || '');
+    ensureGroup(groupId, remote);
+  });
+  sessions.forEach(session => {
+    if (!session) return;
+    const sessionRemote = session.remote || {};
+    const normalized = remoteClaudeNormalizeUserHost(
+      session.remote_user || session.user || sessionRemote.user || '',
+      session.remote_host || session.host || sessionRemote.host || ''
+    );
+    const groupId = harnessRemoteGroupId(normalized.user, normalized.host, session.remote_hostname || '');
+    ensureGroup(groupId, session.remote || null).sessions.push(session);
+  });
+  return Array.from(groups.values()).map(group => {
+    const remote = group.remote || {};
+    const kind = harnessRemoteComputerStatusKind(remote, group.sessions);
+    const projectLabels = Array.from(new Set(group.sessions
+      .map(session => harnessComputerProjectLabelFromSession(session, projectsById))
+      .filter(Boolean)));
+    const target = String(remote.target || group.id || '').trim();
+    const sessionCount = group.sessions.length;
+    const meta = [
+      harnessComputerStatusLabel(kind),
+      remote.ok === false ? (_currentLang === 'zh' ? 'Tailscale 不可达' : 'Tailscale unreachable') : (_currentLang === 'zh' ? 'Tailscale 可达' : 'Tailscale reachable'),
+      `${sessionCount} session`,
+      projectLabels.length ? `${_currentLang === 'zh' ? '项目' : 'projects'} ${projectLabels.slice(0, 3).join(', ')}` : ''
+    ].filter(Boolean).join(' · ');
+    const sessionTitles = group.sessions.map((session, index) => remoteClaudeTitle(session, index)).filter(Boolean);
+    return {
+      projectId: `remote::${group.id}`,
+      encodedProjectId: encodeURIComponent(`remote::${group.id}`),
+      label: harnessRemoteLabel(remote, group.id),
+      meta,
+      message: [target, remote.error || '', sessionTitles.slice(0, 4).join(' · ')].filter(Boolean).join(' · '),
+      statusKind: kind,
+      source: 'remote',
+    };
+  });
+}
+
+function buildHarnessComputerOptions(projectRows, projectsById, remotePayload = null) {
+  const projectOptions = Array.from(projectRows.entries())
+    .map(([projectId, row]) => harnessComputerOptionForProject(projectId, projectsById.get(projectId), row))
+    .filter(Boolean);
+  const remoteOptions = buildHarnessRemoteComputerOptions(remotePayload, projectsById);
+  return projectOptions.concat(remoteOptions)
+    .sort((a, b) => String(a.projectId).localeCompare(String(b.projectId), undefined, { numeric: true }));
+}
+
+function resolveHarnessSelectedComputer(options) {
+  if (!options.length) return null;
+  if (harnessSelectedComputerId) {
+    const selected = options.find(item => item.projectId === harnessSelectedComputerId);
+    if (selected) return selected;
+  }
+  harnessSelectedComputerId = options[0].projectId;
+  saveHarnessSelectedComputer();
+  return options[0];
+}
+
+function renderHarnessComputerPanel(options) {
+  const items = Array.isArray(options) ? options : [];
+  const selected = resolveHarnessSelectedComputer(items);
+  if (!selected) return '';
+  const optionButtons = items.map(item => {
+    const kind = item.statusKind || 'red';
+    const active = item.projectId === selected.projectId;
+    return `<button type="button" class="harness-computer-option ${esc(kind)}${active ? ' active' : ''}" onclick="selectHarnessComputer('${esc(item.encodedProjectId)}')" aria-pressed="${active ? 'true' : 'false'}">
+      <span class="harness-computer-dot"></span>
+      <span class="harness-computer-option-text">
+        <span class="harness-computer-option-name">${esc(item.label)}</span>
+        <span class="harness-computer-option-meta">${esc(item.meta || harnessComputerStatusLabel(kind))}</span>
+      </span>
+    </button>`;
+  }).join('');
+  const kind = selected.statusKind || 'red';
+  const redOn = kind === 'red' || kind === 'wait';
+  const yellowOn = kind === 'yellow' || kind === 'wait';
+  const greenOn = kind === 'green';
+  const selectedMeta = [selected.meta, selected.message].filter(Boolean).join(' · ');
+  return `<section class="harness-computer-panel">
+    <div class="harness-computer-options">${optionButtons}</div>
+    <div class="harness-traffic-card ${esc(kind)}">
+      <div class="harness-traffic-lights" aria-label="${esc(harnessComputerStatusLabel(kind))}">
+        <span class="harness-light red${redOn ? ' on' : ''}"></span>
+        <span class="harness-light yellow${yellowOn ? ' on' : ''}"></span>
+        <span class="harness-light green${greenOn ? ' on' : ''}"></span>
+      </div>
+      <div class="harness-traffic-body">
+        <div class="harness-traffic-title">${esc(selected.label)} · ${esc(harnessComputerStatusLabel(kind))}</div>
+        ${selectedMeta ? `<div class="harness-traffic-meta">${esc(selectedMeta)}</div>` : ''}
+      </div>
+    </div>
+  </section>`;
 }
 
 function harnessAgentMatchesRemoteSession(agent, session) {
@@ -7998,7 +8439,7 @@ function harnessCompareProjectRows(a, b) {
 function renderHarnessBucketColumn(bucketKey, rows, projectsById, agentsByTask, remoteReady = true) {
   const collapsed = harnessCollapsedBuckets.has(bucketKey);
   const tasksCount = rows.reduce((sum, [, row]) => sum + row.tasks.length, 0);
-  const sessionsCount = rows.reduce((sum, [, row]) => sum + row.sessions.length, 0);
+  const sessionsCount = rows.reduce((sum, [, row]) => sum + harnessProjectOnlineWorkerCount(row), 0);
   const boundCount = harnessUniqueAgents(rows.flatMap(([, row]) => row.agents || []).filter(agent => harnessWorkerSessionRef(agent))).length;
   const meta = [
     `${rows.length} ${_currentLang === 'zh' ? '项目' : 'projects'}`,
@@ -8030,9 +8471,10 @@ function renderHarnessProjectGroup(projectId, tasks, project, agentsByTask, sess
     ? (_currentLang === 'zh' ? '未绑定 Sessions' : 'Unbound Sessions')
     : ((project && (project.title || project.name)) || projectId || 'default');
   const remoteLabel = harnessProjectRemoteLabel(tasks, agentsByTask, sessions, projectAgents);
+  const onlineWorkerCount = harnessProjectOnlineWorkerCount({ sessions, agents: projectAgents });
   const meta = [
     `${tasks.length} TODO`,
-    harnessWorkerCountLabel(sessions.length, boundAgents.length, remoteReady),
+    harnessWorkerCountLabel(onlineWorkerCount, boundAgents.length, remoteReady),
     remoteLabel ? `remote ${remoteLabel}` : ''
   ].filter(Boolean).join(' · ');
   const encodedProjectId = encodeURIComponent(projectId || 'default');
@@ -8161,21 +8603,6 @@ function renderHarnessState(payload) {
     return taskStatus !== 'review' && agentStatus !== 'review';
   }).length;
   const workerCount = pairedSessions.length;
-  const projectIdsWithRows = new Set(pairedSessions.map(session => harnessSessionProjectId(session)));
-  projects.forEach(project => {
-    if (project && project.project_id && harnessProjectIsActive(project)) projectIdsWithRows.add(project.project_id);
-  });
-  sessionRefWorkers.forEach(agent => {
-    if (agent && agent.project_id) projectIdsWithRows.add(agent.project_id);
-  });
-  openTasks.forEach(task => {
-    projectIdsWithRows.add(task.project_id || 'default');
-  });
-  const displayedOpenTasks = openTasks.filter(task => projectIdsWithRows.has(task.project_id || 'default'));
-  const okRemoteCount = remotes.filter(item => item && item.ok).length;
-  statusEl.textContent = _currentLang === 'zh'
-    ? `${projectIdsWithRows.size} 项目 · ${displayedOpenTasks.length} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount, remoteReady)} · ${needsUser} 等用户 · ${remoteReady ? stale : 0} 失联${remoteReady && remotes.length ? ` · ${okRemoteCount || remotes.length}/${remotes.length} 电脑可达` : remoteClaudeLoading ? ' · 正在连接远端' : ''}`
-    : `${projectIdsWithRows.size} projects · ${displayedOpenTasks.length} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount, remoteReady)} · ${needsUser} needs user · ${remoteReady ? stale : 0} stale${remoteReady && remotes.length ? ` · ${okRemoteCount || remotes.length}/${remotes.length} computers` : remoteClaudeLoading ? ' · connecting remotes' : ''}`;
   const cards = [];
   const agentsByTask = new Map();
   sessionRefWorkers.forEach(agent => {
@@ -8197,15 +8624,24 @@ function renderHarnessState(payload) {
     const row = ensureProjectRow(agent.project_id || 'default');
     if (!row.agents.some(item => harnessWorkerSessionRef(item) === harnessWorkerSessionRef(agent))) row.agents.push(agent);
   });
-  displayedOpenTasks.forEach(task => {
+  openTasks.forEach(task => {
     const projectId = task.project_id || 'default';
     ensureProjectRow(projectId).tasks.push(task);
   });
   pairedSessions.forEach(session => {
     ensureProjectRow(harnessSessionProjectId(session)).sessions.push(session);
   });
+  const displayProjectRows = new Map(Array.from(projectRows.entries()).filter(([projectId, row]) => (
+    !harnessProjectIsComputerProject(projectId, projectsById.get(projectId), row)
+  )));
+  const displayOpenTaskCount = Array.from(displayProjectRows.values()).reduce((sum, row) => sum + row.tasks.length, 0);
+  statusEl.textContent = _currentLang === 'zh'
+    ? `${displayProjectRows.size} 项目 · ${displayOpenTaskCount} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount, remoteReady)} · ${needsUser} 等用户 · ${remoteReady ? stale : 0} 失联${remoteClaudeLoading ? ' · 正在连接远端' : ''}`
+    : `${displayProjectRows.size} projects · ${displayOpenTaskCount} TODO · ${harnessWorkerCountLabel(workerCount, boundWorkerCount, remoteReady)} · ${needsUser} needs user · ${remoteReady ? stale : 0} stale${remoteClaudeLoading ? ' · connecting remotes' : ''}`;
+  const computerPanel = renderHarnessComputerPanel(buildHarnessComputerOptions(projectRows, projectsById, remotePayload));
+  if (computerPanel) cards.push(computerPanel);
   const rowsByBucket = new Map(HARNESS_BUCKET_ORDER.map(bucketKey => [bucketKey, []]));
-  Array.from(projectRows.entries())
+  Array.from(displayProjectRows.entries())
     .sort(harnessCompareProjectRows)
     .forEach(([projectId, row]) => {
       const bucketKey = harnessProjectBucketKey(projectsById.get(projectId));
@@ -8221,6 +8657,7 @@ function renderHarnessState(payload) {
     cards.push(`<div class="harness-card"><div class="harness-preview">${esc(_currentLang === 'zh' ? '暂无项目 TODO 或 worker session。' : 'No project TODO or worker session yet.')}</div></div>`);
   }
   grid.innerHTML = cards.join('');
+  grid.querySelectorAll('.harness-computer-options').forEach(bindHorizontalWheelScroll);
   grid.querySelectorAll('.harness-project-row-track').forEach(bindHorizontalWheelScroll);
 }
 

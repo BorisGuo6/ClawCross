@@ -8,6 +8,7 @@ OpenAI 兼容 API 服务模块
 """
 
 import asyncio
+import contextlib
 import json
 import os
 from typing import Any, Callable

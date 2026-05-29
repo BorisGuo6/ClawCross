@@ -18,3 +18,6 @@ from integrations.connectors.opencode import connector as _opencode  # noqa: F40
 from integrations.connectors.qoder import connector as _qoder  # noqa: F401
 from integrations.connectors.qwen import connector as _qwen  # noqa: F401
 from integrations.connectors.trae import connector as _trae  # noqa: F401
+from integrations.connectors.qclaw import connector as _qclaw  # noqa: F401
+from integrations.connectors.openhman import connector as _openhman  # noqa: F401
+from integrations.connectors.aider import connector as _aider  # noqa: F401
