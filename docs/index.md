@@ -41,6 +41,7 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 | Add or debug remote Claude computers in Project Harness | [`remote-claude-harness.md`](./remote-claude-harness.md) | [`ports.md`](./ports.md), [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Configure or debug ACP / acpx (external agent communication) | [`runtime-reference.md`](./runtime-reference.md) | [`build_team.md`](./build_team.md), [`oasis-reference.md`](./oasis-reference.md), [`repo-index.md`](./repo-index.md) |
 | Configure TinyFish internet search agent | [`tinyfish-monitor.md`](./tinyfish-monitor.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
+| Configure arXiv Robotics collision alerts | [`arxiv-collision-agent.md`](./arxiv-collision-agent.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Inspect ports, proxies, or service boundaries | [`ports.md`](./ports.md) | [`repo-index.md`](./repo-index.md) |
 
 ## Document Groups
@@ -58,6 +59,7 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 - [`create_workflow.md`](./create_workflow.md): workflow YAML grammar and examples
 - [`workflowpy.md`](./workflowpy.md): Python-script workflow mode, agent center, and forum posting helpers
 - [`mcp-search.md`](./mcp-search.md): MCP web search tools, structured JSON search, page fetch, filters, and safety limits
+- [`arxiv-collision-agent.md`](./arxiv-collision-agent.md): daily arXiv Robotics paper-vs-dashboard collision monitor
 - [`oasis-reference.md`](./oasis-reference.md): OASIS runtime model, Town Mode, swarm / GraphRAG behavior, ReportAgent
 - [`webot-agent-runtime.md`](./webot-agent-runtime.md): WeBot delegated subagent runtime, profiles, tool boundaries, and the runtime DTO wiring
 - [`webot-claude-gap-analysis.md`](./webot-claude-gap-analysis.md): feature matrix vs Claude Code and the outstanding parity checklist

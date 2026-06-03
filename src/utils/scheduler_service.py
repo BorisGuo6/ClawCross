@@ -109,6 +109,7 @@ PORT_AGENT = int(os.getenv("PORT_AGENT", "51200"))
 AGENT_URL = f"http://127.0.0.1:{PORT_AGENT}/system_trigger"
 INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "")
 TINYFISH_MONITOR_JOB_ID = "__tinyfish_monitor__"
+ARXIV_COLLISION_JOB_ID = "__arxiv_collision_monitor__"
 DASHBOARD_SUPABASE_SYNC_JOB_ID = "__dashboard_supabase_sync__"
 _ACP_TOOL_NAMES: frozenset[str] = acpx_agent_tags_with_legacy()
 _AGENT_MODEL_RE = re.compile(r"^agent:[^:]+(?::(.+))?$")
@@ -450,6 +451,48 @@ def _env_enabled(key: str, default: bool = False) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def trigger_arxiv_collision_monitor():
+    """Run the arXiv Robotics-vs-dashboard collision monitor."""
+    try:
+        from services.arxiv_collision_service import run_scheduled_collision_job
+
+        result = run_scheduled_collision_job()
+        print(
+            f"[{datetime.now()}] arXiv collision monitor 完成: "
+            f"papers={result.get('papers_fetched')}, "
+            f"collisions={result.get('collision_count')}, "
+            f"new={result.get('new_collision_count')}, "
+            f"report={result.get('report_path')}"
+        )
+    except Exception as e:
+        print(f"[{datetime.now()}] arXiv collision monitor 执行失败: {e}")
+
+
+def restore_arxiv_collision_task():
+    enabled = _env_enabled("ARXIV_COLLISION_ENABLED", False)
+    cron_expr = os.getenv("ARXIV_COLLISION_CRON", "30 9 * * *").strip()
+
+    if not enabled:
+        print("📭 arXiv collision monitor 未启用")
+        return
+    if not cron_expr:
+        print("📭 arXiv collision monitor 未配置 cron")
+        return
+
+    try:
+        c = _parse_cron(cron_expr)
+        scheduler.add_job(
+            trigger_arxiv_collision_monitor,
+            'cron',
+            minute=c[0], hour=c[1], day=c[2], month=c[3], day_of_week=c[4],
+            id=ARXIV_COLLISION_JOB_ID,
+            replace_existing=True,
+        )
+        print(f"✅ 已恢复 arXiv collision monitor 任务: cron={cron_expr}")
+    except Exception as e:
+        print(f"⚠️ arXiv collision monitor 任务恢复失败: {e}")
+
+
 def trigger_dashboard_supabase_sync():
     """到达定时时间，将 dashboard/state/*.json 同步到 Supabase。"""
     dashboard_root = os.getenv("DASHBOARD_SUPABASE_SYNC_ROOT", "").strip()
@@ -502,6 +545,7 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     restore_tasks()
     restore_tinyfish_monitor_task()
+    restore_arxiv_collision_task()
     restore_dashboard_supabase_sync_task()
     yield
     print("定时调度中心关闭...")

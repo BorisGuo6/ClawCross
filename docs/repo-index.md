@@ -61,6 +61,7 @@ These are the main services Clawcross runs:
 | `src/utils/scheduler_service.py` | scheduler service |
 | `src/services/team_creator_service.py` | ClawCross Creator discovery, extraction, build, jobs, and translation pipeline |
 | `src/services/tinyfish_monitor_service.py` | shared TinyFish monitor runtime used by frontend, scheduler, and CLI |
+| `src/services/arxiv_collision_service.py` | daily arXiv Robotics paper-vs-dashboard collision monitor used by scheduler and CLI |
 | `oasis/server.py` | OASIS service |
 | `scripts/launcher.py` | multi-service startup order |
 
@@ -180,6 +181,17 @@ For tool execution or tool exposure:
 - `src/mcp_servers/webot.py`
 - `src/mcp_servers/telegram.py`
 - `src/mcp_servers/llmapi.py`
+
+## Research Monitors
+
+For paper/search monitors that run outside an interactive Team:
+
+| Path | Purpose |
+|---|---|
+| `src/services/arxiv_collision_service.py` | fetch arXiv papers, load dashboard projects, score collisions, write reports, optionally notify harness |
+| `scripts/arxiv_collision_agent.py` | CLI wrapper for one-off arXiv collision checks |
+| `docs/arxiv-collision-agent.md` | configuration, scheduler behavior, verification |
+| `test/test_arxiv_collision_agent.py` | parser, matcher, dashboard loader, dedupe tests |
 
 ## ACP Exchange (acpx)
 
