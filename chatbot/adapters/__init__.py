@@ -6,6 +6,7 @@ Chatbot 渠道适配器包
   （Telegram, Discord, QQ/OneBot V11/V12, Mirai, Feishu, Kaiheila, DingTalk,
    Mail, Minecraft, Console, GitHub, RocketChat, Villa, Yunhu, Heybox, ...）
 - WebhookAdapter: 通用 HTTP 入站，应付 NoneBot 没有 / 自定义协议的场景
+- OpenClawWeixinAdapter: 复用 OpenClaw Weixin 插件登录态，但直接路由到 ClawCross
 
 使用：
     from chatbot.adapters import NoneBotBridgeAdapter, WebhookAdapter
@@ -28,7 +29,8 @@ __all__ = [
     "ChannelAdapter",
     "WebhookAdapter",
     "NoneBotBridgeAdapter",
-    "WeClawAdapter",
+    "ClawCrossWeChatAdapter",
+    "OpenClawWeixinAdapter",
     "AdapterManager",
     "create_webhook_adapter",
     "create_manager_from_env",
@@ -36,7 +38,8 @@ __all__ = [
 
 from .webhook_adapter import WebhookAdapter, create_webhook_adapter
 from .nonebot_bridge import NoneBotBridgeAdapter
-from .weclaw_adapter import WeClawAdapter
+from .clawcross_wechat_adapter import ClawCrossWeChatAdapter
+from .openclaw_weixin_adapter import OpenClawWeixinAdapter
 
 
 class AdapterManager:
@@ -61,8 +64,13 @@ class AdapterManager:
         self.register_adapter(adapter, enabled)
         return adapter
 
-    def register_weclaw(self, enabled: bool = True) -> WeClawAdapter:
-        adapter = WeClawAdapter()
+    def register_clawcross_wechat(self, enabled: bool = True) -> ClawCrossWeChatAdapter:
+        adapter = ClawCrossWeChatAdapter()
+        self.register_adapter(adapter, enabled)
+        return adapter
+
+    def register_openclaw_weixin(self, enabled: bool = True) -> OpenClawWeixinAdapter:
+        adapter = OpenClawWeixinAdapter()
         self.register_adapter(adapter, enabled)
         return adapter
 
@@ -112,9 +120,14 @@ def create_manager_from_env() -> AdapterManager:
         manager.register_nonebot_bridge(enabled=True)
         logger.info("NoneBot 桥接渠道已启用")
 
-    # WeClaw（微信桥接，托管外部 weclaw 二进制）
-    if os.getenv("WECLAW_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
-        manager.register_weclaw(enabled=True)
-        logger.info("WeClaw 渠道已启用")
+    # ClawCross WeChat（微信桥接，托管外部 clawcross_wechat 二进制）
+    if os.getenv("CLAWCROSS_WECHAT_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
+        manager.register_clawcross_wechat(enabled=True)
+        logger.info("ClawCross WeChat 渠道已启用")
+
+    # OpenClaw Weixin（复用官方插件扫码登录态，消息直接进入 ClawCross）
+    if os.getenv("OPENCLAW_WEIXIN_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
+        manager.register_openclaw_weixin(enabled=True)
+        logger.info("OpenClaw Weixin -> ClawCross 渠道已启用")
 
     return manager

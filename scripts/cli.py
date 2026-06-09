@@ -1754,6 +1754,57 @@ def _front_headers(args=None):
     return h
 
 
+def _normalize_opencli_args(values):
+    """Normalize argparse remainder args for OpenCLI-backed commands."""
+    normalized = [str(item) for item in (values or []) if str(item).strip()]
+    if normalized and normalized[0] == "--":
+        normalized = normalized[1:]
+    return normalized
+
+
+def cmd_opencli_status(args):
+    """Show OpenCLI availability and private CLI capabilities via front.py."""
+    _check_token()
+    code, body = _req(
+        "GET",
+        f"{FRONT_BASE}/harness/opencli/status",
+        headers=_front_headers(args),
+        params={"query": args.query or ""},
+    )
+    if code == 200:
+        _pp(body)
+    else:
+        _err(code, body)
+
+
+def cmd_opencli_run(args):
+    """Run an OpenCLI-managed command via the private harness."""
+    _check_token()
+    opencli_args = _normalize_opencli_args(args.opencli_args)
+    if args.command_name == "wx":
+        opencli_args = ["wx", *opencli_args]
+    if not opencli_args:
+        print("❌ 请提供要执行的命令参数，例如: wx history 文件传输助手 --json", file=sys.stderr)
+        return
+    code, body = _req(
+        "POST",
+        f"{FRONT_BASE}/harness/opencli/run",
+        headers=_front_headers(args),
+        data={
+            "args": opencli_args,
+            "profile": args.profile or "",
+            "allow_mutating": bool(args.allow_mutating),
+            "max_output_chars": int(args.max_output_chars),
+            "timeout_seconds": int(args.timeout_seconds),
+        },
+        timeout=max(30, int(args.timeout_seconds) + 5),
+    )
+    if code == 200:
+        _pp(body)
+    else:
+        _err(code, body)
+
+
 def cmd_openclaw_snapshot(args):
     """OpenClaw 快照管理 (通过 front.py 接口)
 
@@ -3054,9 +3105,31 @@ def build_parser():
                    help="操作 (默认: status)")
 
     # channel
-    c = sub.add_parser("channel", help="Chatbot / NoneBot / WeClaw channel 管理")
+    c = sub.add_parser("channel", help="Chatbot / NoneBot / ClawCross WeChat channel 管理")
     c.add_argument("channel_args", nargs=argparse.REMAINDER,
                    help="子命令: list/status/show/setup/clear/login/logout")
+
+    # opencli-status
+    c = sub.add_parser("opencli-status", help="查看 OpenCLI / 私有 CLI 能力状态")
+    c.add_argument("--query", default="", help="按能力名或标签过滤")
+
+    # opencli
+    c = sub.add_parser("opencli", help="通过私有 harness 转发 OpenCLI 命令")
+    c.set_defaults(command_name="opencli")
+    c.add_argument("--profile", default="", help="OPENCLI_PROFILE 覆盖值")
+    c.add_argument("--allow-mutating", action="store_true", help="允许显式批准的变更型命令")
+    c.add_argument("--max-output-chars", type=int, default=20000, help="stdout/stderr 最大返回字符数")
+    c.add_argument("--timeout-seconds", type=int, default=60, help="远端执行超时秒数")
+    c.add_argument("opencli_args", nargs=argparse.REMAINDER, help="OpenCLI 参数，必要时在前面加 --")
+
+    # wx
+    c = sub.add_parser("wx", help="通过私有 harness 运行 wx CLI")
+    c.set_defaults(command_name="wx")
+    c.add_argument("--profile", default="", help="OPENCLI_PROFILE 覆盖值")
+    c.add_argument("--allow-mutating", action="store_true", help="允许显式批准的变更型命令")
+    c.add_argument("--max-output-chars", type=int, default=20000, help="stdout/stderr 最大返回字符数")
+    c.add_argument("--timeout-seconds", type=int, default=60, help="远端执行超时秒数")
+    c.add_argument("opencli_args", nargs=argparse.REMAINDER, help="wx 参数，必要时在前面加 --")
 
     # status
     sub.add_parser("status", help="检查各服务状态")
@@ -3119,6 +3192,9 @@ def main():
         "workflows": cmd_workflows,
         "tunnel": cmd_tunnel,
         "channel": cmd_channel,
+        "opencli-status": cmd_opencli_status,
+        "opencli": cmd_opencli_run,
+        "wx": cmd_opencli_run,
         "token": cmd_token,
         "status": cmd_status,
     }

@@ -113,7 +113,7 @@ class Migration:
             "python_workflow_runs", "trajectories", "timeset", "runtime",
         ):
             self.move_if_missing(PROJECT_ROOT / "data" / dirname, self.data_dir / dirname)
-        for pattern in ("whitelist.json", "telegram_whitelist.json", "weclaw_qr.txt", "debug_llm_payload_last.json", "checkpoint_export_*.json"):
+        for pattern in ("whitelist.json", "telegram_whitelist.json", "clawcross_wechat_qr.txt", "debug_llm_payload_last.json", "checkpoint_export_*.json"):
             for src in sorted((PROJECT_ROOT / "data").glob(pattern)):
                 self.move_if_missing(src, self.data_dir / src.name)
 

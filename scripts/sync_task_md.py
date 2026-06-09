@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync ClawCross dashboard/harness TODOs with a worker TASK.md file."""
+"""Sync dashboard TODOs and harness runtime notes with a worker TASK.md file."""
 
 from __future__ import annotations
 
@@ -19,14 +19,24 @@ from harness.task_markdown import sync_task_markdown  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Sync dashboard TODOs with a TASK.md worker log.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Pull dashboard TODOs into TASK.md and publish TASK.md comments/evidence "
+            "without making ClawCross the dashboard task source."
+        )
+    )
     default_dashboard = os.getenv("CLAWCROSS_DASHBOARD_ROOT") or os.getenv("DASHBOARD_ROOT") or ""
     parser.add_argument("--dashboard-root", type=Path, default=Path(default_dashboard).expanduser() if default_dashboard else None)
     parser.add_argument("--task-md", type=Path, default=Path("TASK.md"))
     parser.add_argument("--user-id", default=os.getenv("CLAWCROSS_HARNESS_USER") or os.getenv("CLAWCROSS_USER_ID") or "default")
     parser.add_argument("--project-id", required=True)
     parser.add_argument("--include-done", action="store_true")
-    parser.add_argument("--no-create-missing", action="store_false", dest="create_missing")
+    parser.add_argument(
+        "--no-create-missing",
+        action="store_false",
+        dest="create_missing",
+        help="Compatibility flag; missing dashboard tasks are skipped because dashboard is authoritative.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--direction",
@@ -34,8 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="both",
         help=(
             "dashboard-to-md pulls dashboard TODOs into TASK.md; "
-            "md-to-dashboard imports TASK.md edits and pushes dashboard; "
-            "both does dashboard pull, TASK.md import if present, dashboard push, then TASK.md export."
+            "md-to-dashboard imports TASK.md edits into private harness state and publishes comments/evidence; "
+            "both does dashboard pull, TASK.md import if present, evidence publish, then TASK.md export."
         ),
     )
     return parser

@@ -15,10 +15,10 @@ Two storage shapes:
       ``TELEGRAM_BOTS=[{"token":"...","name":"bot1"}]``).
       Each ``BotField.name`` is a JSON key inside one bot entry.
 
-  kind = "env_vars"    (weclaw, webhook)
+  kind = "env_vars"    (clawcross_wechat, webhook)
       Writes each ``BotField.name`` as its own env var (no JSON wrap).
       Used by channels whose backend config lives in multiple env vars
-      (e.g. WECLAW_USERNAME / WECLAW_BIN / WECLAW_PROXY_HOST).
+      (e.g. CLAWCROSS_WECHAT_USERNAME / CLAWCROSS_WECHAT_BIN / CLAWCROSS_WECHAT_PROXY_HOST).
 """
 
 from __future__ import annotations
@@ -267,29 +267,28 @@ CHANNELS: dict[str, ChannelInfo] = {
         ],
     ),
 
-    # ── WeClaw (env_vars; mirrors mobile MOBILE_CHATBOT_WECLAW_KEYS) ─────────
-    "weclaw": ChannelInfo(
-        id="weclaw", label="微信 / WeClaw", env_key="", kind="env_vars", emoji="🟢",
+    # ── ClawCross WeChat (env_vars; mirrors mobile MOBILE_CHATBOT_CLAWCROSS_WECHAT_KEYS) ─────────
+    "clawcross_wechat": ChannelInfo(
+        id="clawcross_wechat", label="微信 / ClawCross WeChat", env_key="", kind="env_vars", emoji="🟢",
         setup_instructions=[
-            "1. Install / link the weclaw binary (often `pip install weclaw` or",
-            "   download from GitHub releases; CLI auto-resolves WECLAW_BIN)",
-            "2. `clawcross channel setup weclaw`     — fill in the proxy settings",
-            "3. `clawcross channel login weclaw`     — scan the ASCII QR in your terminal",
-            "4. `clawcross channel status weclaw`    — verify session is alive",
-            "   (`clawcross channel logout weclaw`   stops the daemon when done)",
+            "1. Install or link a ClawCross WeChat wrapper; CLI auto-resolves CLAWCROSS_WECHAT_BIN",
+            "2. `clawcross channel setup clawcross_wechat`     — fill in the proxy settings",
+            "3. `clawcross channel login clawcross_wechat`     — scan the ASCII QR in your terminal",
+            "4. `clawcross channel status clawcross_wechat`    — verify session is alive",
+            "   (`clawcross channel logout clawcross_wechat`   stops the daemon when done)",
         ],
         bot_fields=[
-            BotField("WECLAW_ENABLED", "Enable WeClaw (true/false)", default="true"),
-            BotField("WECLAW_USERNAME", "Local WeClaw account name", default="default"),
-            BotField("WECLAW_BIN", "Path to the weclaw binary", default="weclaw"),
-            BotField("WECLAW_CONFIG", "Path to weclaw config.json",
-                     default="~/.weclaw/config.json"),
-            BotField("WECLAW_PROXY_HOST", "Proxy host (loopback)", default="127.0.0.1"),
-            BotField("WECLAW_PROXY_PORT", "Proxy port", default="51298"),
-            BotField("WECLAW_AUTO_INSTALL", "Auto-install on first run (true/false)",
+            BotField("CLAWCROSS_WECHAT_ENABLED", "Enable ClawCross WeChat (true/false)", default="true"),
+            BotField("CLAWCROSS_WECHAT_USERNAME", "Local ClawCross WeChat account name", default="default"),
+            BotField("CLAWCROSS_WECHAT_BIN", "Path to the ClawCross WeChat wrapper", default="~/.clawcross/bin/clawcross_wechat"),
+            BotField("CLAWCROSS_WECHAT_CONFIG", "Path to clawcross_wechat config.json",
+                     default="~/.clawcross_wechat/config.json"),
+            BotField("CLAWCROSS_WECHAT_PROXY_HOST", "Proxy host (loopback)", default="127.0.0.1"),
+            BotField("CLAWCROSS_WECHAT_PROXY_PORT", "Proxy port", default="51298"),
+            BotField("CLAWCROSS_WECHAT_AUTO_INSTALL", "Auto-install on first run (true/false)",
                      default="true"),
         ],
-        notes="WeClaw stores credentials inside its own config file; CLI only sets env vars.",
+        notes="ClawCross WeChat stores credentials inside its own config file; CLI only sets env vars.",
     ),
 
     # ── Custom webhook (env_vars; needs a shared whitelist file) ────────────

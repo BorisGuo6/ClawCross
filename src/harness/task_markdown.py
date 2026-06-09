@@ -322,8 +322,9 @@ def sync_task_markdown(
     """Sync dashboard/harness with TASK.md.
 
     ``both`` pulls dashboard TODOs first, applies TASK.md edits if the file
-    exists, pushes harness updates back to dashboard, and rewrites TASK.md.
-    TASK.md edits win over dashboard status for explicit update.status fields.
+    exists, publishes dashboard-safe comments/evidence, and rewrites TASK.md.
+    Dashboard remains authoritative for task status; TASK.md update.status
+    fields update only the private harness runtime mirror.
     """
 
     if direction not in {"dashboard-to-md", "md-to-dashboard", "both"}:

@@ -28,7 +28,7 @@ from utils.runtime_paths import DATA_DIR, PID_DIR
 from api.settings_models import ChatbotWhitelistUpdateRequest, SettingsUpdateRequest
 
 
-CHATBOT_WHITELIST_CHANNELS = ("telegram", "qq", "weclaw", "webhook")
+CHATBOT_WHITELIST_CHANNELS = ("telegram", "qq", "clawcross_wechat", "openclaw-weixin", "webhook")
 
 
 class SettingsService:

@@ -50,7 +50,7 @@ uv run scripts/cli.py [-u USER] <子命令> [参数...]
 9. [tts](#9-tts) — 文字转语音
 10. [cancel](#10-cancel) — 取消当前生成
 11. [restart](#11-restart) — 重启 Agent
-12. [channel](#12-channel) — Chatbot / NoneBot / WeClaw channel 管理
+12. [channel](#12-channel) — Chatbot / NoneBot / ClawCross WeChat channel 管理
 13. [groups](#13-groups) — 群组管理
 14. [openclaw](#14-openclaw) — OpenClaw Agent 管理
 15. [openclaw-snapshot](#15-openclaw-snapshot) — OpenClaw 快照管理
@@ -61,8 +61,11 @@ uv run scripts/cli.py [-u USER] <子命令> [参数...]
 20. [personas](#20-personas) — 人设管理
 21. [workflows](#21-workflows) — YAML / Python Workflow 管理
 22. [tunnel](#22-tunnel) — Cloudflare Tunnel 管理
-23. [token](#23-token) — Token 生成与验证
-24. [status](#24-status) — 服务状态检查
+23. [opencli-status](#23-opencli-status) — 查看私有 CLI 能力状态
+24. [opencli](#24-opencli) — 转发 OpenCLI 命令
+25. [wx](#25-wx) — 直接运行 wx CLI
+26. [token](#26-token) — Token 生成与验证
+27. [status](#27-status) — 服务状态检查
 
 ---
 
@@ -248,7 +251,7 @@ uv run scripts/cli.py restart
 
 ## 12. channel
 
-**Chatbot / NoneBot / WeClaw channel 管理**
+**Chatbot / NoneBot / ClawCross WeChat channel 管理**
 
 ```bash
 # 列出所有渠道及配置状态
@@ -260,13 +263,13 @@ uv run scripts/cli.py channel show telegram
 uv run scripts/cli.py channel setup telegram
 uv run scripts/cli.py channel clear telegram
 
-# WeClaw 微信登录状态与扫码登录
-uv run scripts/cli.py channel status weclaw
-uv run scripts/cli.py channel login weclaw
-uv run scripts/cli.py channel logout weclaw
+# ClawCross WeChat 微信登录状态与扫码登录
+uv run scripts/cli.py channel status clawcross_wechat
+uv run scripts/cli.py channel login clawcross_wechat
+uv run scripts/cli.py channel logout clawcross_wechat
 ```
 
-终端交互模式下，`channel` 会先进入 channel 选择列表，再进入二级 action 列表（show/setup/clear；WeClaw 额外包含 login/logout/status）。NoneBot adapter-only 渠道（如 OneBot、Console）会写入 `NONEBOT_ADAPTERS`；env-only 渠道（如 DingTalk、Minecraft）会写对应平台环境变量。
+终端交互模式下，`channel` 会先进入 channel 选择列表，再进入二级 action 列表（show/setup/clear；ClawCross WeChat 额外包含 login/logout/status）。NoneBot adapter-only 渠道（如 OneBot、Console）会写入 `NONEBOT_ADAPTERS`；env-only 渠道（如 DingTalk、Minecraft）会写对应平台环境变量。
 
 ---
 
@@ -840,7 +843,54 @@ uv run scripts/cli.py tunnel stop
 
 ---
 
-## 23. token
+## 23. opencli-status
+
+**查看 OpenCLI / 私有 CLI 能力状态**
+
+```bash
+uv run scripts/cli.py opencli-status
+uv run scripts/cli.py opencli-status --query wx
+```
+
+| 参数 | 说明 | 必填 | 默认值 |
+|------|------|------|--------|
+| `--query` | 按能力名或标签过滤 | 否 | 空 |
+
+---
+
+## 24. opencli
+
+**通过私有 harness 转发 OpenCLI 命令**
+
+```bash
+uv run scripts/cli.py opencli -- docker ps
+uv run scripts/cli.py opencli -- wx history 文件传输助手 --json
+```
+
+| 参数 | 说明 | 必填 | 默认值 |
+|------|------|------|--------|
+| `--profile` | 远端 `OPENCLI_PROFILE` 覆盖值 | 否 | 空 |
+| `--allow-mutating` | 允许显式批准的变更型命令 | 否 | `False` |
+| `--max-output-chars` | stdout/stderr 最大返回字符数 | 否 | `20000` |
+| `--timeout-seconds` | 远端执行超时秒数 | 否 | `60` |
+| `opencli_args` | 要转发的 OpenCLI 参数；若参数本身包含 `--foo`，建议先写一个 `--` 分隔符 | 是 | — |
+
+---
+
+## 25. wx
+
+**直接通过私有 harness 运行 wx CLI**
+
+```bash
+uv run scripts/cli.py wx -- history 文件传输助手 --json
+uv run scripts/cli.py wx -- search OpenCLI
+```
+
+参数与 `opencli` 相同，但会自动补上 `wx` 前缀。
+
+---
+
+## 26. token
 
 **Token 生成与验证**
 
@@ -875,7 +925,7 @@ uv run scripts/cli.py token decode --token "xxx"
 
 ---
 
-## 24. status
+## 27. status
 
 **检查各服务状态**
 

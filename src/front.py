@@ -106,32 +106,33 @@ _token = os.getenv("INTERNAL_TOKEN", "")
 app.secret_key = hashlib.sha256(f"clawcross-session-{_token}".encode()).digest() if _token else os.urandom(24)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB for image uploads
 
-_weclaw_login_proc: subprocess.Popen | None = None
-_weclaw_login_lock = threading.Lock()
+_clawcross_wechat_login_proc: subprocess.Popen | None = None
+_clawcross_wechat_login_lock = threading.Lock()
 
 
-def _weclaw_settings() -> tuple[str, str, str]:
+def _clawcross_wechat_settings() -> tuple[str, str, str]:
     settings = read_env_all(str(ENV_FILE))
-    weclaw_bin = settings.get("WECLAW_BIN") or os.getenv("WECLAW_BIN") or "weclaw"
-    resolved_bin = shutil.which(weclaw_bin) or weclaw_bin
+    clawcross_wechat_bin = settings.get("CLAWCROSS_WECHAT_BIN") or os.getenv("CLAWCROSS_WECHAT_BIN") or "~/.clawcross/bin/clawcross_wechat"
+    clawcross_wechat_bin = os.path.expanduser(clawcross_wechat_bin)
+    resolved_bin = shutil.which(clawcross_wechat_bin) or clawcross_wechat_bin
     config_path = os.path.expanduser(
-        settings.get("WECLAW_CONFIG")
-        or os.getenv("WECLAW_CONFIG")
-        or "~/.weclaw/config.json"
+        settings.get("CLAWCROSS_WECHAT_CONFIG")
+        or os.getenv("CLAWCROSS_WECHAT_CONFIG")
+        or "~/.clawcross_wechat/config.json"
     )
     accounts_dir = os.path.join(os.path.dirname(config_path), "accounts")
     return resolved_bin, config_path, accounts_dir
 
 
-def _check_weclaw_bin(resolved_bin: str) -> str | None:
+def _check_clawcross_wechat_bin(resolved_bin: str) -> str | None:
     if shutil.which(resolved_bin):
         return None
     if os.path.isfile(resolved_bin) and os.access(resolved_bin, os.X_OK):
         return None
-    return f"找不到 weclaw 二进制: {resolved_bin}"
+    return f"找不到 clawcross_wechat 二进制: {resolved_bin}"
 
 
-def _weclaw_account_files(accounts_dir: str) -> list[str]:
+def _clawcross_wechat_account_files(accounts_dir: str) -> list[str]:
     if not os.path.isdir(accounts_dir):
         return []
     return sorted(
@@ -149,7 +150,7 @@ def _is_tcp_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
-def _weclaw_session_expired_from_log() -> bool:
+def _clawcross_wechat_session_expired_from_log() -> bool:
     log_path = LOGS_DIR / "launcher.log"
     try:
         with open(log_path, "rb") as f:
@@ -162,24 +163,24 @@ def _weclaw_session_expired_from_log() -> bool:
         return False
 
 
-def _weclaw_session_expired(accounts: list[str], status_output: str) -> bool:
+def _clawcross_wechat_session_expired(accounts: list[str], status_output: str) -> bool:
     """Treat stale launcher.log warnings as non-authoritative when account files still exist."""
     if accounts:
         return False
     text = str(status_output or "").lower()
     if "session expired" in text or "cannot be auto-recovered" in text:
         return True
-    return _weclaw_session_expired_from_log()
+    return _clawcross_wechat_session_expired_from_log()
 
 
-def _stop_managed_weclaw_proxy(settings: dict[str, str]) -> None:
-    proxy_host = settings.get("WECLAW_PROXY_HOST") or os.getenv("WECLAW_PROXY_HOST") or "127.0.0.1"
-    proxy_port = int(settings.get("WECLAW_PROXY_PORT") or os.getenv("WECLAW_PROXY_PORT") or "51298")
+def _stop_managed_clawcross_wechat_proxy(settings: dict[str, str]) -> None:
+    proxy_host = settings.get("CLAWCROSS_WECHAT_PROXY_HOST") or os.getenv("CLAWCROSS_WECHAT_PROXY_HOST") or "127.0.0.1"
+    proxy_port = int(settings.get("CLAWCROSS_WECHAT_PROXY_PORT") or os.getenv("CLAWCROSS_WECHAT_PROXY_PORT") or "51298")
     if not _is_tcp_port_open(proxy_host, proxy_port):
         return
     try:
         requests.post(
-            f"http://{proxy_host}:{proxy_port}/_weclaw/stop",
+            f"http://{proxy_host}:{proxy_port}/_clawcross_wechat/stop",
             json={},
             timeout=2,
         )
@@ -2757,19 +2758,19 @@ def proxy_update_chatbot_whitelist():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/proxy_weclaw_qr", methods=["GET"])
-def proxy_get_weclaw_qr():
-    """读取 WeClaw 扫码登录二维码（ASCII）。"""
-    qr_path = os.path.join(str(DATA_DIR), "weclaw_qr.txt")
+@app.route("/proxy_clawcross_wechat_qr", methods=["GET"])
+def proxy_get_clawcross_wechat_qr():
+    """读取 ClawCross WeChat 扫码登录二维码（ASCII）。"""
+    qr_path = os.path.join(str(DATA_DIR), "clawcross_wechat_qr.txt")
     try:
-        login_running = _weclaw_login_proc is not None and _weclaw_login_proc.poll() is None
+        login_running = _clawcross_wechat_login_proc is not None and _clawcross_wechat_login_proc.poll() is None
         if not os.path.exists(qr_path):
             return jsonify({
                 "status": "pending",
                 "qr": "",
                 "path": qr_path,
                 "login_running": login_running,
-                "message": "尚未发现新的扫码二维码。请点击“重新扫码登录”启动 WeClaw 内置 login；若已启动，请稍等几秒后刷新。",
+                "message": "尚未发现新的扫码二维码。请点击“重新扫码登录”启动 ClawCross WeChat 内置 login；若已启动，请稍等几秒后刷新。",
             })
         with open(qr_path, "r", encoding="utf-8") as f:
             qr = f.read()
@@ -2784,20 +2785,20 @@ def proxy_get_weclaw_qr():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/proxy_weclaw_status", methods=["GET"])
-def proxy_weclaw_status():
-    """读取 WeClaw 登录/运行状态。"""
+@app.route("/proxy_clawcross_wechat_status", methods=["GET"])
+def proxy_clawcross_wechat_status():
+    """读取 ClawCross WeChat 登录/运行状态。"""
     try:
-        resolved_bin, config_path, accounts_dir = _weclaw_settings()
+        resolved_bin, config_path, accounts_dir = _clawcross_wechat_settings()
         settings = read_env_all(str(ENV_FILE))
-        bin_error = _check_weclaw_bin(resolved_bin)
-        accounts = _weclaw_account_files(accounts_dir)
-        login_running = _weclaw_login_proc is not None and _weclaw_login_proc.poll() is None
-        proxy_host = settings.get("WECLAW_PROXY_HOST") or os.getenv("WECLAW_PROXY_HOST") or "127.0.0.1"
-        proxy_port = int(settings.get("WECLAW_PROXY_PORT") or os.getenv("WECLAW_PROXY_PORT") or "51298")
+        bin_error = _check_clawcross_wechat_bin(resolved_bin)
+        accounts = _clawcross_wechat_account_files(accounts_dir)
+        login_running = _clawcross_wechat_login_proc is not None and _clawcross_wechat_login_proc.poll() is None
+        proxy_host = settings.get("CLAWCROSS_WECHAT_PROXY_HOST") or os.getenv("CLAWCROSS_WECHAT_PROXY_HOST") or "127.0.0.1"
+        proxy_port = int(settings.get("CLAWCROSS_WECHAT_PROXY_PORT") or os.getenv("CLAWCROSS_WECHAT_PROXY_PORT") or "51298")
         proxy_running = _is_tcp_port_open(proxy_host, proxy_port)
         bridge_running = _is_tcp_port_open("127.0.0.1", 18011)
-        session_expired = _weclaw_session_expired_from_log()
+        session_expired = _clawcross_wechat_session_expired_from_log()
         status_output = ""
         if not bin_error:
             try:
@@ -2813,7 +2814,7 @@ def proxy_weclaw_status():
                 status_output = ((result.stdout or "") + (result.stderr or "")).strip()
             except Exception as e:
                 status_output = f"status failed: {e}"
-        session_expired = _weclaw_session_expired(accounts, status_output)
+        session_expired = _clawcross_wechat_session_expired(accounts, status_output)
         return jsonify({
             "status": "success",
             "bin": resolved_bin,
@@ -2827,13 +2828,13 @@ def proxy_weclaw_status():
             "bridge_running": bridge_running,
             "session_expired": session_expired,
             "proxy": f"{proxy_host}:{proxy_port}",
-            "weclaw_status": status_output,
+            "clawcross_wechat_status": status_output,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-def _capture_weclaw_login_output(proc: subprocess.Popen, qr_path: str) -> None:
+def _capture_clawcross_wechat_login_output(proc: subprocess.Popen, qr_path: str) -> None:
     try:
         with open(qr_path, "w", encoding="utf-8") as f:
             if proc.stdout is not None:
@@ -2841,7 +2842,7 @@ def _capture_weclaw_login_output(proc: subprocess.Popen, qr_path: str) -> None:
                     f.write(line)
                     f.flush()
             rc = proc.wait()
-            f.write(f"\n[weclaw login exited: {rc}]\n")
+            f.write(f"\n[clawcross_wechat login exited: {rc}]\n")
             if rc == 0:
                 restart_flag = os.path.join(str(PID_DIR), "restart_flag")
                 with open(restart_flag, "w", encoding="utf-8") as rf:
@@ -2851,45 +2852,45 @@ def _capture_weclaw_login_output(proc: subprocess.Popen, qr_path: str) -> None:
     except Exception as e:
         try:
             with open(qr_path, "a", encoding="utf-8") as f:
-                f.write(f"\n[failed to capture weclaw login output: {e}]\n")
+                f.write(f"\n[failed to capture clawcross_wechat login output: {e}]\n")
         except Exception:
             pass
 
 
-@app.route("/proxy_weclaw_login", methods=["POST"])
-@app.route("/proxy_weclaw_reset", methods=["POST"])
-def proxy_start_weclaw_login():
-    """使用 WeClaw 内置 login 流程进行新登录/重新登录。"""
-    global _weclaw_login_proc
+@app.route("/proxy_clawcross_wechat_login", methods=["POST"])
+@app.route("/proxy_clawcross_wechat_reset", methods=["POST"])
+def proxy_start_clawcross_wechat_login():
+    """使用 ClawCross WeChat 内置 login 流程进行新登录/重新登录。"""
+    global _clawcross_wechat_login_proc
     user_id = session.get("user_id", "")
     if not user_id:
         return jsonify({"error": "not logged in"}), 401
     try:
         settings = read_env_all(str(ENV_FILE))
-        resolved_bin, _config_path, _accounts_dir = _weclaw_settings()
-        bin_error = _check_weclaw_bin(resolved_bin)
+        resolved_bin, _config_path, _accounts_dir = _clawcross_wechat_settings()
+        bin_error = _check_clawcross_wechat_bin(resolved_bin)
         if bin_error:
             return jsonify({"error": bin_error}), 400
 
-        qr_path = os.path.join(str(DATA_DIR), "weclaw_qr.txt")
+        qr_path = os.path.join(str(DATA_DIR), "clawcross_wechat_qr.txt")
         os.makedirs(os.path.dirname(qr_path), exist_ok=True)
 
-        with _weclaw_login_lock:
-            if _weclaw_login_proc is not None and _weclaw_login_proc.poll() is None:
+        with _clawcross_wechat_login_lock:
+            if _clawcross_wechat_login_proc is not None and _clawcross_wechat_login_proc.poll() is None:
                 return jsonify({
                     "status": "running",
-                    "message": "WeClaw 登录流程已在运行，二维码会自动显示。",
+                    "message": "ClawCross WeChat 登录流程已在运行，二维码会自动显示。",
                     "path": qr_path,
-                    "pid": _weclaw_login_proc.pid,
+                    "pid": _clawcross_wechat_login_proc.pid,
                 })
 
             if os.path.isfile(qr_path) or os.path.islink(qr_path):
                 os.unlink(qr_path)
 
-            _stop_managed_weclaw_proxy(settings)
+            _stop_managed_clawcross_wechat_proxy(settings)
             time.sleep(1)
 
-            _weclaw_login_proc = subprocess.Popen(
+            _clawcross_wechat_login_proc = subprocess.Popen(
                 [resolved_bin, "login"],
                 cwd=str(WORKSPACE_DIR),
                 env=set_subprocess_env(os.environ),
@@ -2900,44 +2901,44 @@ def proxy_start_weclaw_login():
                 bufsize=1,
             )
             threading.Thread(
-                target=_capture_weclaw_login_output,
-                args=(_weclaw_login_proc, qr_path),
+                target=_capture_clawcross_wechat_login_output,
+                args=(_clawcross_wechat_login_proc, qr_path),
                 daemon=True,
-                name="weclaw-login-capture",
+                name="clawcross_wechat-login-capture",
             ).start()
 
             return jsonify({
                 "status": "success",
                 "message": "已启动微信扫码登录。请等待二维码出现并扫码。",
                 "path": qr_path,
-                "pid": _weclaw_login_proc.pid,
+                "pid": _clawcross_wechat_login_proc.pid,
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/proxy_weclaw_stop", methods=["POST"])
-def proxy_stop_weclaw():
-    """使用 WeClaw 内置 stop 终止微信渠道。"""
-    global _weclaw_login_proc
+@app.route("/proxy_clawcross_wechat_stop", methods=["POST"])
+def proxy_stop_clawcross_wechat():
+    """使用 ClawCross WeChat 内置 stop 终止微信渠道。"""
+    global _clawcross_wechat_login_proc
     user_id = session.get("user_id", "")
     if not user_id:
         return jsonify({"error": "not logged in"}), 401
     try:
         settings = read_env_all(str(ENV_FILE))
-        resolved_bin, _config_path, _accounts_dir = _weclaw_settings()
-        bin_error = _check_weclaw_bin(resolved_bin)
+        resolved_bin, _config_path, _accounts_dir = _clawcross_wechat_settings()
+        bin_error = _check_clawcross_wechat_bin(resolved_bin)
         if bin_error:
             return jsonify({"error": bin_error}), 400
-        with _weclaw_login_lock:
-            if _weclaw_login_proc is not None and _weclaw_login_proc.poll() is None:
-                _weclaw_login_proc.terminate()
+        with _clawcross_wechat_login_lock:
+            if _clawcross_wechat_login_proc is not None and _clawcross_wechat_login_proc.poll() is None:
+                _clawcross_wechat_login_proc.terminate()
                 try:
-                    _weclaw_login_proc.wait(timeout=5)
+                    _clawcross_wechat_login_proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    _weclaw_login_proc.kill()
-            _weclaw_login_proc = None
-        _stop_managed_weclaw_proxy(settings)
+                    _clawcross_wechat_login_proc.kill()
+            _clawcross_wechat_login_proc = None
+        _stop_managed_clawcross_wechat_proxy(settings)
         result = subprocess.run(
             [resolved_bin, "stop"],
             cwd=str(WORKSPACE_DIR),
@@ -2949,7 +2950,7 @@ def proxy_stop_weclaw():
         )
         return jsonify({
             "status": "success",
-            "message": "已发送 WeClaw 终止命令。",
+            "message": "已发送 ClawCross WeChat 终止命令。",
             "output": ((result.stdout or "") + (result.stderr or "")).strip(),
             "returncode": result.returncode,
         })

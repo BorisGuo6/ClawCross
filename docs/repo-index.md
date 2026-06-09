@@ -200,8 +200,11 @@ For external AI agent communication via the Agent Client Protocol:
 | Path | Purpose |
 |---|---|
 | `src/integrations/acpx_adapter.py` | Singleton `AcpxAdapter` wrapping the `acpx` CLI; manages sessions and prompt execution |
+| `src/integrations/remote_claude_agents.py` | Remote coding-agent session bridge; prefers SSH/Tailscale ACPX sessions while retaining legacy Claude daemon/tmux support |
 | `src/api/group_service.py` | Primary acpx consumer; `_send_to_acp_agent()` broadcasts group chat messages to ACP agents |
 | `oasis/experts.py` | `ExternalExpert` class uses ACP for pooled prompt communication with external agents |
+| `scripts/configure_remote_acpx.py` | Installs user-local `acpx`, writes remote env, and smoke-checks remote Codex/Claude ACPX sessions over SSH |
+| `docs/remote-acpx-harness.md` | Remote ACPX layout, runtime flags, and troubleshooting |
 
 Known ACP tools (external AI agents): `openclaw`, `codex`, `claude`, `gemini`, `aider`.
 
@@ -213,6 +216,10 @@ Known ACP tools (external AI agents): `openclaw`, `codex`, `claude`, `gemini`, `
 |---|---|
 | `chatbot/telegrambot.py` | Telegram bot runtime |
 | `chatbot/QQbot.py` | QQ bot runtime |
+| `chatbot/adapters/openclaw_weixin_adapter.py` | ClawCross-native Weixin bridge that reuses `@tencent-weixin/openclaw-weixin` QR credentials but owns long-poll and replies |
+| `chatbot/adapters/clawcross_wechat_adapter.py` | Legacy local ClawCross WeChat bridge for WeChat fallback |
+| `scripts/setup_openclaw_clawbot.py` | Helper for official OpenClaw WeChat / ClawBot plugin install, QR login, channel listing, and binding |
+| `docs/wechat-clawbot.md` | Official ClawBot / OpenClaw Weixin login plus ClawCross-native routing guide |
 | `chatbot/setup.py` | bot setup helper (interactive menu; requires `stdin.isatty()` — skipped automatically by `launcher.py` in non-interactive / headless mode) |
 
 ## Team and User Data

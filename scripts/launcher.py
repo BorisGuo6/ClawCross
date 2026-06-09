@@ -616,8 +616,10 @@ def _detect_chatbot_platforms():
     names = _configured_nonebot_adapter_names()
     if names:
         platforms.append(f"nonebot[{'+'.join(names)}]")
-    if (os.getenv("WECLAW_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")):
-        platforms.append("weclaw")
+    if (os.getenv("CLAWCROSS_WECHAT_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")):
+        platforms.append("clawcross_wechat")
+    if (os.getenv("OPENCLAW_WEIXIN_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")):
+        platforms.append("openclaw-weixin")
     return platforms
 
 

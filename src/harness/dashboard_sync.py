@@ -20,7 +20,6 @@ from harness.store import apply_harness_event, get_harness_state
 
 
 DASHBOARD_STATUSES = {"todo", "active", "blocked", "needs_user", "review", "done"}
-OPEN_DASHBOARD_STATUSES = {"todo", "active", "blocked", "needs_user", "review"}
 HOST_VERIFIED_COMMENT_KIND = "host_verified"
 INTERNAL_DASHBOARD_COMMENT_KINDS = {"conductor_reply", "conductor_note"}
 INTERNAL_DASHBOARD_BODY_PREFIXES = (
@@ -225,7 +224,12 @@ def import_dashboard_todos(
     project_id: str = "",
     write: bool = True,
 ) -> dict[str, Any]:
-    """Import open dashboard TODOs into the local harness task queue."""
+    """Mirror dashboard tasks into the private harness task queue.
+
+    The public dashboard is the task source of truth.  The harness keeps a
+    private runtime mirror so it can route workers, but it must not preserve a
+    stale local task status once the dashboard says something different.
+    """
 
     doc, source = load_dashboard_tasks_doc(dashboard_root)
     tasks = doc.get("tasks")
@@ -269,7 +273,7 @@ def import_dashboard_todos(
             skipped += 1
             continue
         status = clean_status(task.get("status")) or "todo"
-        if status not in OPEN_DASHBOARD_STATUSES:
+        if status not in DASHBOARD_STATUSES:
             skipped += 1
             continue
         task_id = str(task.get("task_id") or "").strip()
@@ -297,13 +301,10 @@ def import_dashboard_todos(
                 },
             },
         }
+        payload["status"] = status
         if not local:
-            payload["status"] = status
             created += 1
         else:
-            local_status = clean_status(local.get("status")) or "todo"
-            if local_status == "todo" and status != "todo":
-                payload["status"] = status
             updated += 1
         if write:
             apply_harness_event(user_id, payload)
@@ -367,7 +368,13 @@ def sync_harness_to_dashboard(
     create_missing: bool = False,
     write: bool = True,
 ) -> dict[str, Any]:
-    """Copy harness task status/comments into dashboard/state/tasks.json."""
+    """Copy publishable harness evidence into dashboard/state/tasks.json.
+
+    Task identity and workflow status belong to the dashboard.  Harness state is
+    private runtime state, so this sync deliberately does not overwrite
+    dashboard task status, project assignment, title, description, priority,
+    assignee, or due date from the harness mirror.
+    """
 
     path = dashboard_tasks_path(dashboard_root)
     doc = load_json(path)
@@ -375,7 +382,6 @@ def sync_harness_to_dashboard(
     if not isinstance(dashboard_tasks, list):
         raise ValueError("dashboard/state/tasks.json must contain a tasks list")
     state = get_harness_state(user_id)
-    runs = [run for run in state.get("runs", []) if isinstance(run, dict)]
     harness_tasks = {
         str(task.get("task_id")): task
         for task in state.get("tasks", [])
@@ -389,36 +395,22 @@ def sync_harness_to_dashboard(
         "comments_added": 0,
         "created": 0,
         "skipped": 0,
+        "status_conflicts_ignored": 0,
+        "field_conflicts_ignored": 0,
         "changed": False,
     }
 
     if create_missing:
+        # Backward-compatible no-op: older callers asked the harness to create
+        # dashboard tasks.  Dashboard is now the only public task source, so the
+        # automated path records skipped private tasks instead of publishing
+        # them as new TODOs.
         for task_id, harness_task in sorted(harness_tasks.items()):
             if task_id in existing_ids:
                 continue
             if project_id and harness_task.get("project_id") != project_id:
                 continue
-            status = clean_status(harness_task.get("status")) or "todo"
-            if status == "done" and not task_has_host_verification(harness_task, runs):
-                status = "review"
-            dashboard_tasks.append(
-                {
-                    "task_id": task_id,
-                    "project_id": harness_task.get("project_id") or project_id,
-                    "title": harness_task.get("title") or task_id,
-                    "description": harness_task.get("description") or "",
-                    "status": status,
-                    "priority": harness_task.get("priority") or "medium",
-                    "assignee": harness_task.get("assignee") or None,
-                    "due_at": harness_task.get("due_at") or "",
-                    "result": None,
-                    "comments": [],
-                    "updated_at": harness_task.get("updated_at") or now_iso(),
-                }
-            )
-            existing_ids.add(task_id)
-            summary["created"] += 1
-            changed = True
+            summary["skipped"] += 1
 
     for dashboard_task in dashboard_tasks:
         if not isinstance(dashboard_task, dict):
@@ -433,15 +425,8 @@ def sync_harness_to_dashboard(
 
         task_changed = False
         status = clean_status(harness_task.get("status"))
-        if status == "done" and not task_has_host_verification(harness_task, runs):
-            status = "review"
         if status and dashboard_task.get("status") != status:
-            dashboard_task["status"] = status
-            if status == "done" and not dashboard_task.get("completed_at"):
-                dashboard_task["completed_at"] = str(harness_task.get("updated_at") or now_iso()).split("T", 1)[0]
-            summary["status_updates"] += 1
-            task_changed = True
-            changed = True
+            summary["status_conflicts_ignored"] += 1
 
         for field in ("project_id", "title", "description", "priority", "assignee", "due_at"):
             value = harness_task.get(field)
@@ -450,11 +435,7 @@ def sync_harness_to_dashboard(
             if value is None and field != "assignee":
                 continue
             if dashboard_task.get(field) != value:
-                dashboard_task[field] = value
-                if field == "project_id":
-                    summary["project_updates"] += 1
-                task_changed = True
-                changed = True
+                summary["field_conflicts_ignored"] += 1
 
         comments = dashboard_task.setdefault("comments", [])
         if not isinstance(comments, list):
@@ -525,14 +506,14 @@ def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[st
 def publish_dashboard_tasks(
     *,
     dashboard_root: Path | None = None,
-    message: str = "Update dashboard task status from ClawCross harness",
+    message: str = "Publish dashboard evidence from ClawCross harness",
     push: bool = True,
 ) -> dict[str, Any]:
-    """Commit and push task-state changes from the dashboard repo, if any.
+    """Commit and push dashboard-safe evidence changes from the dashboard repo.
 
-    The harness deliberately publishes only dashboard/state/tasks.json so Claude
-    configuration, runtime wiring, and any unrelated dashboard edits stay out of
-    this automated path.
+    The harness deliberately stages only dashboard/state/tasks.json.  Within
+    that file, ClawCross owns only comments/evidence it publishes; task status,
+    project assignment, title, priority, and scheduling remain dashboard-owned.
     """
 
     path = dashboard_tasks_path(dashboard_root).resolve()

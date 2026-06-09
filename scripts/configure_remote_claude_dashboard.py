@@ -557,7 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--project", action="store_true", help="Also read project context JSON.")
     dashboard.set_defaults(func=command_dashboard)
 
-    task_md = sub.add_parser("task-md", help="Sync dashboard TODOs with local TASK.md.")
+    task_md = sub.add_parser("task-md", help="Sync dashboard TODOs and local TASK.md evidence.")
     task_md.add_argument("action", choices=["export", "import", "sync"])
     task_md.add_argument("--path", type=Path, default=Path("TASK.md"))
     task_md.add_argument("--project-id", default="")
@@ -570,7 +570,10 @@ def build_parser() -> argparse.ArgumentParser:
     heartbeat.add_argument("--status", default="running")
     heartbeat.set_defaults(func=command_heartbeat)
 
-    status = sub.add_parser("task-status", help="Set task status: doing, done, undone, blocked, review.")
+    status = sub.add_parser(
+        "task-status",
+        help="Set private harness runtime status: doing, done, undone, blocked, review.",
+    )
     add_event_common(status, task_required=True)
     status.add_argument("--status", required=True)
     status.set_defaults(func=command_task_status)
@@ -979,17 +982,19 @@ def build_managed_block(*, remote: str, dashboard_url: str, default_project_id: 
         clawcross-harness-agent task-md import --path TASK.md
         ```
 
-        ClawCross will turn the lifecycle fields into dashboard comments and task state, while keeping runtime/session metadata private.
+        ClawCross will turn lifecycle fields into dashboard comments/evidence while keeping runtime/session metadata private. Dashboard remains authoritative for task state.
 
         ## Keep TODOs Updated
 
-        Keep task state current whenever it changes. Use ClawCross harness commands for runtime updates; ClawCross is the private control plane and may sync TODO status/comments back to the dashboard.
+        Keep private runtime state current whenever it changes. Use ClawCross harness commands for worker runtime updates; ClawCross is the private control plane and may publish comments/evidence back to the dashboard, but it must not override dashboard TODO status.
 
         ```bash
         clawcross-harness-agent task-status --agent-id "$(hostname)-claude" --project-id {status_project_arg} --task-id <task_id> --status doing --message "Started: <short plan>"
         clawcross-harness-agent comment --agent-id "$(hostname)-claude" --project-id {status_project_arg} --task-id <task_id> --kind comment --message "Progress: <evidence>"
         clawcross-harness-agent task-status --agent-id "$(hostname)-claude" --project-id {status_project_arg} --task-id <task_id> --status done --message "Result: <evidence and artifact path>"
         ```
+
+        These `task-status` commands update ClawCross's private worker/runtime mirror only. If dashboard TODO status needs to change, change it in the dashboard task source, not through ClawCross.
 
         Status vocabulary:
 

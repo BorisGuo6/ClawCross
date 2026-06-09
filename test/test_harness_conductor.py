@@ -258,7 +258,7 @@ class HarnessConductorDecisionTests(unittest.TestCase):
                     str(repo_resolved),
                     "commit",
                     "-m",
-                    "Update dashboard task status from ClawCross harness",
+                    "Publish dashboard evidence from ClawCross harness",
                     "--",
                     "dashboard/state/tasks.json",
                 ],
@@ -352,7 +352,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 else:
                     os.environ["CLAWCROSS_HARNESS_CONDUCTOR_CACHE"] = old_cache
 
-    def test_dashboard_pull_verify_assign_and_push_loop(self):
+    def test_dashboard_pull_mirrors_dashboard_source_and_pushes_comments(self):
         with TemporaryDirectory() as tmpdir:
             old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
@@ -394,7 +394,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
       "project_id": "project-alpha",
       "title": "Decide baseline",
       "description": "Decision task",
-      "status": "active",
+      "status": "done",
       "priority": "high",
       "comments": []
     },
@@ -420,7 +420,7 @@ class HarnessConductorLoopTests(unittest.TestCase):
                         "project_id": "project-alpha",
                         "task_id": "task_done_decision",
                         "title": "Decide baseline",
-                        "status": "done",
+                        "status": "active",
                     },
                 )
                 apply_harness_event(
@@ -460,6 +460,13 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 }
                 self.assertEqual(project_metadata["project-alpha"]["dashboard_bucket"], "active")
                 self.assertEqual(project_metadata["project-alpha"]["dashboard_status"], "ongoing")
+                self.assertEqual(
+                    {
+                        task["task_id"]: task["status"]
+                        for task in get_harness_state("test-user")["tasks"]
+                    }["task_done_decision"],
+                    "done",
+                )
                 verify = conductor.verify_finished_tasks("test-user", project_id="project-alpha")
                 self.assertEqual(verify["accepted"], 1)
                 state = get_harness_state("test-user")
@@ -474,16 +481,17 @@ class HarnessConductorLoopTests(unittest.TestCase):
 
                 push = sync_harness_to_dashboard("test-user", dashboard_root=dashboard, project_id="project-alpha")
                 self.assertTrue(push["changed"])
-                doc = (dashboard / "state" / "tasks.json").read_text(encoding="utf-8")
-                self.assertIn('"status": "done"', doc)
-                self.assertIn("Host verification", doc)
+                doc = json.loads((dashboard / "state" / "tasks.json").read_text(encoding="utf-8"))
+                done_task = next(task for task in doc["tasks"] if task["task_id"] == "task_done_decision")
+                self.assertEqual(done_task["status"], "done")
+                self.assertTrue(any(comment.get("author") == "Host verification" for comment in done_task["comments"]))
             finally:
                 if old_state is None:
                     os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
                 else:
                     os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = old_state
 
-    def test_dashboard_push_syncs_project_move_for_existing_task(self):
+    def test_dashboard_push_does_not_override_dashboard_task_fields(self):
         with TemporaryDirectory() as tmpdir:
             old_state = os.environ.get("CLAWCROSS_HARNESS_STATE_PATH")
             os.environ["CLAWCROSS_HARNESS_STATE_PATH"] = str(Path(tmpdir) / "harness.json")
@@ -536,11 +544,13 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 )
 
                 summary = sync_harness_to_dashboard("test-user", dashboard_root=dashboard)
-                self.assertEqual(summary["project_updates"], 1)
-                self.assertEqual(summary["status_updates"], 1)
+                self.assertEqual(summary["project_updates"], 0)
+                self.assertEqual(summary["status_updates"], 0)
+                self.assertEqual(summary["status_conflicts_ignored"], 1)
+                self.assertGreaterEqual(summary["field_conflicts_ignored"], 1)
                 task = json.loads(tasks_path.read_text(encoding="utf-8"))["tasks"][0]
-                self.assertEqual(task["project_id"], "project-beta")
-                self.assertEqual(task["status"], "todo")
+                self.assertEqual(task["project_id"], "project-alpha")
+                self.assertEqual(task["status"], "needs_user")
             finally:
                 if old_state is None:
                     os.environ.pop("CLAWCROSS_HARNESS_STATE_PATH", None)
@@ -1238,9 +1248,13 @@ class HarnessConductorLoopTests(unittest.TestCase):
                 )
                 self.assertEqual(imported["task_md_import"]["status_updates"], 1)
                 self.assertEqual(imported["task_md_import"]["comments_added"], 1)
+                harness_task = next(
+                    task for task in get_harness_state("test-user")["tasks"] if task["task_id"] == "task_lifecycle"
+                )
+                self.assertEqual(harness_task["status"], "blocked")
                 dashboard_doc = json.loads(tasks_path.read_text(encoding="utf-8"))
                 task = dashboard_doc["tasks"][0]
-                self.assertEqual(task["status"], "blocked")
+                self.assertEqual(task["status"], "todo")
                 self.assertTrue(any("## Plan" in c.get("body", "") for c in task.get("comments", [])))
             finally:
                 if old_state is None:

@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -165,6 +166,38 @@ class RemoteClaudeParserTests(unittest.TestCase):
         self.assertTrue(data["stale"])
         self.assertEqual(data["sessions"][0]["display_id"], "session_cached")
 
+    def test_list_sessions_includes_remote_acpx_sessions(self):
+        payload = {
+            "transport": "acpx",
+            "available": True,
+            "ok": True,
+            "tools": ["codex"],
+            "cwd": "/home/u/.clawcross/acpx",
+            "sessions": [
+                {
+                    "tool": "codex",
+                    "sessionId": "project-main",
+                    "title": "project main",
+                    "updatedAt": "2026-06-09T01:00:00Z",
+                    "cwd": "/home/u/workspace/project",
+                }
+            ],
+        }
+        with TemporaryDirectory() as tmpdir:
+            cache_path = str(Path(tmpdir) / "remote_cache.json")
+            with mock.patch.dict(os.environ, {"CLAWCROSS_REMOTE_AGENT_TRANSPORT": "acpx"}), mock.patch.object(
+                rca, "_cache_path", return_value=cache_path
+            ), mock.patch.object(
+                rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+            ), mock.patch.object(rca, "_run_remote_python", return_value=payload):
+                data = rca.list_remote_claude_sessions(limit=3)
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["sessions"][0]["transport"], "acpx")
+        self.assertEqual(data["sessions"][0]["agent_tool"], "codex")
+        self.assertEqual(data["sessions"][0]["remote_key"], "u@h::acpx:codex:project-main")
+        self.assertEqual(data["remotes"][0]["transport"], "acpx")
+
     def test_send_message_rejects_blank_message(self):
         with self.assertRaises(ValueError):
             rca.send_remote_claude_message("session_abc", "   ")
@@ -205,6 +238,28 @@ class RemoteClaudeParserTests(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(data["response"]["via"], "tmux")
         self.assertEqual(data["session"]["remote_key"], "u@h::session_abc")
+
+    def test_send_message_routes_acpx_session_over_remote_acpx(self):
+        payload = {
+            "transport": "acpx",
+            "available": True,
+            "found": True,
+            "ok": True,
+            "tool": "codex",
+            "name": "project-main",
+            "stdout": json.dumps({"text": "done"}),
+            "response": {"ok": True, "via": "acpx", "returncode": 0},
+        }
+        with mock.patch.object(
+            rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+        ), mock.patch.object(rca, "_run_remote_python", return_value=payload) as run_mock:
+            data = rca.send_remote_claude_message("u@h::acpx:codex:project-main", "hello")
+
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["response"]["via"], "acpx")
+        self.assertEqual(data["response"]["text"], "done")
+        self.assertEqual(data["session"]["remote_key"], "u@h::acpx:codex:project-main")
+        self.assertIn("prompt", run_mock.call_args.args[0])
 
     def test_rename_session_updates_display_name(self):
         payload = {

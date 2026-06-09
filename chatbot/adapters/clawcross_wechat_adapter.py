@@ -1,31 +1,30 @@
 """
-WeClaw 适配器 - 微信桥接
+ClawCross WeChat 适配器 - 微信桥接
 
-WeClaw（github.com/fastclaw-ai/weclaw）是一个 Go 写的微信 bot 桥，
-本身已实现完整的微信协议（扫码登录、心跳、消息收发、CDN 加解密等）。
-本适配器以"子进程托管"方式接入，并在前面加一层本地 proxy：
+ClawCross WeChat 是 ClawCross 的本地微信桥入口。
+本适配器以"子进程托管"方式接入底层微信桥，并在前面加一层本地 proxy：
 
-  WeChat ──> weclaw 子进程 ──HTTP──> 本地 proxy(51298) ──HTTP──> /v1/chat/completions
+  WeChat ──> clawcross_wechat 子进程 ──HTTP──> 本地 proxy(51298) ──HTTP──> /v1/chat/completions
                                           │
                                           └─ 拦截 ClawCross 命令 → 返回 magic link / cross shell
 
-  1. 启动时自动检测 weclaw 二进制；缺失则跑 scripts/weclaw_install.sh 自动安装。
-  2. 写 ~/.weclaw/config.json：把 proxy URL 注册为 default HTTP agent。
-  3. spawn `weclaw start -f`，捕获 stdout：
-     - 检测 ASCII QR 块，独立保存到 data/weclaw_qr.txt 并打印 banner
+  1. 启动时自动检测 clawcross_wechat 二进制；缺失则跑 scripts/clawcross_wechat_install.sh 自动安装。
+  2. 写 ~/.clawcross_wechat/config.json：把 proxy URL 注册为 default HTTP agent。
+  3. spawn `clawcross_wechat start -f`，捕获 stdout：
+     - 检测 ASCII QR 块，独立保存到 data/clawcross_wechat_qr.txt 并打印 banner
      - 其余日志按行 forward 到 logger
   4. proxy 解析每条 chat completion 请求：
      - "/front" 开头 → 调 frontend /generate_login_link，把 magic link 当 assistant 回复返回
      - 其他 → 透传到真正的 agent endpoint（含流式）
 
 环境变量：
-  WECLAW_ENABLED=true            启用
-  WECLAW_BIN=weclaw              二进制路径或可执行名（默认 PATH 查找）
-  WECLAW_USERNAME=default        传给 agent 的 username
-  WECLAW_CONFIG=~/.weclaw/config.json
-  WECLAW_PROXY_HOST=127.0.0.1    proxy 监听地址
-  WECLAW_PROXY_PORT=51298        proxy 监听端口
-  WECLAW_AUTO_INSTALL=true       缺二进制时自动安装
+  CLAWCROSS_WECHAT_ENABLED=true            启用
+  CLAWCROSS_WECHAT_BIN=~/.clawcross/bin/clawcross_wechat
+  CLAWCROSS_WECHAT_USERNAME=default        传给 agent 的 username
+  CLAWCROSS_WECHAT_CONFIG=~/.clawcross_wechat/config.json
+  CLAWCROSS_WECHAT_PROXY_HOST=127.0.0.1    proxy 监听地址
+  CLAWCROSS_WECHAT_PROXY_PORT=51298        proxy 监听端口
+  CLAWCROSS_WECHAT_AUTO_INSTALL=true       缺二进制时自动安装
 """
 
 from __future__ import annotations
@@ -55,11 +54,11 @@ ensure_runtime_dirs()
 
 from .base import ChannelAdapter, MagicLink
 
-logger = logging.getLogger("chatbot.weclaw")
+logger = logging.getLogger("chatbot.clawcross_wechat")
 
 # QR ASCII 块字符（unicode 半/全块、白/黑、阴影）
 _QR_CHARS = set("█▀▄▌▐░▒▓ ▉▊▋▍▎▏▔▕")
-_INSTALL_SCRIPT_RELPATH = "scripts/weclaw_install.sh"
+_INSTALL_SCRIPT_RELPATH = "scripts/clawcross_wechat_install.sh"
 # 失效账号自动清理：sync.json ≤ 该字节数视为"从未成功 long-poll"
 _STALE_SYNC_MAX_BYTES = 32
 # 且 mtime 距今超过该小时数才动手（避免误伤刚扫码、还没收消息的新号）
@@ -93,29 +92,29 @@ def _last_user_text(payload: dict) -> str:
     return ""
 
 
-class WeClawAdapter(ChannelAdapter):
-    """以子进程方式托管 weclaw 二进制 + 本地拦截 proxy，路由微信消息到 ClawCross agent。"""
+class ClawCrossWeChatAdapter(ChannelAdapter):
+    """以子进程方式托管 clawcross_wechat 二进制 + 本地拦截 proxy，路由微信消息到 ClawCross agent。"""
 
-    channel = "weclaw"
+    channel = "clawcross_wechat"
 
     def __init__(self):
         super().__init__()
-        self._bin = os.getenv("WECLAW_BIN", "weclaw")
-        self._username = os.getenv("WECLAW_USERNAME", "default")
+        self._bin = os.getenv("CLAWCROSS_WECHAT_BIN", "~/.clawcross/bin/clawcross_wechat")
+        self._username = os.getenv("CLAWCROSS_WECHAT_USERNAME", "default")
         self._config_path = os.path.expanduser(
-            os.getenv("WECLAW_CONFIG", "~/.weclaw/config.json")
+            os.getenv("CLAWCROSS_WECHAT_CONFIG", "~/.clawcross_wechat/config.json")
         )
-        self._proxy_port = int(os.getenv("WECLAW_PROXY_PORT", "51298"))
-        self._proxy_host = os.getenv("WECLAW_PROXY_HOST", "127.0.0.1")
-        self._auto_install = os.getenv("WECLAW_AUTO_INSTALL", "true").lower() in ("1", "true", "yes", "on")
+        self._proxy_port = int(os.getenv("CLAWCROSS_WECHAT_PROXY_PORT", "51298"))
+        self._proxy_host = os.getenv("CLAWCROSS_WECHAT_PROXY_HOST", "127.0.0.1")
+        self._auto_install = os.getenv("CLAWCROSS_WECHAT_AUTO_INSTALL", "true").lower() in ("1", "true", "yes", "on")
         self._frontend_port = os.getenv("PORT_FRONTEND", "51209")
         self._proc: subprocess.Popen | None = None
         self._http_server: ThreadingHTTPServer | None = None
         self._qr_buffer: list[str] = []
-        self._qr_path = str(DATA_DIR / "weclaw_qr.txt")
+        self._qr_path = str(DATA_DIR / "clawcross_wechat_qr.txt")
         atexit.register(self._terminate)
 
-    # ── 抽象方法（weclaw 自己处理协议层）─────────────────────────────
+    # ── 抽象方法（clawcross_wechat 自己处理协议层）─────────────────────────────
 
     async def verify_permission(self, raw_message: Any) -> tuple[bool, str | None]:
         return True, self._username
@@ -129,22 +128,23 @@ class WeClawAdapter(ChannelAdapter):
     # ── 安装与配置 ───────────────────────────────────────────────────
 
     def _resolve_bin(self) -> str | None:
-        path = shutil.which(self._bin)
+        candidate = os.path.expanduser(self._bin)
+        path = shutil.which(candidate)
         if path:
             return path
-        if Path(self._bin).is_file() and os.access(self._bin, os.X_OK):
-            return self._bin
+        if Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return candidate
         return None
 
     def _try_auto_install(self) -> str | None:
-        """缺二进制时跑 scripts/weclaw_install.sh；返回安装后的路径或 None。"""
+        """缺二进制时跑 scripts/clawcross_wechat_install.sh；返回安装后的路径或 None。"""
         if not self._auto_install:
             return None
         script = os.path.join(str(PROJECT_ROOT), _INSTALL_SCRIPT_RELPATH)
         if not os.path.exists(script):
             logger.error(f"找不到安装脚本 {script}")
             return None
-        logger.info("WeClaw 二进制未找到，自动安装中（执行 scripts/weclaw_install.sh）...")
+        logger.info("ClawCross WeChat 二进制未找到，自动安装中（执行 scripts/clawcross_wechat_install.sh）...")
         try:
             result = subprocess.run(
                 ["bash", script],
@@ -157,17 +157,17 @@ class WeClawAdapter(ChannelAdapter):
                 for ln in result.stdout.splitlines():
                     logger.info(f"[install] {ln}")
             if result.returncode != 0:
-                logger.error(f"weclaw 安装失败 (rc={result.returncode}): {result.stderr[:500]}")
+                logger.error(f"clawcross_wechat 安装失败 (rc={result.returncode}): {result.stderr[:500]}")
                 return None
         except subprocess.TimeoutExpired:
-            logger.error("weclaw 安装超时（>5min）")
+            logger.error("clawcross_wechat 安装超时（>5min）")
             return None
         except Exception as e:
-            logger.error(f"weclaw 安装异常: {e}")
+            logger.error(f"clawcross_wechat 安装异常: {e}")
             return None
         return self._resolve_bin()
 
-    def _write_weclaw_config(self) -> None:
+    def _write_clawcross_wechat_config(self) -> None:
         cfg_dir = os.path.dirname(self._config_path)
         os.makedirs(cfg_dir, exist_ok=True)
 
@@ -177,7 +177,7 @@ class WeClawAdapter(ChannelAdapter):
                 with open(self._config_path, "r", encoding="utf-8") as f:
                     existing = json.load(f) or {}
             except Exception as e:
-                logger.warning(f"读取已有 weclaw 配置失败，将重写: {e}")
+                logger.warning(f"读取已有 clawcross_wechat 配置失败，将重写: {e}")
                 existing = {}
 
         api_key = self.build_api_key(self._username)
@@ -195,7 +195,7 @@ class WeClawAdapter(ChannelAdapter):
 
         with open(self._config_path, "w", encoding="utf-8") as f:
             json.dump(existing, f, indent=2, ensure_ascii=False)
-        logger.info(f"已写入 weclaw 配置: {self._config_path} (agent endpoint=proxy@{self._proxy_port})")
+        logger.info(f"已写入 clawcross_wechat 配置: {self._config_path} (agent endpoint=proxy@{self._proxy_port})")
 
     def _account_files(self) -> list[Path]:
         accounts_dir = Path(self._config_path).expanduser().parent / "accounts"
@@ -207,10 +207,10 @@ class WeClawAdapter(ChannelAdapter):
         )
 
     def _prune_stale_accounts(self) -> None:
-        # weclaw 内置 monitor 会为每个 accounts/*.json 起一个 long-poll goroutine；
+        # clawcross_wechat 内置 monitor 会为每个 accounts/*.json 起一个 long-poll goroutine；
         # 服务端已失效的 bot_token 会让 monitor 反复打 "session expired" WARNING 并
         # 自重启进入死循环。启动前把 sync.json 长期空闲的账号移到 accounts.disabled/，
-        # 让 weclaw 只为还活着的账号起 monitor。
+        # 让 clawcross_wechat 只为还活着的账号起 monitor。
         accounts_dir = Path(self._config_path).expanduser().parent / "accounts"
         if not accounts_dir.is_dir():
             return
@@ -250,9 +250,9 @@ class WeClawAdapter(ChannelAdapter):
                 logger.warning(f"禁用失效账号 {acct_file.stem} 失败: {e}")
                 continue
             logger.warning(
-                f"已禁用失效 weclaw 账号 {acct_file.stem}"
+                f"已禁用失效 clawcross_wechat 账号 {acct_file.stem}"
                 f"（sync 文件 ≤{_STALE_SYNC_MAX_BYTES}B 且超过 {_STALE_SYNC_AGE_HOURS}h 未更新），"
-                f"已移至 {disabled_dir}/；如要恢复请运行 `weclaw login` 重新扫码，"
+                f"已移至 {disabled_dir}/；如要恢复请运行 `clawcross_wechat login` 重新扫码，"
                 f"或手动 mv 回 {accounts_dir}/。"
             )
 
@@ -295,7 +295,7 @@ class WeClawAdapter(ChannelAdapter):
 
         class _Handler(BaseHTTPRequestHandler):
             def log_message(self, fmt, *args):
-                logger.debug("weclaw-proxy: " + fmt % args)
+                logger.debug("clawcross_wechat-proxy: " + fmt % args)
 
             def _send_json(self, status: int, payload: dict):
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -306,10 +306,10 @@ class WeClawAdapter(ChannelAdapter):
                 self.wfile.write(body)
 
             def do_POST(self):
-                if self.path == "/_weclaw/stop":
-                    self._send_json(200, {"status": "success", "message": "stopping weclaw"})
-                    threading.Thread(target=adapter_self._terminate, daemon=True, name="weclaw-control-stop").start()
-                    logger.info("收到 WeClaw 内部停止指令")
+                if self.path == "/_clawcross_wechat/stop":
+                    self._send_json(200, {"status": "success", "message": "stopping clawcross_wechat"})
+                    threading.Thread(target=adapter_self._terminate, daemon=True, name="clawcross_wechat-control-stop").start()
+                    logger.info("收到 ClawCross WeChat 内部停止指令")
                     return
 
                 length = int(self.headers.get("Content-Length") or 0)
@@ -326,7 +326,7 @@ class WeClawAdapter(ChannelAdapter):
                     link = adapter_self._gen_magic_link_sync(user_id)
                     content = adapter_self.format_cross_reply(link)
                     self._send_json(200, {
-                        "id": "weclaw-cross",
+                        "id": "clawcross_wechat-cross",
                         "object": "chat.completion",
                         "created": int(time.time()),
                         "model": data.get("model", ""),
@@ -352,7 +352,7 @@ class WeClawAdapter(ChannelAdapter):
                     handled, cli_reply = True, f"Cross shell 错误: {e}"
                 if handled:
                     self._send_json(200, {
-                        "id": "weclaw-cli",
+                        "id": "clawcross_wechat-cli",
                         "object": "chat.completion",
                         "created": int(time.time()),
                         "model": data.get("model", ""),
@@ -401,20 +401,20 @@ class WeClawAdapter(ChannelAdapter):
             try:
                 s.bind((self._proxy_host, self._proxy_port))
             except OSError as e:
-                logger.error(f"WECLAW_PROXY_PORT={self._proxy_port} 已被占用: {e}")
+                logger.error(f"CLAWCROSS_WECHAT_PROXY_PORT={self._proxy_port} 已被占用: {e}")
                 raise
 
         server = ThreadingHTTPServer((self._proxy_host, self._proxy_port), _Handler)
         self._http_server = server
-        t = threading.Thread(target=server.serve_forever, daemon=True, name="weclaw-proxy")
+        t = threading.Thread(target=server.serve_forever, daemon=True, name="clawcross_wechat-proxy")
         t.start()
-        logger.info(f"weclaw proxy 已启动: http://{self._proxy_host}:{self._proxy_port}")
+        logger.info(f"clawcross_wechat proxy 已启动: http://{self._proxy_host}:{self._proxy_port}")
 
     # ── 启动与生命周期 ────────────────────────────────────────────────
 
     async def run(self) -> None:
         if not self._internal_token:
-            logger.error("INTERNAL_TOKEN 未配置，weclaw 无法以用户身份调 agent")
+            logger.error("INTERNAL_TOKEN 未配置，clawcross_wechat 无法以用户身份调 agent")
             return
 
         bin_path = self._resolve_bin()
@@ -422,7 +422,7 @@ class WeClawAdapter(ChannelAdapter):
             bin_path = self._try_auto_install()
         if not bin_path:
             logger.error(
-                f"找不到 weclaw 二进制 ({self._bin})，且自动安装失败。"
+                f"找不到 clawcross_wechat 二进制 ({self._bin})，且自动安装失败。"
                 f"请手动执行: bash {_INSTALL_SCRIPT_RELPATH}"
             )
             return
@@ -434,17 +434,17 @@ class WeClawAdapter(ChannelAdapter):
             return
 
         try:
-            self._write_weclaw_config()
+            self._write_clawcross_wechat_config()
         except Exception as e:
-            logger.error(f"写入 weclaw 配置失败: {e}")
+            logger.error(f"写入 clawcross_wechat 配置失败: {e}")
             return
 
         try:
             self._prune_stale_accounts()
         except Exception as e:
-            logger.warning(f"清理失效 weclaw 账号时出错（继续启动）: {e}")
+            logger.warning(f"清理失效 clawcross_wechat 账号时出错（继续启动）: {e}")
 
-        logger.info(f"启动 weclaw 子进程: {bin_path} start -f")
+        logger.info(f"启动 clawcross_wechat 子进程: {bin_path} start -f")
         try:
             self._proc = subprocess.Popen(
                 [bin_path, "start", "-f"],
@@ -455,7 +455,7 @@ class WeClawAdapter(ChannelAdapter):
                 start_new_session=True,
             )
         except Exception as e:
-            logger.error(f"启动 weclaw 失败: {e}")
+            logger.error(f"启动 clawcross_wechat 失败: {e}")
             return
 
         loop = asyncio.get_event_loop()
@@ -491,7 +491,7 @@ class WeClawAdapter(ChannelAdapter):
                 # QR 块结束，落盘 + 发 banner
                 self._flush_qr_buffer()
                 in_qr = False
-            logger.info(f"[weclaw] {line.rstrip()}")
+            logger.info(f"[clawcross_wechat] {line.rstrip()}")
 
     def _flush_qr_buffer(self) -> None:
         if not self._qr_buffer:
@@ -532,7 +532,7 @@ class WeClawAdapter(ChannelAdapter):
             return
         loop = asyncio.get_event_loop()
         rc = await loop.run_in_executor(None, self._proc.wait)
-        logger.warning(f"weclaw 子进程退出，returncode={rc}")
+        logger.warning(f"clawcross_wechat 子进程退出，returncode={rc}")
         if self._http_server:
             self._http_server.shutdown()
 
@@ -544,7 +544,7 @@ class WeClawAdapter(ChannelAdapter):
                 pass
         if not self._proc or self._proc.poll() is not None:
             return
-        logger.info("收到关停信号，终止 weclaw 子进程")
+        logger.info("收到关停信号，终止 clawcross_wechat 子进程")
         try:
             os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
         except Exception:
@@ -552,7 +552,7 @@ class WeClawAdapter(ChannelAdapter):
         try:
             self._proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            logger.warning("weclaw 未在 10s 内退出，强制 kill")
+            logger.warning("clawcross_wechat 未在 10s 内退出，强制 kill")
             try:
                 os.killpg(os.getpgid(self._proc.pid), signal.SIGKILL)
             except Exception:

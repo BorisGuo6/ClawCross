@@ -58,13 +58,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--dashboard-publish",
         action=argparse.BooleanOptionalAction,
         default=_env_bool("CLAWCROSS_HARNESS_DASHBOARD_PUBLISH", True),
-        help="Commit and push dashboard/state/tasks.json when the conductor changes dashboard task state.",
+        help="Commit and push dashboard/state/tasks.json when the conductor publishes dashboard-safe evidence.",
     )
     parser.add_argument(
         "--dashboard-supabase-sync",
         action=argparse.BooleanOptionalAction,
         default=_env_bool("CLAWCROSS_HARNESS_DASHBOARD_SUPABASE_SYNC", False),
-        help="Sync dashboard/state/*.json into Supabase when the conductor changes dashboard task state. Disabled by default to avoid quota churn.",
+        help="Sync dashboard/state/*.json into Supabase when the conductor publishes dashboard-safe evidence. Disabled by default to avoid quota churn.",
     )
     parser.add_argument(
         "--llm-mode",

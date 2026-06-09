@@ -446,7 +446,7 @@ function Get-ClawcrossServiceProcesses {
         "src[\\/]+mainagent\.py",
         "src[\\/]+front\.py",
         "chatbot[\\/]+main\.py",
-        "weclaw start -f"
+        "clawcross_wechat start -f"
     )
 
     $candidatePids = New-Object System.Collections.Generic.List[int]
@@ -466,7 +466,7 @@ function Get-ClawcrossServiceProcesses {
     }
 
     foreach ($proc in Get-CimInstance Win32_Process -ErrorAction SilentlyContinue) {
-        if ($proc.Name -notin @("python.exe", "pythonw.exe", "weclaw.exe", "weclaw")) {
+        if ($proc.Name -notin @("python.exe", "pythonw.exe", "clawcross_wechat.exe", "clawcross_wechat")) {
             continue
         }
         if (-not $proc.CommandLine) {
@@ -484,7 +484,7 @@ function Get-ClawcrossServiceProcesses {
             continue
         }
 
-        if ($proc.Name -notin @("python.exe", "pythonw.exe", "weclaw.exe", "weclaw")) {
+        if ($proc.Name -notin @("python.exe", "pythonw.exe", "clawcross_wechat.exe", "clawcross_wechat")) {
             continue
         }
 

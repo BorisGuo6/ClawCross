@@ -181,8 +181,8 @@ def cmd_list() -> str:
             if len(ch.bot_fields) > 3:
                 keys += ", ..."
             extra = ""
-            if ch.id == "weclaw":
-                state = _weclaw_runtime_state()
+            if ch.id == "clawcross_wechat":
+                state = _clawcross_wechat_runtime_state()
                 bits = [
                     f"logged_in={'yes' if state['logged_in'] else 'no'}",
                     f"running={'yes' if state['running'] else 'no'}",
@@ -215,8 +215,8 @@ def cmd_show(channel_id: str) -> str:
                 lines.append(f"  {f.name}: (unset; default={f.default!r})")
         if not any_set:
             lines.append("  (nothing set yet)")
-        if ch.id == "weclaw":
-            state = _weclaw_runtime_state()
+        if ch.id == "clawcross_wechat":
+            state = _clawcross_wechat_runtime_state()
             lines.append("")
             lines.append("Runtime:")
             lines.append(f"  logged_in: {'yes' if state['logged_in'] else 'no'}")
@@ -464,31 +464,32 @@ def cmd_setup(channel_id: str | None, *, interactive: bool) -> str:
 
 # ── unified dispatcher ──────────────────────────────────────────────────────
 
-# ── WeClaw native CLI passthrough ───────────────────────────────────────────
+# ── ClawCross WeChat native CLI passthrough ───────────────────────────────────────────
 #
-# `weclaw login` prints an ASCII QR on stdout and waits for the user to
+# `clawcross_wechat login` prints an ASCII QR on stdout and waits for the user to
 # scan it with WeChat; on success it writes its account file and exits.
 # Forwarding the subprocess's stdio straight to the terminal lets the
 # user scan without the mobile UI in the loop.
-# `weclaw stop` and `weclaw status` are similarly thin — we just exec them.
+# `clawcross_wechat stop` and `clawcross_wechat status` are similarly thin — we just exec them.
 
-def _resolve_weclaw_bin() -> tuple[str, str | None]:
+def _resolve_clawcross_wechat_bin() -> tuple[str, str | None]:
     env = _read_env()
-    raw = (env.get("WECLAW_BIN") or os.environ.get("WECLAW_BIN") or "weclaw").strip() or "weclaw"
+    raw = (env.get("CLAWCROSS_WECHAT_BIN") or os.environ.get("CLAWCROSS_WECHAT_BIN") or "~/.clawcross/bin/clawcross_wechat").strip()
+    raw = os.path.expanduser(raw or "~/.clawcross/bin/clawcross_wechat")
     resolved = shutil.which(raw) or raw
     if not (Path(resolved).is_file() or shutil.which(resolved)):
-        return resolved, f"weclaw binary not found: {resolved}. Set WECLAW_BIN via `/channel setup weclaw`."
+        return resolved, f"clawcross_wechat binary not found: {resolved}. Set CLAWCROSS_WECHAT_BIN via `/channel setup clawcross_wechat`."
     return resolved, None
 
 
-def _weclaw_config_path() -> Path:
+def _clawcross_wechat_config_path() -> Path:
     env = _read_env()
-    raw = (env.get("WECLAW_CONFIG") or os.environ.get("WECLAW_CONFIG") or "~/.weclaw/config.json").strip()
+    raw = (env.get("CLAWCROSS_WECHAT_CONFIG") or os.environ.get("CLAWCROSS_WECHAT_CONFIG") or "~/.clawcross_wechat/config.json").strip()
     return Path(os.path.expanduser(raw))
 
 
-def _weclaw_account_files() -> list[Path]:
-    accounts_dir = _weclaw_config_path().parent / "accounts"
+def _clawcross_wechat_account_files() -> list[Path]:
+    accounts_dir = _clawcross_wechat_config_path().parent / "accounts"
     if not accounts_dir.is_dir():
         return []
     return sorted(
@@ -505,14 +506,14 @@ def _is_tcp_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
         return False
 
 
-def _weclaw_runtime_state() -> dict[str, object]:
+def _clawcross_wechat_runtime_state() -> dict[str, object]:
     env = _read_env()
-    config_path = _weclaw_config_path()
+    config_path = _clawcross_wechat_config_path()
     accounts_dir = config_path.parent / "accounts"
-    accounts = _weclaw_account_files()
-    proxy_host = (env.get("WECLAW_PROXY_HOST") or os.environ.get("WECLAW_PROXY_HOST") or "127.0.0.1").strip() or "127.0.0.1"
-    proxy_port = int((env.get("WECLAW_PROXY_PORT") or os.environ.get("WECLAW_PROXY_PORT") or "51298").strip() or "51298")
-    rc, out = _weclaw_exec(["status"], stream=False, timeout=5)
+    accounts = _clawcross_wechat_account_files()
+    proxy_host = (env.get("CLAWCROSS_WECHAT_PROXY_HOST") or os.environ.get("CLAWCROSS_WECHAT_PROXY_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+    proxy_port = int((env.get("CLAWCROSS_WECHAT_PROXY_PORT") or os.environ.get("CLAWCROSS_WECHAT_PROXY_PORT") or "51298").strip() or "51298")
+    rc, out = _clawcross_wechat_exec(["status"], stream=False, timeout=5)
     body = out or f"exit={rc}"
     return {
         "config_path": config_path,
@@ -528,11 +529,11 @@ def _weclaw_runtime_state() -> dict[str, object]:
     }
 
 
-def _weclaw_exec(args: list[str], *, stream: bool, timeout: int | None = None) -> tuple[int, str]:
-    """Run weclaw <args>. When *stream* is True, stdio is inherited so
+def _clawcross_wechat_exec(args: list[str], *, stream: bool, timeout: int | None = None) -> tuple[int, str]:
+    """Run clawcross_wechat <args>. When *stream* is True, stdio is inherited so
     the user sees output live (used for `login`). Otherwise stdout is
     captured and returned."""
-    bin_path, err = _resolve_weclaw_bin()
+    bin_path, err = _resolve_clawcross_wechat_bin()
     if err:
         return 1, err
     cmd = [bin_path, *args]
@@ -547,45 +548,45 @@ def _weclaw_exec(args: list[str], *, stream: bool, timeout: int | None = None) -
         out = ((proc.stdout or "") + (proc.stderr or "")).strip()
         return proc.returncode, out
     except FileNotFoundError:
-        return 1, f"weclaw binary not on PATH (tried {bin_path})."
+        return 1, f"clawcross_wechat binary not on PATH (tried {bin_path})."
     except subprocess.TimeoutExpired:
-        return 1, f"weclaw {' '.join(args)} timed out."
+        return 1, f"clawcross_wechat {' '.join(args)} timed out."
 
 
 def cmd_login(channel_id: str, *, interactive: bool) -> str:
     ch = catalog.get_channel(channel_id)
-    if ch is None or ch.id != "weclaw":
-        return f"`channel login` is only supported for weclaw (got {channel_id!r})."
+    if ch is None or ch.id != "clawcross_wechat":
+        return f"`channel login` is only supported for clawcross_wechat (got {channel_id!r})."
     if not interactive:
-        return "Run `clawcross channel login weclaw` from a terminal — the QR has to render on your screen."
-    print("Launching `weclaw login` — the QR will appear below.")
+        return "Run `clawcross channel login clawcross_wechat` from a terminal — the QR has to render on your screen."
+    print("Launching `clawcross_wechat login` — the QR will appear below.")
     print("Scan it with WeChat to authorize, or Ctrl-C to cancel.\n")
-    rc, _ = _weclaw_exec(["login"], stream=True)
+    rc, _ = _clawcross_wechat_exec(["login"], stream=True)
     if rc == 0:
-        return "WeClaw login completed. Run `clawcross channel status weclaw` to verify."
+        return "ClawCross WeChat login completed. Run `clawcross channel status clawcross_wechat` to verify."
     if rc == 130:  # Ctrl-C
         return "Login cancelled."
-    return f"weclaw login exited with code {rc}. Re-run if the QR expired."
+    return f"clawcross_wechat login exited with code {rc}. Re-run if the QR expired."
 
 
 def cmd_logout(channel_id: str) -> str:
     ch = catalog.get_channel(channel_id)
-    if ch is None or ch.id != "weclaw":
-        return f"`channel logout` is only supported for weclaw (got {channel_id!r})."
-    rc, out = _weclaw_exec(["stop"], stream=False, timeout=10)
+    if ch is None or ch.id != "clawcross_wechat":
+        return f"`channel logout` is only supported for clawcross_wechat (got {channel_id!r})."
+    rc, out = _clawcross_wechat_exec(["stop"], stream=False, timeout=10)
     if rc == 0:
-        return "WeClaw stopped." + (f"\n{out}" if out else "")
-    return f"weclaw stop failed (exit={rc}).\n{out}" if out else f"weclaw stop failed (exit={rc})."
+        return "ClawCross WeChat stopped." + (f"\n{out}" if out else "")
+    return f"clawcross_wechat stop failed (exit={rc}).\n{out}" if out else f"clawcross_wechat stop failed (exit={rc})."
 
 
 def cmd_native_status(channel_id: str) -> str:
     ch = catalog.get_channel(channel_id)
-    if ch is None or ch.id != "weclaw":
-        return f"Native status is only supported for weclaw (got {channel_id!r})."
-    state = _weclaw_runtime_state()
+    if ch is None or ch.id != "clawcross_wechat":
+        return f"Native status is only supported for clawcross_wechat (got {channel_id!r})."
+    state = _clawcross_wechat_runtime_state()
     body = str(state["native_body"])
     status_lines = [
-        "weclaw status:",
+        "clawcross_wechat status:",
         f"  running: {'yes' if state['running'] else 'no'}",
         f"  logged_in: {'yes' if state['logged_in'] else 'no'}",
         f"  accounts: {len(state['accounts'])}",
@@ -615,8 +616,8 @@ def _channel_picker_label(ch: ChannelInfo) -> str:
         return f"{emoji}{ch.label}  [{suffix}]"
     configured = _is_configured(ch, env)
     suffix = "configured" if configured else "not configured"
-    if ch.id == "weclaw":
-        state = _weclaw_runtime_state()
+    if ch.id == "clawcross_wechat":
+        state = _clawcross_wechat_runtime_state()
         suffix += f", logged_in={'yes' if state['logged_in'] else 'no'}, running={'yes' if state['running'] else 'no'}"
     return f"{emoji}{ch.label}  [{suffix}]"
 
@@ -637,11 +638,11 @@ def _channel_actions(ch: ChannelInfo) -> list[tuple[str, str]]:
         ("setup", "Guided setup / add config"),
         ("clear", "Clear this channel config"),
     ]
-    if ch.id == "weclaw":
+    if ch.id == "clawcross_wechat":
         actions.extend([
-            ("login", "Run weclaw login and show QR in terminal"),
-            ("logout", "Stop WeClaw"),
-            ("status", "Show native WeClaw status"),
+            ("login", "Run clawcross_wechat login and show QR in terminal"),
+            ("logout", "Stop ClawCross WeChat"),
+            ("status", "Show native ClawCross WeChat status"),
         ])
     return actions
 
@@ -684,9 +685,9 @@ _HELP = (
     "  /cross channel show <id>          inspect entries currently in .env\n"
     "  /cross channel setup [<id>]       guided setup (CLI only — needs a terminal)\n"
     "  /cross channel clear <id>         drop the env_key for a channel\n"
-    "  /cross channel login weclaw       run `weclaw login` — scan the QR in your terminal\n"
-    "  /cross channel logout weclaw      run `weclaw stop`\n"
-    "  /cross channel status weclaw      run `weclaw status`\n"
+    "  /cross channel login clawcross_wechat       run `clawcross_wechat login` — scan the QR in your terminal\n"
+    "  /cross channel logout clawcross_wechat      run `clawcross_wechat stop`\n"
+    "  /cross channel status clawcross_wechat      run `clawcross_wechat status`\n"
 )
 
 
@@ -719,11 +720,11 @@ def handle_channel_command(args: list[str], *, interactive: bool = False) -> str
         return cmd_clear(args[1])
     if sub == "login":
         if len(args) < 2:
-            return "Usage: channel login <id> (currently weclaw only)"
+            return "Usage: channel login <id> (currently clawcross_wechat only)"
         return cmd_login(args[1], interactive=interactive)
     if sub in {"logout", "stop"}:
         if len(args) < 2:
-            return "Usage: channel logout <id> (currently weclaw only)"
+            return "Usage: channel logout <id> (currently clawcross_wechat only)"
         return cmd_logout(args[1])
     if sub == "help":
         return _HELP.lstrip("\n")

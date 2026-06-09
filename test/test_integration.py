@@ -62,7 +62,7 @@ class ChatbotCommandTests(unittest.TestCase):
         self.assertTrue(ChannelAdapter.is_cli_command("/cli"))
         self.assertFalse(ChannelAdapter.is_cli_command("/front"))
 
-    def test_chat_help_uses_cross_help_to_avoid_weclaw_builtin(self):
+    def test_chat_help_uses_cross_help_for_chatbot_channel_commands(self):
         help_text = chat_help_text()
         welcome = chat_welcome_text({"current": {"platform": "internal", "user": "default"}})
 
@@ -247,15 +247,15 @@ class FrontendIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["valid_hours"], 24)
         self.assertGreater(payload["expires_at"], payload["generated_at"])
 
-    def test_proxy_weclaw_qr_returns_pending_when_missing(self):
+    def test_proxy_clawcross_wechat_qr_returns_pending_when_missing(self):
         with mock.patch.object(front.os.path, "exists", return_value=False):
-            response = self.client.get("/proxy_weclaw_qr")
+            response = self.client.get("/proxy_clawcross_wechat_qr")
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["status"], "pending")
         self.assertEqual(payload["qr"], "")
-        self.assertIn("weclaw", payload["message"].lower())
+        self.assertIn("ClawCross WeChat", payload["message"])
 
     def test_proxy_openclaw_sessions_forwards_filter_and_preserves_shape(self):
         with mock.patch.object(

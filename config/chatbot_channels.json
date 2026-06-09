@@ -370,21 +370,44 @@
       ]
     },
     {
-      "id": "weclaw",
-      "label": "微信 / WeClaw",
-      "kind": "weclaw",
-      "adapter": "weclaw",
+      "id": "openclaw-weixin",
+      "label": "微信 / OpenClaw Weixin",
+      "kind": "openclaw-weixin",
+      "adapter": "openclaw-weixin",
+      "env_key": "",
+      "emoji": "🟩",
+      "help": "复用 @tencent-weixin/openclaw-weixin 的扫码登录态，但消息直接进入 ClawCross。先运行 openclaw channels login --channel openclaw-weixin，再启用 OPENCLAW_WEIXIN_ENABLED。",
+      "setup_instructions": [
+        "1. Install/enable @tencent-weixin/openclaw-weixin in OpenClaw",
+        "2. Run openclaw channels login --channel openclaw-weixin and scan the QR code",
+        "3. Enable OPENCLAW_WEIXIN_ENABLED so ClawCross owns long-poll and replies"
+      ],
+      "fields": [
+        {"name": "OPENCLAW_WEIXIN_ENABLED", "label": "Enable OpenClaw Weixin bridge", "target": "env", "type": "boolean", "default": "true"},
+        {"name": "OPENCLAW_WEIXIN_STATE_DIR", "label": "OpenClaw Weixin state dir", "target": "env", "type": "text", "default": "~/.openclaw/openclaw-weixin"},
+        {"name": "OPENCLAW_WEIXIN_ACCOUNT_ID", "label": "Account ID", "target": "env", "type": "text", "placeholder": "empty = first account in accounts.json"},
+        {"name": "OPENCLAW_WEIXIN_USERNAME", "label": "ClawCross user", "target": "env", "type": "text", "default": "default"},
+        {"name": "OPENCLAW_WEIXIN_DEFAULT_ALLOW", "label": "Allow senders not in whitelist", "target": "env", "type": "boolean", "default": "false"},
+        {"name": "OPENCLAW_WEIXIN_POLL_TIMEOUT_MS", "label": "Long-poll timeout ms", "target": "env", "type": "text", "default": "35000"},
+        {"name": "OPENCLAW_WEIXIN_BOT_AGENT", "label": "Weixin bot_agent label", "target": "env", "type": "text", "default": "ClawCross/0.1.0"}
+      ]
+    },
+    {
+      "id": "clawcross_wechat",
+      "label": "微信 / ClawCross WeChat",
+      "kind": "clawcross_wechat",
+      "adapter": "clawcross_wechat",
       "env_key": "",
       "emoji": "🟢",
-      "help": "微信渠道使用 WeClaw，不走 NoneBot adapter，也不需要平台 token。扫码登录由 WeClaw 自己保存会话。",
+      "help": "微信渠道使用 ClawCross WeChat，不走 NoneBot adapter，也不需要平台 token。扫码登录由 ClawCross WeChat 自己保存会话。",
       "fields": [
-        {"name": "WECLAW_ENABLED", "label": "Enable WeClaw", "target": "env", "type": "boolean", "default": "true"},
-        {"name": "WECLAW_USERNAME", "label": "Local WeClaw account name", "target": "env", "type": "text", "default": "default"},
-        {"name": "WECLAW_BIN", "label": "WeClaw binary", "target": "env", "type": "text", "default": "weclaw"},
-        {"name": "WECLAW_CONFIG", "label": "WeClaw config path", "target": "env", "type": "text", "default": "~/.weclaw/config.json"},
-        {"name": "WECLAW_PROXY_HOST", "label": "Proxy host", "target": "env", "type": "text", "default": "127.0.0.1"},
-        {"name": "WECLAW_PROXY_PORT", "label": "Proxy port", "target": "env", "type": "text", "default": "51298"},
-        {"name": "WECLAW_AUTO_INSTALL", "label": "Auto-install on first run", "target": "env", "type": "boolean", "default": "true"}
+        {"name": "CLAWCROSS_WECHAT_ENABLED", "label": "Enable ClawCross WeChat", "target": "env", "type": "boolean", "default": "true"},
+        {"name": "CLAWCROSS_WECHAT_USERNAME", "label": "Local ClawCross WeChat account name", "target": "env", "type": "text", "default": "default"},
+        {"name": "CLAWCROSS_WECHAT_BIN", "label": "ClawCross WeChat wrapper", "target": "env", "type": "text", "default": "~/.clawcross/bin/clawcross_wechat"},
+        {"name": "CLAWCROSS_WECHAT_CONFIG", "label": "ClawCross WeChat config path", "target": "env", "type": "text", "default": "~/.clawcross_wechat/config.json"},
+        {"name": "CLAWCROSS_WECHAT_PROXY_HOST", "label": "Proxy host", "target": "env", "type": "text", "default": "127.0.0.1"},
+        {"name": "CLAWCROSS_WECHAT_PROXY_PORT", "label": "Proxy port", "target": "env", "type": "text", "default": "51298"},
+        {"name": "CLAWCROSS_WECHAT_AUTO_INSTALL", "label": "Auto-install on first run", "target": "env", "type": "boolean", "default": "true"}
       ]
     },
     {

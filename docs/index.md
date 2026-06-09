@@ -39,7 +39,8 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 | Create / debug workflow YAML | [`create_workflow.md`](./create_workflow.md) | [`example_team.md`](./example_team.md) |
 | Configure OpenClaw or external agents | [`openclaw-commands.md`](./openclaw-commands.md) | [`build_team.md`](./build_team.md) |
 | Add or debug remote Claude computers in Project Harness | [`remote-claude-harness.md`](./remote-claude-harness.md) | [`ports.md`](./ports.md), [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
-| Configure or debug ACP / acpx (external agent communication) | [`runtime-reference.md`](./runtime-reference.md) | [`build_team.md`](./build_team.md), [`oasis-reference.md`](./oasis-reference.md), [`repo-index.md`](./repo-index.md) |
+| Configure or debug ACP / acpx (external agent communication) | [`runtime-reference.md`](./runtime-reference.md), [`remote-acpx-harness.md`](./remote-acpx-harness.md) | [`build_team.md`](./build_team.md), [`oasis-reference.md`](./oasis-reference.md), [`repo-index.md`](./repo-index.md) |
+| Connect WeChat through official ClawBot / OpenClaw Weixin | [`wechat-clawbot.md`](./wechat-clawbot.md) | [`openclaw-commands.md`](./openclaw-commands.md), [`cli.md`](./cli.md) |
 | Configure TinyFish internet search agent | [`tinyfish-monitor.md`](./tinyfish-monitor.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Configure arXiv Robotics collision alerts | [`arxiv-collision-agent.md`](./arxiv-collision-agent.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Inspect ports, proxies, or service boundaries | [`ports.md`](./ports.md) | [`repo-index.md`](./repo-index.md) |

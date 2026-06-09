@@ -297,17 +297,17 @@ def _console_status() -> tuple[bool, str]:
     return True, f"日志根目录: {os.path.join(USER_DATA_DIR, '_console')}"
 
 
-# ── WeClaw (WeChat via weclaw binary) ──────────────────────────────
+# ── ClawCross WeChat (WeChat via clawcross_wechat binary) ──────────────────────────────
 
 import asyncio  # noqa: E402
 import shutil  # noqa: E402
 
-_WECLAW_BIN_ENV = "WECLAW_BIN"
-_WECLAW_ACCOUNTS_DIR = os.path.expanduser("~/.weclaw/accounts")
+_CLAWCROSS_WECHAT_BIN_ENV = "CLAWCROSS_WECHAT_BIN"
+_CLAWCROSS_WECHAT_ACCOUNTS_DIR = os.path.expanduser("~/.clawcross_wechat/accounts")
 
 
-def _resolve_weclaw_bin() -> str | None:
-    name = (os.getenv(_WECLAW_BIN_ENV, "") or "weclaw").strip() or "weclaw"
+def _resolve_clawcross_wechat_bin() -> str | None:
+    name = os.path.expanduser((os.getenv(_CLAWCROSS_WECHAT_BIN_ENV, "") or "~/.clawcross/bin/clawcross_wechat").strip())
     path = shutil.which(name)
     if path:
         return path
@@ -316,11 +316,11 @@ def _resolve_weclaw_bin() -> str | None:
     return None
 
 
-async def _send_weclaw(target_id: str, text: str, parse_mode: str) -> SendResult:
-    del parse_mode  # weclaw 不支持 markdown / html
-    binary = _resolve_weclaw_bin()
+async def _send_clawcross_wechat(target_id: str, text: str, parse_mode: str) -> SendResult:
+    del parse_mode  # clawcross_wechat 不支持 markdown / html
+    binary = _resolve_clawcross_wechat_bin()
     if not binary:
-        return SendResult(False, "未找到 weclaw 二进制（设置 WECLAW_BIN 或 PATH）")
+        return SendResult(False, "未找到 clawcross_wechat 二进制（设置 CLAWCROSS_WECHAT_BIN 或 PATH）")
     try:
         proc = await asyncio.create_subprocess_exec(
             binary, "send", "--to", target_id, "--text", text,
@@ -331,29 +331,29 @@ async def _send_weclaw(target_id: str, text: str, parse_mode: str) -> SendResult
             out, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
         except asyncio.TimeoutError:
             proc.kill()
-            return SendResult(False, "weclaw send 超时 (30s)")
+            return SendResult(False, "clawcross_wechat send 超时 (30s)")
         body = (out or b"").decode("utf-8", errors="replace").strip()
         if proc.returncode == 0:
-            return SendResult(True, f"已发送 (weclaw rc=0) {body[:120]}".rstrip())
-        return SendResult(False, f"weclaw send 失败 rc={proc.returncode}: {body[:200]}")
+            return SendResult(True, f"已发送 (clawcross_wechat rc=0) {body[:120]}".rstrip())
+        return SendResult(False, f"clawcross_wechat send 失败 rc={proc.returncode}: {body[:200]}")
     except FileNotFoundError:
-        return SendResult(False, f"weclaw 二进制不可执行: {binary}")
+        return SendResult(False, f"clawcross_wechat 二进制不可执行: {binary}")
     except Exception as exc:
-        return SendResult(False, f"weclaw 发送异常: {exc}")
+        return SendResult(False, f"clawcross_wechat 发送异常: {exc}")
 
 
-def _weclaw_status() -> tuple[bool, str]:
-    binary = _resolve_weclaw_bin()
+def _clawcross_wechat_status() -> tuple[bool, str]:
+    binary = _resolve_clawcross_wechat_bin()
     if not binary:
-        return False, "未找到 weclaw 二进制（设置 WECLAW_BIN 或 PATH）"
-    if not os.path.isdir(_WECLAW_ACCOUNTS_DIR):
-        return False, f"无 weclaw 账号目录 {_WECLAW_ACCOUNTS_DIR}（请 weclaw login）"
+        return False, "未找到 clawcross_wechat 二进制（设置 CLAWCROSS_WECHAT_BIN 或 PATH）"
+    if not os.path.isdir(_CLAWCROSS_WECHAT_ACCOUNTS_DIR):
+        return False, f"无 clawcross_wechat 账号目录 {_CLAWCROSS_WECHAT_ACCOUNTS_DIR}（请 clawcross_wechat login）"
     accounts = [
-        f for f in os.listdir(_WECLAW_ACCOUNTS_DIR)
+        f for f in os.listdir(_CLAWCROSS_WECHAT_ACCOUNTS_DIR)
         if f.endswith(".json") and not f.endswith(".sync.json")
     ]
     if not accounts:
-        return False, "weclaw 账号目录为空（需 weclaw login 扫码）"
+        return False, "clawcross_wechat 账号目录为空（需 clawcross_wechat login 扫码）"
     return True, f"二进制: {binary}; 已登录账号: {len(accounts)}"
 
 
@@ -364,14 +364,14 @@ _SENDERS: dict[str, Sender] = {
     "telegram": _send_telegram,
     "webhook": _send_webhook,
     "console": _send_console,
-    "weclaw": _send_weclaw,
+    "clawcross_wechat": _send_clawcross_wechat,
 }
 
 _STATUS_PROBES: dict[str, StatusProbe] = {
     "telegram": _telegram_status,
     "webhook": _webhook_status,
     "console": _console_status,
-    "weclaw": _weclaw_status,
+    "clawcross_wechat": _clawcross_wechat_status,
 }
 
 _AVAILABLE_CHANNELS = tuple(sorted(_SENDERS.keys()))
@@ -383,7 +383,7 @@ def _normalize_channel(channel: str, *, default: str = "telegram") -> str:
         value = (default or "").strip().lower()
     aliases = {
         "tg": "telegram", "log": "console", "file": "console", "http": "webhook",
-        "wechat": "weclaw", "wx": "weclaw", "微信": "weclaw",
+        "wechat": "clawcross_wechat", "wx": "clawcross_wechat", "微信": "clawcross_wechat",
     }
     return aliases.get(value, value)
 
@@ -406,12 +406,12 @@ def _validate_target(channel: str, target_id: str) -> str:
     elif channel == "console":
         if any(ch in t for ch in ("..", "\x00")) or t.startswith("/") or "\\" in t:
             return "console target_id 必须是 user 目录下的相对文件名（无 .. 无绝对路径）"
-    elif channel == "weclaw":
+    elif channel == "clawcross_wechat":
         # ilink user_id：宽松校验，只禁 shell 危险字符（subprocess 已经走 argv 不经 shell，这层是保险）
         if any(c in t for c in ("\x00", "\n", "\r")):
-            return "weclaw target_id 不能包含控制字符"
+            return "clawcross_wechat target_id 不能包含控制字符"
         if len(t) > 256:
-            return "weclaw target_id 太长 (>256)"
+            return "clawcross_wechat target_id 太长 (>256)"
     return ""
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync task/TODO facts between ClawCross harness and dashboard."""
+"""Mirror dashboard TODOs into ClawCross and publish harness evidence back."""
 
 from __future__ import annotations
 
@@ -19,18 +19,30 @@ from harness.dashboard_sync import import_dashboard_todos, sync_harness_to_dashb
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Sync ClawCross harness TODOs with dashboard/state/tasks.json.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Mirror dashboard/state/tasks.json into the private ClawCross harness "
+            "and publish dashboard-safe comments/evidence back."
+        )
+    )
     default_dashboard = os.getenv("CLAWCROSS_DASHBOARD_ROOT") or os.getenv("DASHBOARD_ROOT") or ""
     parser.add_argument("--dashboard-root", type=Path, default=Path(default_dashboard).expanduser() if default_dashboard else None)
     parser.add_argument("--user-id", default=os.getenv("CLAWCROSS_HARNESS_USER") or os.getenv("CLAWCROSS_USER_ID") or "default")
     parser.add_argument("--project-id", default=os.getenv("CLAWCROSS_HARNESS_PROJECT_ID", ""))
-    parser.add_argument("--create-missing", action="store_true")
+    parser.add_argument(
+        "--create-missing",
+        action="store_true",
+        help="Deprecated compatibility flag; dashboard is authoritative, so missing dashboard tasks are skipped.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--direction",
         choices=["push", "pull", "both"],
         default="push",
-        help="push copies ClawCross->dashboard, pull imports dashboard TODOs, both does pull then push.",
+        help=(
+            "push publishes harness comments/evidence, pull mirrors dashboard TODOs into private harness state, "
+            "both does pull then push."
+        ),
     )
     return parser
 

@@ -23,6 +23,8 @@ DEFAULT_REMOTE_USER = ""
 CACHE_FILENAME = "remote_claude_sessions_cache.json"
 TARGETS_FILENAME = "remote_claude_targets.json"
 REMOTE_KEY_SEPARATOR = "::"
+ACPX_SESSION_PREFIX = "acpx:"
+DEFAULT_REMOTE_ACPX_TOOLS = "codex,claude"
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,39 @@ def load_remote_claude_config() -> RemoteClaudeConfig:
 
 def _truthy(value: str | None) -> bool:
     return bool(value and value.strip().lower() in {"1", "true", "yes", "on"})
+
+
+def _remote_agent_transports() -> set[str]:
+    raw = (
+        os.environ.get("CLAWCROSS_REMOTE_AGENT_TRANSPORT")
+        or os.environ.get("CLAWCROSS_REMOTE_CODING_AGENT_TRANSPORT")
+        or "acpx,claude"
+    )
+    values = {part.strip().lower() for part in raw.replace(";", ",").split(",") if part.strip()}
+    if "legacy" in values:
+        values.add("claude")
+    if "all" in values:
+        values.update({"acpx", "claude"})
+    return values or {"acpx", "claude"}
+
+
+def _remote_acpx_tools() -> list[str]:
+    raw = os.environ.get("CLAWCROSS_REMOTE_ACPX_TOOLS") or DEFAULT_REMOTE_ACPX_TOOLS
+    tools = []
+    aliases = {"claude-code": "claude", "gemini-cli": "gemini"}
+    for part in raw.replace(";", ",").split(","):
+        tool = aliases.get(part.strip().lower(), part.strip().lower())
+        if tool and tool not in tools:
+            tools.append(tool)
+    return tools or ["codex", "claude"]
+
+
+def _remote_acpx_cwd() -> str:
+    return os.environ.get("CLAWCROSS_REMOTE_ACPX_CWD", "~/.clawcross/acpx")
+
+
+def _remote_acpx_env_path() -> str:
+    return os.environ.get("CLAWCROSS_REMOTE_ACPX_ENV", "~/.clawcross/remote_acpx.env")
 
 
 def _split_targets(value: str) -> list[str]:
@@ -423,6 +458,238 @@ for path in sorted(glob.glob(os.path.join(base, "*.json"))):
     }}
     items.append(item)
 print(json.dumps({{"sessions": items}}, ensure_ascii=False))
+"""
+
+
+def _remote_acpx_script_prelude() -> str:
+    script = r"""
+import json, os, shutil, subprocess, tempfile
+
+TOOLS = __TOOLS__
+ACPX_CWD = os.path.expanduser(__ACPX_CWD__)
+ENV_PATH = os.path.expanduser(__ENV_PATH__)
+TTL_SEC = __TTL_SEC__
+
+def _load_env_file(path):
+    env = os.environ.copy()
+    home = os.path.expanduser("~")
+    env["PATH"] = os.path.join(home, ".local", "bin") + os.pathsep + env.get("PATH", "")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip("'").strip('"')
+                if key:
+                    env[key] = value
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return env
+
+ENV = _load_env_file(ENV_PATH)
+ACPX = shutil.which("acpx", path=ENV.get("PATH"))
+
+def _json_from_stdout(text):
+    body = (text or "").strip()
+    if not body:
+        return None
+    try:
+        return json.loads(body)
+    except Exception:
+        pass
+    for line in body.splitlines():
+        line = line.strip()
+        if not line or line[0] not in "[{":
+            continue
+        try:
+            return json.loads(line)
+        except Exception:
+            continue
+    return None
+
+def _base_cmd():
+    return [ACPX, "--cwd", ACPX_CWD, "--ttl", str(TTL_SEC), "--format", "json", "--json-strict"]
+
+def _response_base(**extra):
+    payload = {
+        "transport": "acpx",
+        "available": bool(ACPX),
+        "cwd": ACPX_CWD,
+        "env_path": ENV_PATH,
+        "tools": TOOLS,
+    }
+    payload.update(extra)
+    return payload
+
+def _print(payload):
+    print(json.dumps(payload, ensure_ascii=False))
+"""
+    return (
+        script.replace("__TOOLS__", json.dumps(_remote_acpx_tools()))
+        .replace("__ACPX_CWD__", json.dumps(_remote_acpx_cwd()))
+        .replace("__ENV_PATH__", json.dumps(_remote_acpx_env_path()))
+        .replace("__TTL_SEC__", str(int(os.environ.get("CLAWCROSS_REMOTE_ACPX_TTL_SEC") or "300")))
+    )
+
+
+def _remote_script_list_acpx_sessions() -> str:
+    return _remote_acpx_script_prelude() + r"""
+sessions = []
+errors = []
+if not ACPX:
+    _print(_response_base(ok=False, sessions=sessions, errors=["acpx missing on PATH"]))
+    raise SystemExit(0)
+
+os.makedirs(ACPX_CWD, exist_ok=True)
+for tool in TOOLS:
+    cmd = _base_cmd() + [tool, "sessions", "list"]
+    try:
+        proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=25, env=ENV)
+    except Exception as exc:
+        errors.append(f"{tool}: {exc}")
+        continue
+    if proc.returncode != 0:
+        errors.append(f"{tool}: {(proc.stderr or proc.stdout or '').strip() or 'sessions list failed'}")
+        continue
+    data = _json_from_stdout(proc.stdout)
+    if isinstance(data, dict) and isinstance(data.get("sessions"), list):
+        items = data["sessions"]
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("sessionId") or item.get("session_id") or item.get("id") or "").strip()
+        if not name:
+            continue
+        sessions.append({
+            "tool": tool,
+            "name": name,
+            "sessionId": item.get("sessionId") or item.get("session_id") or item.get("id"),
+            "acpxRecordId": item.get("acpxRecordId"),
+            "closed": bool(item.get("closed")),
+            "lastUsedAt": item.get("lastUsedAt"),
+            "updatedAt": item.get("updatedAt") or item.get("updated_at"),
+            "cwd": item.get("cwd"),
+            "title": item.get("title"),
+            "message_count": len(item.get("messages") or []) if isinstance(item.get("messages"), list) else 0,
+        })
+_print(_response_base(ok=True, sessions=sessions, errors=errors))
+"""
+
+
+def _remote_script_read_acpx_session(tool: str, name: str, line_limit: int) -> str:
+    tool_json = json.dumps(str(tool))
+    name_json = json.dumps(str(name))
+    return _remote_acpx_script_prelude() + f"""
+tool = {tool_json}
+name = {name_json}
+line_limit = {int(line_limit)}
+if not ACPX:
+    _print(_response_base(ok=False, found=False, error="acpx missing on PATH"))
+    raise SystemExit(0)
+
+cmd = _base_cmd() + [tool, "sessions", "read", name]
+if line_limit > 0:
+    cmd.extend(["--tail", str(line_limit)])
+try:
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=30, env=ENV)
+except Exception as exc:
+    _print(_response_base(ok=False, found=False, error=str(exc)))
+    raise SystemExit(0)
+
+data = _json_from_stdout(proc.stdout)
+ok = proc.returncode == 0
+_print(_response_base(
+    ok=ok,
+    found=ok,
+    tool=tool,
+    name=name,
+    stdout=proc.stdout,
+    stderr=proc.stderr,
+    data=data,
+    error="" if ok else ((proc.stderr or proc.stdout or "").strip() or "sessions read failed"),
+))
+"""
+
+
+def _remote_script_send_acpx_message(tool: str, name: str, text: str) -> str:
+    tool_json = json.dumps(str(tool))
+    name_json = json.dumps(str(name))
+    text_json = json.dumps(str(text))
+    return _remote_acpx_script_prelude() + f"""
+tool = {tool_json}
+name = {name_json}
+text = {text_json}
+if not ACPX:
+    _print(_response_base(ok=False, found=False, response={{"ok": False, "error": "acpx missing on PATH", "code": "ENOACPX"}}))
+    raise SystemExit(0)
+
+os.makedirs(ACPX_CWD, exist_ok=True)
+ensure_cmd = _base_cmd() + [tool, "sessions", "ensure", "--name", name]
+subprocess.run(ensure_cmd, check=False, capture_output=True, text=True, timeout=20, env=ENV)
+
+payload = [{{"type": "text", "text": text.strip() or "(empty prompt)"}}]
+tmp_path = ""
+try:
+    fd, tmp_path = tempfile.mkstemp(prefix="clawcross_acpx_prompt_", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False)
+    cmd = [ACPX, "--cwd", ACPX_CWD, "--ttl", str(TTL_SEC), "--approve-all", "--format", "json", "--json-strict", tool, "prompt", "-s", name, "--file", tmp_path]
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=600, env=ENV)
+finally:
+    if tmp_path:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+ok = proc.returncode == 0
+_print(_response_base(
+    ok=ok,
+    found=True,
+    tool=tool,
+    name=name,
+    stdout=proc.stdout,
+    stderr=proc.stderr,
+    response={{"ok": ok, "via": "acpx", "returncode": proc.returncode, "error": "" if ok else ((proc.stderr or proc.stdout or "").strip() or "prompt failed")}},
+))
+"""
+
+
+def _remote_script_close_acpx_session(tool: str, name: str) -> str:
+    tool_json = json.dumps(str(tool))
+    name_json = json.dumps(str(name))
+    return _remote_acpx_script_prelude() + f"""
+tool = {tool_json}
+name = {name_json}
+if not ACPX:
+    _print(_response_base(ok=False, found=False, error="acpx missing on PATH"))
+    raise SystemExit(0)
+
+cmd = _base_cmd() + [tool, "sessions", "close", name]
+try:
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=30, env=ENV)
+except Exception as exc:
+    _print(_response_base(ok=False, found=False, error=str(exc)))
+    raise SystemExit(0)
+ok = proc.returncode == 0
+_print(_response_base(
+    ok=ok,
+    found=True,
+    tool=tool,
+    name=name,
+    stdout=proc.stdout,
+    stderr=proc.stderr,
+    error="" if ok else ((proc.stderr or proc.stdout or "").strip() or "sessions close failed"),
+))
 """
 
 
@@ -1043,6 +1310,135 @@ def _normalize_session(item: dict[str, Any], *, config: RemoteClaudeConfig | Non
     return item
 
 
+def _normalize_acpx_session(item: dict[str, Any], *, config: RemoteClaudeConfig) -> dict[str, Any]:
+    tool = str(item.get("tool") or "").strip().lower() or "codex"
+    name = str(item.get("name") or item.get("sessionId") or item.get("session_id") or item.get("id") or "").strip()
+    status = "closed" if item.get("closed") else "idle"
+    session = {
+        "id": name,
+        "title": str(item.get("title") or name),
+        "status": status,
+        "session_id": name,
+        "bridge_session_id": "",
+        "job_id": "",
+        "kind": "acpx",
+        "cwd": item.get("cwd") or "",
+        "updated_at": item.get("lastUsedAt") or item.get("updatedAt") or "",
+        "transport": "acpx",
+        "agent_tool": tool,
+        "display_id": name,
+        "last_message": None,
+        "message_count_hint": int(item.get("message_count") or 0),
+        "remote_host": config.host,
+        "remote_user": config.user,
+        "remote_hostname": config.hostname,
+        "remote": _remote_payload(config),
+        "remote_key": f"{config.destination}{REMOTE_KEY_SEPARATOR}{ACPX_SESSION_PREFIX}{tool}:{name}",
+    }
+    return session
+
+
+def _parse_acpx_session_ref(session_key: str) -> tuple[str, str] | None:
+    raw = str(session_key or "").strip()
+    if not raw.startswith(ACPX_SESSION_PREFIX):
+        return None
+    rest = raw[len(ACPX_SESSION_PREFIX):]
+    if ":" not in rest:
+        return None
+    tool, name = rest.split(":", 1)
+    tool = tool.strip().lower()
+    name = name.strip()
+    if not tool or not name:
+        return None
+    return tool, name
+
+
+def _is_acpx_smoke_session(item: dict[str, Any]) -> bool:
+    title = str(item.get("title") or "").strip()
+    if title == "Reply exactly: clawcross-acpx-ok":
+        return True
+    name = str(item.get("name") or item.get("sessionId") or item.get("session_id") or item.get("id") or "").strip()
+    return name == "clawcross-smoke"
+
+
+def _pick_acpx_text(obj: Any) -> str | None:
+    if isinstance(obj, dict):
+        if obj.get("jsonrpc") == "2.0":
+            method = str(obj.get("method") or "")
+            params = obj.get("params") if isinstance(obj.get("params"), dict) else {}
+            if method.endswith("agent_message_chunk"):
+                chunk = params.get("chunk") or params.get("text")
+                if isinstance(chunk, str) and chunk.strip():
+                    return chunk
+        for key in ("text", "content", "message", "summary", "reply"):
+            value = obj.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        result = obj.get("result")
+        nested = _pick_acpx_text(result)
+        if nested:
+            return nested
+    if isinstance(obj, list):
+        parts = [_pick_acpx_text(item) for item in obj]
+        text = "\n".join(part for part in parts if part)
+        return text or None
+    return None
+
+
+def _extract_acpx_text(output: str) -> str:
+    chunks: list[str] = []
+    fallback = ""
+    for raw in str(output or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        text = _pick_acpx_text(obj)
+        if not text:
+            continue
+        if isinstance(obj, dict) and str(obj.get("method") or "").endswith("agent_message_chunk"):
+            chunks.append(text)
+        else:
+            fallback = text
+    return "".join(chunks).strip() or fallback.strip()
+
+
+def _parse_acpx_read_messages(payload: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        text = _extract_acpx_text(str(payload.get("stdout") or ""))
+        return [{"id": "acpx-read", "role": "assistant", "type": "acpx", "content": text, "timestamp": ""}] if text else []
+
+    messages_raw = data.get("messages")
+    if not isinstance(messages_raw, list):
+        text = _pick_acpx_text(data) or _extract_acpx_text(str(payload.get("stdout") or ""))
+        return [{"id": "acpx-read", "role": "assistant", "type": "acpx", "content": text, "timestamp": ""}] if text else []
+
+    messages: list[dict[str, Any]] = []
+    for idx, item in enumerate(messages_raw):
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or item.get("type") or "event").strip()
+        content = _content_to_text(item.get("content"))
+        if not content:
+            content = _pick_acpx_text(item) or ""
+        if not content:
+            continue
+        messages.append(
+            {
+                "id": item.get("id") or item.get("uuid") or idx,
+                "role": role,
+                "type": str(item.get("type") or role),
+                "content": content,
+                "timestamp": item.get("timestamp") or item.get("created_at") or item.get("time") or "",
+            }
+        )
+    return messages[-limit:]
+
+
 def _is_daemon_spare_session(item: dict[str, Any]) -> bool:
     """Hide Claude agents daemon spare workers that are not real conversations."""
 
@@ -1057,30 +1453,66 @@ def _is_daemon_spare_session(item: dict[str, Any]) -> bool:
 
 def list_remote_claude_sessions(*, limit: int = 3, tail_lines: int = 30) -> dict[str, Any]:
     configs = load_remote_claude_configs()
+    transports = _remote_agent_transports()
     sessions: list[dict[str, Any]] = []
     remotes: list[dict[str, Any]] = []
     errors: list[str] = []
 
     for config in configs:
-        remote_record = _remote_payload(config, ok=False, session_count=0)
-        try:
-            payload = _run_remote_python(_remote_script_list_sessions(tail_lines), config=config)
-        except Exception as exc:
-            error = str(exc)
-            remote_record["error"] = error
-            errors.append(f"{config.destination}: {error}")
+        if "acpx" in transports:
+            remote_record = _remote_payload(config, ok=False, session_count=0, transport="acpx")
+            try:
+                payload = _run_remote_python(_remote_script_list_acpx_sessions(), config=config)
+                if payload.get("transport") != "acpx":
+                    raise RuntimeError("remote ACPX probe did not return an ACPX payload")
+                if not payload.get("available"):
+                    raise RuntimeError("; ".join(payload.get("errors") or []) or "acpx missing on remote PATH")
+                remote_sessions = [
+                    _normalize_acpx_session(dict(item), config=config)
+                    for item in payload.get("sessions", [])
+                    if isinstance(item, dict)
+                    and str(item.get("name") or item.get("sessionId") or item.get("session_id") or item.get("id") or "").strip()
+                    and not _is_acpx_smoke_session(item)
+                ]
+                remote_record["ok"] = True
+                remote_record["session_count"] = len(remote_sessions)
+                remote_record["tools"] = payload.get("tools") or _remote_acpx_tools()
+                remote_record["cwd"] = payload.get("cwd") or ""
+                if payload.get("errors"):
+                    remote_record["warning"] = "; ".join(str(e) for e in payload.get("errors") or [] if e)
+                sessions.extend(remote_sessions)
+            except Exception as exc:
+                error = str(exc)
+                remote_record["error"] = error
+                errors.append(f"{config.destination} acpx: {error}")
             remotes.append(remote_record)
-            continue
-        remote_sessions = [
-            _normalize_session(dict(item), config=config)
-            for item in payload.get("sessions", [])
-            if isinstance(item, dict) and not _is_daemon_spare_session(item)
-        ]
-        remote_record["ok"] = True
-        remote_record["session_count"] = len(remote_sessions)
-        remotes.append(remote_record)
-        sessions.extend(remote_sessions)
 
+        if "claude" in transports:
+            remote_record = _remote_payload(config, ok=False, session_count=0, transport="claude")
+            try:
+                payload = _run_remote_python(_remote_script_list_sessions(tail_lines), config=config)
+            except Exception as exc:
+                error = str(exc)
+                remote_record["error"] = error
+                errors.append(f"{config.destination} claude: {error}")
+                remotes.append(remote_record)
+                continue
+            remote_sessions = [
+                _normalize_session(dict(item), config=config)
+                for item in payload.get("sessions", [])
+                if isinstance(item, dict) and not _is_daemon_spare_session(item)
+            ]
+            for item in remote_sessions:
+                item.setdefault("transport", "claude")
+                item.setdefault("agent_tool", "claude")
+            remote_record["ok"] = True
+            remote_record["session_count"] = len(remote_sessions)
+            remotes.append(remote_record)
+            sessions.extend(remote_sessions)
+
+    # Preserve older API expectations that the legacy Claude harness record is
+    # the first remote entry while still attaching ACPX records for the same host.
+    remotes.sort(key=lambda item: 0 if item.get("transport") == "claude" else 1)
     sessions.sort(key=lambda s: str(s.get("updated_at") or ""), reverse=True)
     if limit > 0:
         sessions = sessions[:limit]
@@ -1140,8 +1572,42 @@ def _configs_for_target(target: str) -> tuple[list[RemoteClaudeConfig], str]:
     return configs or load_remote_claude_configs(), session_key
 
 
+def _read_remote_acpx_messages(configs: list[RemoteClaudeConfig], tool: str, name: str, *, limit: int) -> dict[str, Any]:
+    errors: list[str] = []
+    for config in configs:
+        try:
+            payload = _run_remote_python(_remote_script_read_acpx_session(tool, name, max(limit * 3, 80)), config=config)
+        except Exception as exc:
+            errors.append(f"{config.destination}: {exc}")
+            continue
+        if not payload.get("found"):
+            errors.append(f"{config.destination}: {payload.get('error') or 'session not found'}")
+            continue
+        ok = bool(payload.get("ok"))
+        session = _normalize_acpx_session({"tool": tool, "name": name, "cwd": payload.get("cwd") or ""}, config=config)
+        return {
+            "ok": ok,
+            "remote": _remote_payload(config),
+            "session": session,
+            "messages": _parse_acpx_read_messages(payload, limit=limit) if ok else [],
+            "error": "" if ok else (payload.get("error") or "read failed"),
+        }
+    return {
+        "ok": False,
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "session": {},
+        "messages": [],
+        "error": "; ".join(errors) or "session not found",
+    }
+
+
 def read_remote_claude_messages(target: str, *, limit: int = 120) -> dict[str, Any]:
     configs, session_key = _configs_for_target(target)
+    acpx_ref = _parse_acpx_session_ref(session_key)
+    if acpx_ref:
+        tool, name = acpx_ref
+        return _read_remote_acpx_messages(configs, tool, name, limit=limit)
+
     line_limit = max(limit * 4, 80)
     errors: list[str] = []
     for config in configs:
@@ -1170,6 +1636,40 @@ def read_remote_claude_messages(target: str, *, limit: int = 120) -> dict[str, A
     }
 
 
+def _send_remote_acpx_message(configs: list[RemoteClaudeConfig], tool: str, name: str, message: str) -> dict[str, Any]:
+    errors: list[str] = []
+    for config in configs:
+        try:
+            payload = _run_remote_python(_remote_script_send_acpx_message(tool, name, message), config=config)
+        except Exception as exc:
+            errors.append(f"{config.destination}: {exc}")
+            continue
+        response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+        if not payload.get("found"):
+            errors.append(f"{config.destination}: {payload.get('error') or response.get('error') or 'session not found'}")
+            continue
+        ok = bool(response.get("ok"))
+        stdout_text = _extract_acpx_text(str(payload.get("stdout") or ""))
+        if stdout_text:
+            response["text"] = stdout_text
+        return {
+            "ok": ok,
+            "remote": _remote_payload(config),
+            "session": _normalize_acpx_session({"tool": tool, "name": name, "cwd": payload.get("cwd") or ""}, config=config),
+            "short": "",
+            "response": response,
+            "error": "" if ok else (response.get("error") or payload.get("error") or "send failed"),
+        }
+    return {
+        "ok": False,
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "session": {},
+        "short": "",
+        "response": {},
+        "error": "; ".join(errors) or "session not found",
+    }
+
+
 def send_remote_claude_message(target: str, text: str) -> dict[str, Any]:
     message = str(text or "").strip()
     if not message:
@@ -1178,6 +1678,11 @@ def send_remote_claude_message(target: str, text: str) -> dict[str, Any]:
         raise ValueError("message is too long")
 
     configs, session_key = _configs_for_target(target)
+    acpx_ref = _parse_acpx_session_ref(session_key)
+    if acpx_ref:
+        tool, name = acpx_ref
+        return _send_remote_acpx_message(configs, tool, name, message)
+
     errors: list[str] = []
     for config in configs:
         try:
@@ -1219,6 +1724,21 @@ def rename_remote_claude_session(target: str, name: str) -> dict[str, Any]:
         clean_name = clean_name[:117].rstrip() + "..."
 
     configs, session_key = _configs_for_target(session_key)
+    acpx_ref = _parse_acpx_session_ref(session_key)
+    if acpx_ref:
+        tool, session_name = acpx_ref
+        return {
+            "ok": False,
+            "remote": _remote_payload(configs[0]) if configs else {},
+            "session": _normalize_acpx_session({"tool": tool, "name": session_name}, config=configs[0]) if configs else {},
+            "short": "",
+            "old_name": session_name,
+            "name": clean_name,
+            "roster_updated": False,
+            "roster_error": "",
+            "error": "remote ACPX sessions do not support rename yet",
+        }
+
     errors: list[str] = []
     for config in configs:
         try:
@@ -1254,12 +1774,57 @@ def rename_remote_claude_session(target: str, name: str) -> dict[str, Any]:
     }
 
 
+def _close_remote_acpx_session(configs: list[RemoteClaudeConfig], tool: str, name: str) -> dict[str, Any]:
+    errors: list[str] = []
+    for config in configs:
+        try:
+            payload = _run_remote_python(_remote_script_close_acpx_session(tool, name), config=config)
+        except Exception as exc:
+            errors.append(f"{config.destination}: {exc}")
+            continue
+        if not payload.get("found"):
+            errors.append(f"{config.destination}: {payload.get('error') or 'session not found'}")
+            continue
+        ok = bool(payload.get("ok"))
+        return {
+            "ok": ok,
+            "remote": _remote_payload(config),
+            "session": _normalize_acpx_session({"tool": tool, "name": name, "cwd": payload.get("cwd") or ""}, config=config),
+            "short": "",
+            "pid": None,
+            "archive_path": "",
+            "session_file_gone": ok,
+            "daemon_kill": {},
+            "kill": {},
+            "archive": {},
+            "error": "" if ok else (payload.get("error") or "close failed"),
+        }
+    return {
+        "ok": False,
+        "remote": _remote_payload(configs[0]) if configs else {},
+        "session": {},
+        "short": "",
+        "pid": None,
+        "archive_path": "",
+        "session_file_gone": False,
+        "daemon_kill": {},
+        "kill": {},
+        "archive": {},
+        "error": "; ".join(errors) or "session not found",
+    }
+
+
 def close_remote_claude_session(target: str, *, force: bool = True) -> dict[str, Any]:
     session_key = str(target or "").strip()
     if not session_key:
         raise ValueError("session target is empty")
 
     configs, session_key = _configs_for_target(session_key)
+    acpx_ref = _parse_acpx_session_ref(session_key)
+    if acpx_ref:
+        tool, name = acpx_ref
+        return _close_remote_acpx_session(configs, tool, name)
+
     errors: list[str] = []
     for config in configs:
         try:

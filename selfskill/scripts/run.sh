@@ -114,7 +114,7 @@ CLAWCROSS_SERVICE_PATTERNS=(
     "src/mainagent.py"
     "src/front.py"
     "chatbot/main.py"
-    "weclaw start -f"
+    "clawcross_wechat start -f"
 )
 
 is_wsl() {

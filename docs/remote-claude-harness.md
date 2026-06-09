@@ -1,6 +1,10 @@
 # Remote Claude Harness 接入流程
 
-本文记录把一台新的远端电脑接入 ClawCross Project Harness 的标准流程。目标是让远端 Claude Code / Claude Agents session 能被本机 ClawCross 发现、收发消息、读取 dashboard TODO，并通过私有 harness 更新任务状态和评论。
+> 新的远端 coding-agent session 优先使用 ACPX 控制 Codex/Claude。见
+> [`remote-acpx-harness.md`](./remote-acpx-harness.md)。本文保留为 legacy
+> Claude daemon/tmux harness 的接入说明，用于兼容旧 session 和 review worker。
+
+本文记录把一台新的远端电脑接入 ClawCross Project Harness 的标准流程。目标是让远端 Claude Code / Claude Agents session 能被本机 ClawCross 发现、收发消息、读取 dashboard TODO，并通过私有 harness 上报运行态、证据和评论。
 
 不要把密码、`INTERNAL_TOKEN`、Claude remote-control 链接、Claude session id 或 harness runtime state 写进 dashboard 仓库。dashboard 只保留项目、TODO、comment、result 等任务信息；Claude 配置和控制链路只放在 ClawCross 里。
 
@@ -9,7 +13,7 @@
 - 本机 ClawCross 运行 `mainagent`、frontend 和 `harness_conductor`。
 - 远端电脑通过 Tailscale 和 SSH 接入。
 - 远端 `127.0.0.1:51200` 通过 SSH reverse tunnel 指回本机 ClawCross `127.0.0.1:51200`。
-- 远端 Claude 通过 `~/.local/bin/clawcross-harness-agent` 读 dashboard TODO、写 harness heartbeat/status/comment。
+- 远端 Claude 通过 `~/.local/bin/clawcross-harness-agent` 读 dashboard TODO、写私有 harness heartbeat/status/comment；dashboard 仍是任务状态源。
 - 远端项目根目录可以维护一个 `TASK.md`，作为 plan → execution → modification → experiment/result 的本地工作日志；ClawCross 可把它和 dashboard TODO 双向同步。
 - 本机前端 `/mobile/group_chat` 通过 Tailscale 枚举远端 Claude sessions，并把项目卡片里的 TODO 和 worker session 绑定显示。
 - 每台远端电脑默认绑定一个主项目；没有 TODO 时保留一个 standby session，避免项目卡片消失。
@@ -198,7 +202,7 @@ PY
 --task-id "<dashboard-task-id>" --current-task-id "<dashboard-task-id>"
 ```
 
-任务状态更新规范：
+ClawCross 私有运行态更新规范：
 
 ```bash
 ~/.local/bin/clawcross-harness-agent task-status \
@@ -223,6 +227,8 @@ PY
   --message "Result: <evidence and artifact path>"
 ```
 
+这些 `task-status` 命令只更新 ClawCross 的 worker/runtime mirror，用于显示 worker 卡片、heartbeat 和执行记录；dashboard TODO 状态必须以 dashboard task source 为准，不能由 ClawCross 反向覆盖。
+
 实验、推理、评测类任务不能只写自然语言结果。需要包含 `run_id`、`git_sha`、实际命令、日志/metrics 路径和 verifier/test 结果。
 
 ## 6.1 使用 TASK.md 做远端任务工作日志
@@ -243,7 +249,7 @@ cd ~/workspace/<project-repo-or-folder>
 clawcross-harness-agent task-md export --project-id <project-id> --path TASK.md
 ```
 
-编辑 `TASK.md` 里每个 task 的 `update` JSON 字段后，把状态和日志写回 ClawCross harness：
+编辑 `TASK.md` 里每个 task 的 `update` JSON 字段后，把私有运行态和日志写回 ClawCross harness：
 
 ```bash
 clawcross-harness-agent task-md import --path TASK.md
@@ -268,7 +274,7 @@ python3 scripts/sync_task_md.py \
 双向同步规则：
 
 - dashboard → TASK.md: dashboard/status/TODO/comment 会被渲染进 `TASK.md` 的托管 JSON block。
-- TASK.md → dashboard: `update.status` 和 lifecycle 字段会先写入私有 harness，再由 ClawCross 同步成 dashboard status/comment。
+- TASK.md → harness → dashboard: `update.status` 只更新私有 harness runtime mirror；lifecycle/comment/evidence 可以由 ClawCross 发布成 dashboard comment。dashboard status 始终是权威状态。
 - `TASK.md` 上半部分是给人和 agent 快速阅读的项目工作日志，会展示每个 TODO 的描述和最新 comment；下半部分托管 JSON block 是双向同步的唯一机器源。
 - `TASK.md` 不保存 Claude session id、remote-control link、token、密码或 harness runtime state。
 - 导入后会重写托管 block，清空已消费的 `update.*` 字段，避免重复 comment。
@@ -309,14 +315,13 @@ ClawCross 连通性测试：请只回复「收到：<session-id> 在线」，不
 
 ## 9. Dashboard 同步边界
 
-允许同步到 dashboard：
+允许发布到 dashboard：
 
-- TODO status
 - task comments
 - result summary
 - human-readable evidence
 
-禁止同步到 dashboard：
+禁止发布到 dashboard：
 
 - Claude session id
 - remote-control URL
@@ -325,7 +330,7 @@ ClawCross 连通性测试：请只回复「收到：<session-id> 在线」，不
 - harness heartbeat/runtime state
 - Claude settings 或 CLAUDE.md 管理块
 
-ClawCross conductor 可以把 harness 中的 TODO 状态和 comment 同步回 dashboard；dashboard 不负责保存 worker runtime。
+ClawCross conductor 可以把 harness 中的 dashboard-safe comment/evidence 发布回 dashboard；dashboard 负责保存 TODO 状态、项目归属、标题和优先级，harness 只保存 worker runtime。
 
 ## 10. 常见故障
 

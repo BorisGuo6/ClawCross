@@ -2313,13 +2313,13 @@
     line-height: 1.45;
     color: var(--text-hint);
   }
-  .weclaw-qr-box {
+  .clawcross_wechat-qr-box {
     padding: 10px;
     border: 1px dashed var(--border);
     border-radius: 8px;
     background: var(--surface);
   }
-  .weclaw-qr-pre {
+  .clawcross_wechat-qr-pre {
     margin: 8px 0 0;
     padding: 12px;
     overflow: auto;
@@ -5504,7 +5504,7 @@
       <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px;">渠道连接</div>
       <div id="mobile-chatbot-channel-settings"></div>
       <div class="chatbot-config-help" id="mobile-chatbot-channel-help"></div>
-      <div id="mobile-weclaw-login-panel" style="display:none;margin-top:10px;"></div>
+      <div id="mobile-clawcross_wechat-login-panel" style="display:none;margin-top:10px;"></div>
     </div>
     <div class="side-panel-section">
       <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:8px;">访问白名单</div>
@@ -13224,11 +13224,11 @@ const MOBILE_CHATBOT_CHANNEL_FALLBACKS = [
   { id: 'yunhu', label: 'Yunhu', kind: 'nonebot', adapter: 'yunhu', env_key: 'YUNHU_BOTS' },
   { id: 'heybox', label: 'Heybox', kind: 'nonebot', adapter: 'heybox', env_key: 'HEYBOX_BOTS' },
   { id: 'console', label: 'Console', kind: 'nonebot', adapter: 'console', env_key: '', requires_config: false },
-  { id: 'weclaw', label: '微信 / WeClaw', kind: 'weclaw', adapter: 'weclaw', env_key: '' },
+  { id: 'clawcross_wechat', label: '微信 / ClawCross WeChat', kind: 'clawcross_wechat', adapter: 'clawcross_wechat', env_key: '' },
   { id: 'webhook', label: 'Custom Webhook', kind: 'webhook', adapter: 'webhook', env_key: '' },
 ];
 const MOBILE_CHATBOT_COMMON_KEYS = ['NONEBOT_ADAPTERS', 'NONEBOT_HOST', 'NONEBOT_PORT', 'WHITELIST_FILE'];
-const MOBILE_CHATBOT_WECLAW_KEYS = ['WECLAW_ENABLED', 'WECLAW_USERNAME', 'WECLAW_BIN', 'WECLAW_CONFIG', 'WECLAW_PROXY_HOST', 'WECLAW_PROXY_PORT', 'WECLAW_AUTO_INSTALL'];
+const MOBILE_CHATBOT_CLAWCROSS_WECHAT_KEYS = ['CLAWCROSS_WECHAT_ENABLED', 'CLAWCROSS_WECHAT_USERNAME', 'CLAWCROSS_WECHAT_BIN', 'CLAWCROSS_WECHAT_CONFIG', 'CLAWCROSS_WECHAT_PROXY_HOST', 'CLAWCROSS_WECHAT_PROXY_PORT', 'CLAWCROSS_WECHAT_AUTO_INSTALL'];
 const MOBILE_CHATBOT_WEBHOOK_KEYS = ['WEBHOOK_WEBHOOK_URL', 'WEBHOOK_WEBHOOK_SECRET', 'WEBHOOK_REPLY_URL', 'WEBHOOK_DEFAULT_ALLOW'];
 const MOBILE_CHATBOT_CHANNEL_CONFIG = {};
 const MOBILE_CHATBOT_DEFAULTS = {
@@ -13237,13 +13237,13 @@ const MOBILE_CHATBOT_DEFAULTS = {
   WHITELIST_FILE: '',
   QQ_IS_SANDBOX: 'false',
   WEBHOOK_DEFAULT_ALLOW: 'false',
-  WECLAW_ENABLED: 'true',
-  WECLAW_USERNAME: 'default',
-  WECLAW_BIN: 'weclaw',
-  WECLAW_CONFIG: '~/.weclaw/config.json',
-  WECLAW_PROXY_HOST: '127.0.0.1',
-  WECLAW_PROXY_PORT: '51298',
-  WECLAW_AUTO_INSTALL: 'true',
+  CLAWCROSS_WECHAT_ENABLED: 'true',
+  CLAWCROSS_WECHAT_USERNAME: 'default',
+  CLAWCROSS_WECHAT_BIN: '~/.clawcross/bin/clawcross_wechat',
+  CLAWCROSS_WECHAT_CONFIG: '~/.clawcross_wechat/config.json',
+  CLAWCROSS_WECHAT_PROXY_HOST: '127.0.0.1',
+  CLAWCROSS_WECHAT_PROXY_PORT: '51298',
+  CLAWCROSS_WECHAT_AUTO_INSTALL: 'true',
 };
 const MOBILE_CHATBOT_TEXTAREA_KEYS = new Set();
 const MOBILE_CHATBOT_JSON_KEYS = new Set();
@@ -13251,8 +13251,8 @@ let mobileChatbotChannel = 'telegram';
 let mobileChatbotSettings = {};
 let mobileChatbotWhitelist = {};
 let mobileChatbotChannels = [...MOBILE_CHATBOT_CHANNEL_FALLBACKS];
-let mobileWeClawQrRetryTimer = null;
-let mobileWeClawQrLoading = false;
+let mobileClawCrossWeChatQrRetryTimer = null;
+let mobileClawCrossWeChatQrLoading = false;
 
 function mobileChatbotStatus(text, isError = false) {
   const el = document.getElementById('mobile-chatbot-config-status');
@@ -13372,7 +13372,7 @@ function renderMobileChatbotConfig() {
   renderMobileChatbotSettings('mobile-chatbot-common-settings', MOBILE_CHATBOT_COMMON_KEYS);
   const help = document.getElementById('mobile-chatbot-channel-help');
   if (help) help.innerHTML = getMobileChatbotChannelHelp(channel);
-  renderMobileWeClawLoginPanel(channel);
+  renderMobileClawCrossWeChatLoginPanel(channel);
   renderMobileChatbotChannelSummary();
   renderMobileChatbotWhitelistRows();
 }
@@ -13412,7 +13412,7 @@ function getMobileChatbotChannelKeys(channel) {
     });
     return config.keys;
   }
-  if (channel.kind === 'weclaw') return MOBILE_CHATBOT_WECLAW_KEYS;
+  if (channel.kind === 'clawcross_wechat') return MOBILE_CHATBOT_CLAWCROSS_WECHAT_KEYS;
   if (channel.kind === 'webhook') return MOBILE_CHATBOT_WEBHOOK_KEYS;
   if (channel.env_key) {
     MOBILE_CHATBOT_TEXTAREA_KEYS.add(channel.env_key);
@@ -13426,8 +13426,8 @@ function getMobileChatbotChannelHelp(channel) {
   if (!channel) return '';
   const config = getMobileChatbotChannelConfig(channel);
   if (config.help) return escapeHtml(config.help);
-  if (channel.kind === 'weclaw') {
-    return '微信渠道使用 WeClaw，不走 NoneBot adapter，也不需要平台 token。保存时会设置 WECLAW_ENABLED=true；重启后 ClawCross 启动 weclaw 子进程，本地 proxy 默认监听 127.0.0.1:51298。若 WeClaw 已加载已有微信会话，二维码不会重新生成。';
+  if (channel.kind === 'clawcross_wechat') {
+    return '微信渠道使用 ClawCross WeChat，不走 NoneBot adapter，也不需要平台 token。保存时会设置 CLAWCROSS_WECHAT_ENABLED=true；重启后 ClawCross 启动 clawcross_wechat 子进程，本地 proxy 默认监听 127.0.0.1:51298。若 ClawCross WeChat 已加载已有微信会话，二维码不会重新生成。';
   }
   if (channel.kind === 'webhook') {
     return 'Webhook 渠道由 *_WEBHOOK_URL 环境变量启用；白名单 channel 名应与变量前缀小写一致。';
@@ -13452,46 +13452,46 @@ function renderMobileChatbotChannelSummary() {
   if (channel.adapter) lines.push(`adapter：${channel.adapter}`);
   if (channel.env_key) lines.push(`连接配置：${channel.env_key}`);
   if (channel.kind === 'nonebot' && channel.requires_config === false && !channel.env_key) lines.push('连接配置：adapter / env-only');
-  if (channel.kind === 'weclaw') {
-    const enabled = String(mobileChatbotSettings.WECLAW_ENABLED || '').toLowerCase();
+  if (channel.kind === 'clawcross_wechat') {
+    const enabled = String(mobileChatbotSettings.CLAWCROSS_WECHAT_ENABLED || '').toLowerCase();
     lines.push(`状态：${enabled === 'true' ? '已启用（重启后生效）' : '未启用'}`);
-    lines.push(`proxy：${mobileChatbotSettings.WECLAW_PROXY_HOST || MOBILE_CHATBOT_DEFAULTS.WECLAW_PROXY_HOST}:${mobileChatbotSettings.WECLAW_PROXY_PORT || MOBILE_CHATBOT_DEFAULTS.WECLAW_PROXY_PORT}`);
+    lines.push(`proxy：${mobileChatbotSettings.CLAWCROSS_WECHAT_PROXY_HOST || MOBILE_CHATBOT_DEFAULTS.CLAWCROSS_WECHAT_PROXY_HOST}:${mobileChatbotSettings.CLAWCROSS_WECHAT_PROXY_PORT || MOBILE_CHATBOT_DEFAULTS.CLAWCROSS_WECHAT_PROXY_PORT}`);
   }
   if (channel.kind === 'nonebot') lines.push('白名单 channel 使用下方选择值；运行时按渠道 user_id 或 username 匹配。');
   el.innerHTML = `<div class="chatbot-channel-title">${escapeHtml(channel.label || channel.id)}</div><div class="chatbot-channel-meta">${lines.map(escapeHtml).join('<br>')}</div>`;
 }
 
-function renderMobileWeClawLoginPanel(channel) {
-  const panel = document.getElementById('mobile-weclaw-login-panel');
+function renderMobileClawCrossWeChatLoginPanel(channel) {
+  const panel = document.getElementById('mobile-clawcross_wechat-login-panel');
   if (!panel) return;
-  if (!channel || channel.kind !== 'weclaw') {
+  if (!channel || channel.kind !== 'clawcross_wechat') {
     panel.style.display = 'none';
     panel.innerHTML = '';
     return;
   }
   panel.style.display = 'block';
-  panel.innerHTML = `<div class="weclaw-qr-box">
-    <div class="chatbot-config-help">微信渠道使用 WeClaw 内置登录。扫码成功后会自动重启微信连接；已有登录时可重新登录。</div>
+  panel.innerHTML = `<div class="clawcross_wechat-qr-box">
+    <div class="chatbot-config-help">微信渠道使用 ClawCross WeChat 内置登录。扫码成功后会自动重启微信连接；已有登录时可重新登录。</div>
     <div class="chatbot-config-actions" style="margin-top:8px;">
-      <button type="button" id="mobile-weclaw-login-btn" onclick="startMobileWeClawLogin()">登录</button>
-      <button type="button" onclick="stopMobileWeClaw()">终止</button>
+      <button type="button" id="mobile-clawcross_wechat-login-btn" onclick="startMobileClawCrossWeChatLogin()">登录</button>
+      <button type="button" onclick="stopMobileClawCrossWeChat()">终止</button>
     </div>
-    <div id="mobile-weclaw-qr-status" class="chatbot-config-help" style="margin-top:8px;"></div>
-    <pre id="mobile-weclaw-qr-pre" class="weclaw-qr-pre" style="display:none;"></pre>
+    <div id="mobile-clawcross_wechat-qr-status" class="chatbot-config-help" style="margin-top:8px;"></div>
+    <pre id="mobile-clawcross_wechat-qr-pre" class="clawcross_wechat-qr-pre" style="display:none;"></pre>
   </div>`;
-  loadMobileWeClawStatus();
+  loadMobileClawCrossWeChatStatus();
 }
 
-async function loadMobileWeClawStatus() {
-  const status = document.getElementById('mobile-weclaw-qr-status');
-  const pre = document.getElementById('mobile-weclaw-qr-pre');
-  const loginBtn = document.getElementById('mobile-weclaw-login-btn');
+async function loadMobileClawCrossWeChatStatus() {
+  const status = document.getElementById('mobile-clawcross_wechat-qr-status');
+  const pre = document.getElementById('mobile-clawcross_wechat-qr-pre');
+  const loginBtn = document.getElementById('mobile-clawcross_wechat-login-btn');
   if (!status || !pre) return;
   pre.style.display = 'none';
   pre.textContent = '';
   status.textContent = '读取微信登录状态...';
   try {
-    const resp = await fetch('/proxy_weclaw_status');
+    const resp = await fetch('/proxy_clawcross_wechat_status');
     const data = await resp.json();
     if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
     if (loginBtn) loginBtn.textContent = data.has_login ? '重新登录' : '新登录';
@@ -13507,27 +13507,27 @@ async function loadMobileWeClawStatus() {
     if (data.has_login && data.bridge_running) {
       status.textContent += `。${proxyText}`;
     }
-    if (data.login_running) loadMobileWeClawQr(0);
+    if (data.login_running) loadMobileClawCrossWeChatQr(0);
   } catch (e) {
     status.textContent = '读取微信状态失败: ' + e.message;
   }
 }
 
-async function loadMobileWeClawQr(attempt = 0) {
-  const status = document.getElementById('mobile-weclaw-qr-status');
-  const pre = document.getElementById('mobile-weclaw-qr-pre');
+async function loadMobileClawCrossWeChatQr(attempt = 0) {
+  const status = document.getElementById('mobile-clawcross_wechat-qr-status');
+  const pre = document.getElementById('mobile-clawcross_wechat-qr-pre');
   if (!status || !pre) return;
-  if (mobileWeClawQrLoading && attempt === 0) return;
-  if (mobileWeClawQrRetryTimer) {
-    clearTimeout(mobileWeClawQrRetryTimer);
-    mobileWeClawQrRetryTimer = null;
+  if (mobileClawCrossWeChatQrLoading && attempt === 0) return;
+  if (mobileClawCrossWeChatQrRetryTimer) {
+    clearTimeout(mobileClawCrossWeChatQrRetryTimer);
+    mobileClawCrossWeChatQrRetryTimer = null;
   }
-  mobileWeClawQrLoading = true;
+  mobileClawCrossWeChatQrLoading = true;
   status.textContent = attempt ? `等待二维码生成... (${attempt}/12)` : '等待二维码生成...';
   pre.style.display = 'none';
   pre.textContent = '';
   try {
-    const resp = await fetch('/proxy_weclaw_qr');
+    const resp = await fetch('/proxy_clawcross_wechat_qr');
     const data = await resp.json();
     if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
     status.textContent = data.message || '';
@@ -13535,12 +13535,12 @@ async function loadMobileWeClawQr(attempt = 0) {
       pre.textContent = data.qr;
       pre.style.display = 'block';
     }
-    mobileWeClawQrLoading = false;
+    mobileClawCrossWeChatQrLoading = false;
   } catch (e) {
-    mobileWeClawQrLoading = false;
+    mobileClawCrossWeChatQrLoading = false;
     if (attempt < 12) {
       status.textContent = '二维码暂时不可用，稍后自动重试。';
-      mobileWeClawQrRetryTimer = setTimeout(() => loadMobileWeClawQr(attempt + 1), 3000);
+      mobileClawCrossWeChatQrRetryTimer = setTimeout(() => loadMobileClawCrossWeChatQr(attempt + 1), 3000);
       return;
     }
     status.textContent = '读取二维码失败: ' + e.message;
@@ -13919,21 +13919,21 @@ function getMobileChatbotPersistKeysForChannel(channel) {
   return Array.from(keys).filter(Boolean);
 }
 
-async function startMobileWeClawLogin() {
-  const loginBtn = document.getElementById('mobile-weclaw-login-btn');
+async function startMobileClawCrossWeChatLogin() {
+  const loginBtn = document.getElementById('mobile-clawcross_wechat-login-btn');
   const action = loginBtn?.textContent?.trim() || '登录';
   if (!confirm(`${action}微信？前端会显示新的扫码二维码。`)) return;
   collectMobileChatbotConfigFromDom();
-  MOBILE_CHATBOT_WECLAW_KEYS.forEach(key => {
+  MOBILE_CHATBOT_CLAWCROSS_WECHAT_KEYS.forEach(key => {
     if (!mobileChatbotSettings[key]) mobileChatbotSettings[key] = MOBILE_CHATBOT_DEFAULTS[key] || '';
   });
-  mobileChatbotSettings.WECLAW_ENABLED = 'true';
+  mobileChatbotSettings.CLAWCROSS_WECHAT_ENABLED = 'true';
   renderMobileChatbotConfig();
   const ok = await saveMobileChatbotConfig();
   if (!ok) return;
   mobileChatbotStatus('正在启动微信扫码登录...');
   try {
-    const resp = await fetch('/proxy_weclaw_login', {
+    const resp = await fetch('/proxy_clawcross_wechat_login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -13945,26 +13945,26 @@ async function startMobileWeClawLogin() {
     mobileChatbotStatus('启动微信登录失败: ' + e.message, true);
     return;
   }
-  if (mobileWeClawQrRetryTimer) clearTimeout(mobileWeClawQrRetryTimer);
-  mobileWeClawQrRetryTimer = setTimeout(() => loadMobileWeClawQr(1), 6000);
+  if (mobileClawCrossWeChatQrRetryTimer) clearTimeout(mobileClawCrossWeChatQrRetryTimer);
+  mobileClawCrossWeChatQrRetryTimer = setTimeout(() => loadMobileClawCrossWeChatQr(1), 6000);
 }
 
-async function stopMobileWeClaw() {
-  if (!confirm('终止 WeClaw 微信连接？')) return;
-  mobileChatbotStatus('正在终止 WeClaw...');
+async function stopMobileClawCrossWeChat() {
+  if (!confirm('终止 ClawCross WeChat 微信连接？')) return;
+  mobileChatbotStatus('正在终止 ClawCross WeChat...');
   try {
-    const resp = await fetch('/proxy_weclaw_stop', {
+    const resp = await fetch('/proxy_clawcross_wechat_stop', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
     let data = {};
     try { data = await resp.json(); } catch (_) {}
     if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
-    mobileChatbotStatus(data.message || 'WeClaw 已终止');
-    if (mobileWeClawQrRetryTimer) clearTimeout(mobileWeClawQrRetryTimer);
-    loadMobileWeClawStatus();
+    mobileChatbotStatus(data.message || 'ClawCross WeChat 已终止');
+    if (mobileClawCrossWeChatQrRetryTimer) clearTimeout(mobileClawCrossWeChatQrRetryTimer);
+    loadMobileClawCrossWeChatStatus();
   } catch (e) {
-    mobileChatbotStatus('终止 WeClaw 失败: ' + e.message, true);
+    mobileChatbotStatus('终止 ClawCross WeChat 失败: ' + e.message, true);
   }
 }
 
@@ -18374,7 +18374,7 @@ const SETTINGS_GROUPS_ORDERED = [
     { id: 'oasis',    labelKey: 'sg_oasis',    keys: ['OASIS_BASE_URL'] },
     { id: 'ports',    labelKey: 'sg_ports',    keys: ['PORT_AGENT', 'PORT_SCHEDULER', 'PORT_OASIS', 'PORT_FRONTEND', 'PORT_BARK'] },
     { id: 'network',  labelKey: 'sg_network',  keys: ['PUBLIC_DOMAIN', 'BARK_PUBLIC_URL'] },
-    { id: 'bots',     labelKey: 'sg_bots',     keys: ['NONEBOT_ADAPTERS', 'NONEBOT_HOST', 'NONEBOT_PORT', 'WHITELIST_FILE', 'TELEGRAM_BOTS', 'QQ_BOTS', 'QQ_IS_SANDBOX', 'WECLAW_ENABLED', 'WECLAW_BIN', 'WECLAW_USERNAME', 'WECLAW_CONFIG', 'WECLAW_PROXY_HOST', 'WECLAW_PROXY_PORT', 'WECLAW_AUTO_INSTALL'] },
+    { id: 'bots',     labelKey: 'sg_bots',     keys: ['NONEBOT_ADAPTERS', 'NONEBOT_HOST', 'NONEBOT_PORT', 'WHITELIST_FILE', 'TELEGRAM_BOTS', 'QQ_BOTS', 'QQ_IS_SANDBOX', 'CLAWCROSS_WECHAT_ENABLED', 'CLAWCROSS_WECHAT_BIN', 'CLAWCROSS_WECHAT_USERNAME', 'CLAWCROSS_WECHAT_CONFIG', 'CLAWCROSS_WECHAT_PROXY_HOST', 'CLAWCROSS_WECHAT_PROXY_PORT', 'CLAWCROSS_WECHAT_AUTO_INSTALL'] },
     { id: 'comm',     labelKey: 'sg_comm',     keys: ['OPENAI_STANDARD_MODE'] },
     { id: 'exec',     labelKey: 'sg_exec',     keys: ['ALLOWED_COMMANDS', 'EXEC_TIMEOUT', 'MAX_OUTPUT_LENGTH'] },
     { id: 'security', labelKey: 'sg_security', keys: ['INTERNAL_TOKEN'] },
@@ -18414,13 +18414,13 @@ const RESTART_REQUIRED_SETTING_KEYS = new Set([
     'TELEGRAM_BOTS',
     'QQ_BOTS',
     'QQ_IS_SANDBOX',
-    'WECLAW_ENABLED',
-    'WECLAW_BIN',
-    'WECLAW_USERNAME',
-    'WECLAW_CONFIG',
-    'WECLAW_PROXY_HOST',
-    'WECLAW_PROXY_PORT',
-    'WECLAW_AUTO_INSTALL',
+    'CLAWCROSS_WECHAT_ENABLED',
+    'CLAWCROSS_WECHAT_BIN',
+    'CLAWCROSS_WECHAT_USERNAME',
+    'CLAWCROSS_WECHAT_CONFIG',
+    'CLAWCROSS_WECHAT_PROXY_HOST',
+    'CLAWCROSS_WECHAT_PROXY_PORT',
+    'CLAWCROSS_WECHAT_AUTO_INSTALL',
 ]);
 const RESTART_NOTICE_STORAGE_KEY = 'clawcross_restart_notice';
 const RESTART_POLL_INTERVAL_MS = 2000;

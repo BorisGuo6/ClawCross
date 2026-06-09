@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     blocked = sub.add_parser("blocked")
     add_common(blocked)
 
-    task = sub.add_parser("task")
+    task = sub.add_parser("task", help="Upsert a private harness mirror task; dashboard remains the public task source.")
     task.add_argument("--project-id", default="default")
     task.add_argument("--task-id", required=True)
     task.add_argument("--title", required=True)
@@ -138,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     task.add_argument("--assignee", default="")
     task.add_argument("--due-at", default="")
 
-    task_status = sub.add_parser("task-status")
+    task_status = sub.add_parser("task-status", help="Set private harness runtime task status.")
     task_status.add_argument("--agent-id", default="")
     task_status.add_argument("--project-id", default="default")
     task_status.add_argument("--task-id", required=True)
