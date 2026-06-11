@@ -888,6 +888,15 @@ uv run scripts/cli.py wx -- search OpenCLI
 
 参数与 `opencli` 相同，但会自动补上 `wx` 前缀。
 
+本地自动化如果不需要经过正在运行的 ClawCross 服务，使用受保护入口：
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/wx_guarded.py -- history 文件传输助手 --json
+PYTHONPATH=src .venv/bin/python scripts/wx_guarded.py --health
+```
+
+该入口会检查 `wx-cli` message 分片 key 覆盖，必要时修复安全的单 key 缺失模式，并拒绝 `unknown_shards` 非空或 freshness 状态异常的结果。
+
 ---
 
 ## 26. token

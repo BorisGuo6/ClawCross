@@ -11,8 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+from pathlib import Path
+import re
+import signal
 import shutil
 import subprocess
+import time
 from typing import Any
 
 
@@ -20,6 +24,7 @@ DEFAULT_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_OUTPUT_CHARS = 20000
 MAX_TIMEOUT_SECONDS = 300
 MAX_OUTPUT_CHARS = 200000
+_WX_MESSAGE_DB_RE = re.compile(r"^message_(\d+)\.db$")
 
 
 OPENCLI_EXTERNAL_CATALOG: list[dict[str, Any]] = [
@@ -281,6 +286,179 @@ def _is_high_risk(args: list[str]) -> bool:
     return False
 
 
+def _wx_state_dir() -> Path:
+    return Path(os.path.expanduser("~/.wx-cli"))
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    os.replace(tmp_path, path)
+
+
+def _wx_message_key_health(*, include_private_keys: bool = False) -> dict[str, Any]:
+    state_dir = _wx_state_dir()
+    config_path = state_dir / "config.json"
+    keys_path = state_dir / "all_keys.json"
+    if not config_path.exists() or not keys_path.exists():
+        return {
+            "available": False,
+            "reason": "wx-cli state files are missing",
+            "state_dir": str(state_dir),
+        }
+
+    config = _read_json_file(config_path)
+    keys = _read_json_file(keys_path)
+    db_dir_raw = str(config.get("db_dir") or "").strip()
+    if not db_dir_raw:
+        return {
+            "available": False,
+            "reason": "wx-cli config does not define db_dir",
+            "state_dir": str(state_dir),
+        }
+
+    message_dir = Path(os.path.expanduser(db_dir_raw)) / "message"
+    existing_message_dbs = sorted(
+        path.name
+        for path in message_dir.iterdir()
+        if path.is_file() and _WX_MESSAGE_DB_RE.match(path.name)
+    ) if message_dir.exists() else []
+
+    message_key_map = {
+        raw_name.split("/", 1)[1]: str(entry.get("enc_key") or "").strip()
+        for raw_name, entry in keys.items()
+        if raw_name.startswith("message/")
+        and _WX_MESSAGE_DB_RE.match(raw_name.split("/", 1)[1])
+        and isinstance(entry, dict)
+    }
+    missing = [db_name for db_name in existing_message_dbs if db_name not in message_key_map]
+    known_keys = sorted({value for value in message_key_map.values() if value})
+    payload = {
+        "available": True,
+        "state_dir": str(state_dir),
+        "config_path": str(config_path),
+        "keys_path": str(keys_path),
+        "db_dir": str(Path(os.path.expanduser(db_dir_raw))),
+        "existing_message_dbs": existing_message_dbs,
+        "known_message_shards": sorted(message_key_map),
+        "missing_message_shards": missing,
+        "known_message_key_count": len(known_keys),
+    }
+    if include_private_keys:
+        payload["known_message_keys"] = known_keys
+    return payload
+
+
+def _stop_wx_daemon_from_pid_file(state_dir: Path) -> None:
+    pid_path = state_dir / "daemon.pid"
+    if not pid_path.exists():
+        return
+    try:
+        payload = _read_json_file(pid_path)
+        pid = int(payload.get("pid") or 0)
+        exe = str(payload.get("exe") or "").lower()
+    except Exception:
+        return
+    if pid <= 0 or ("wx" not in Path(exe).name and "wx-cli" not in exe):
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        time.sleep(0.2)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        return
+
+
+def _reload_wx_daemon_after_key_repair(state_dir: Path) -> None:
+    _stop_wx_daemon_from_pid_file(state_dir)
+    for name in ("daemon.sock", "daemon.pid"):
+        marker = state_dir / name
+        if marker.exists() or marker.is_symlink():
+            marker.unlink()
+
+
+def _ensure_wx_message_shard_keys() -> dict[str, Any]:
+    health = _wx_message_key_health(include_private_keys=True)
+    if not health.get("available"):
+        return health
+    missing = list(health.get("missing_message_shards") or [])
+    if not missing:
+        return {**health, "ok": True, "repaired": False}
+
+    known_keys = list(health.get("known_message_keys") or [])
+    if len(known_keys) != 1:
+        return {
+            **health,
+            "ok": False,
+            "repaired": False,
+            "reason": "wx-cli message shards are missing keys and there is not exactly one known message shard key to reuse safely",
+        }
+
+    state_dir = Path(str(health["state_dir"]))
+    keys_path = Path(str(health["keys_path"]))
+    keys = _read_json_file(keys_path)
+    shared_key = known_keys[0]
+    backup_path = state_dir / "all_keys.json.autoguard.bak"
+    if not backup_path.exists():
+        shutil.copy2(keys_path, backup_path)
+
+    for db_name in missing:
+        keys[f"message/{db_name}"] = {"enc_key": shared_key}
+    _write_json_file(keys_path, keys)
+    _reload_wx_daemon_after_key_repair(state_dir)
+
+    healed = _wx_message_key_health()
+    return {
+        **healed,
+        "ok": not healed.get("missing_message_shards"),
+        "repaired": True,
+        "repair_strategy": "replicated_single_known_message_shard_key",
+        "backup_path": str(backup_path),
+    }
+
+
+def _prepare_wx_args(args: list[str]) -> list[str]:
+    prepared = list(args)
+    if prepared and prepared[0] == "wx" and "--json" in prepared and "--with-meta" not in prepared:
+        return ["wx", "--with-meta", *prepared[1:]]
+    return prepared
+
+
+def _enforce_wx_meta_health(result: dict[str, Any]) -> dict[str, Any]:
+    parsed = result.get("json")
+    if not isinstance(parsed, dict):
+        return result
+    meta = parsed.get("meta")
+    if not isinstance(meta, dict):
+        return result
+
+    status = str(meta.get("status") or "").strip()
+    unknown = [str(item) for item in (meta.get("unknown_shards") or []) if str(item).strip()]
+    if status in {"", "ok"} and not unknown:
+        return result
+
+    detail = f"wx freshness check failed: status={status or 'unknown'}"
+    if unknown:
+        detail += f"; unknown_shards={', '.join(unknown)}"
+    result = dict(result)
+    result["ok"] = False
+    result["stderr"] = f"{result.get('stderr', '').strip()}\n{detail}".strip()
+    result["wx_meta_health"] = {
+        "status": status,
+        "unknown_shards": unknown,
+    }
+    return result
+
+
 def get_opencli_status(query: str = "") -> dict[str, Any]:
     """Return installed status plus a stable capability catalog for agents."""
     opencli = _opencli_path()
@@ -306,6 +484,12 @@ def get_opencli_status(query: str = "") -> dict[str, Any]:
     if not opencli:
         payload["warning"] = "OpenCLI is not installed on this ClawCross host."
         return payload
+
+    if not query or "wx" in query.lower() or "wechat" in query.lower():
+        try:
+            payload["wx_health"] = _wx_message_key_health()
+        except Exception as exc:
+            payload["wx_health_error"] = str(exc)
 
     try:
         result = subprocess.run(
@@ -345,6 +529,12 @@ def run_opencli_command(
         raise ValueError("opencli subcommand is required")
     if not allow_mutating and _is_high_risk(clean_args):
         raise PermissionError("this OpenCLI command looks mutating; pass allow_mutating=true only for an explicit user-approved action")
+    if clean_args and clean_args[0] == "wx":
+        wx_guard = _ensure_wx_message_shard_keys()
+        if not wx_guard.get("ok", False):
+            reason = str(wx_guard.get("reason") or "wx-cli shard health check failed")
+            raise RuntimeError(reason)
+        clean_args = _prepare_wx_args(clean_args)
 
     timeout = _coerce_timeout(timeout_seconds)
     max_chars = _coerce_max_output(max_output_chars)
@@ -376,7 +566,7 @@ def run_opencli_command(
 
     stdout, stdout_truncated = _truncate(completed.stdout or "", max_chars)
     stderr, stderr_truncated = _truncate(completed.stderr or "", max_chars)
-    return OpenCliRunResult(
+    result = OpenCliRunResult(
         ok=completed.returncode == 0,
         returncode=int(completed.returncode),
         command=command,
@@ -385,3 +575,6 @@ def run_opencli_command(
         truncated=stdout_truncated or stderr_truncated,
         parsed_json=_parse_json_maybe(stdout),
     ).to_dict()
+    if clean_args and clean_args[0] == "wx":
+        result = _enforce_wx_meta_health(result)
+    return result

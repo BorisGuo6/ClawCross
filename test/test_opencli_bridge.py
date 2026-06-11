@@ -1,5 +1,7 @@
 import os
 import sys
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -70,6 +72,108 @@ class OpenCliBridgeTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertTrue(result["truncated"])
         self.assertIn("truncated", result["stdout"])
+
+    def test_wx_status_reports_shard_health_without_exposing_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wx_state = home / ".wx-cli"
+            message_dir = home / "db_storage" / "message"
+            wx_state.mkdir()
+            message_dir.mkdir(parents=True)
+            (message_dir / "message_0.db").write_text("", encoding="utf-8")
+            (wx_state / "config.json").write_text(
+                json.dumps({"db_dir": str(home / "db_storage"), "keys_file": "all_keys.json"}),
+                encoding="utf-8",
+            )
+            (wx_state / "all_keys.json").write_text(
+                json.dumps({"message/message_0.db": {"enc_key": "private-key"}}),
+                encoding="utf-8",
+            )
+
+            class Completed:
+                returncode = 0
+                stdout = "[]"
+                stderr = ""
+
+            with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
+                with patch("harness.opencli_bridge.shutil.which", return_value="/usr/local/bin/opencli"):
+                    with patch("harness.opencli_bridge.subprocess.run", return_value=Completed()):
+                        status = get_opencli_status(query="wx")
+
+        self.assertEqual(status["wx_health"]["known_message_key_count"], 1)
+        self.assertNotIn("known_message_keys", status["wx_health"])
+        self.assertNotIn("private-key", json.dumps(status, ensure_ascii=False))
+
+    def test_run_wx_repairs_missing_message_shard_keys_and_adds_with_meta(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            wx_state = home / ".wx-cli"
+            message_dir = home / "db_storage" / "message"
+            wx_state.mkdir()
+            message_dir.mkdir(parents=True)
+            for name in ("message_0.db", "message_1.db"):
+                (message_dir / name).write_text("", encoding="utf-8")
+
+            (wx_state / "config.json").write_text(
+                json.dumps({"db_dir": str(home / "db_storage"), "keys_file": "all_keys.json"}),
+                encoding="utf-8",
+            )
+            (wx_state / "all_keys.json").write_text(
+                json.dumps({"message/message_1.db": {"enc_key": "shared-key"}}),
+                encoding="utf-8",
+            )
+            (wx_state / "daemon.sock").write_text("sock", encoding="utf-8")
+            (wx_state / "daemon.pid").write_text("123", encoding="utf-8")
+
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({"ok": True, "meta": {"status": "ok", "unknown_shards": []}})
+                stderr = ""
+
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append((command, kwargs))
+                return Completed()
+
+            with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
+                with patch("harness.opencli_bridge.shutil.which", return_value="/usr/local/bin/opencli"):
+                    with patch("harness.opencli_bridge.subprocess.run", side_effect=fake_run):
+                        result = run_opencli_command(["wx", "history", "文件传输助手", "--json"])
+
+            repaired = json.loads((wx_state / "all_keys.json").read_text(encoding="utf-8"))
+            self.assertTrue(result["ok"])
+            self.assertIn("message/message_0.db", repaired)
+            self.assertEqual(repaired["message/message_0.db"]["enc_key"], "shared-key")
+            self.assertTrue((wx_state / "all_keys.json.autoguard.bak").exists())
+            self.assertFalse((wx_state / "daemon.sock").exists())
+            self.assertFalse((wx_state / "daemon.pid").exists())
+            self.assertEqual(
+                calls[0][0],
+                ["/usr/local/bin/opencli", "wx", "--with-meta", "history", "文件传输助手", "--json"],
+            )
+
+    def test_run_wx_fails_closed_when_meta_reports_unknown_shards(self):
+        class Completed:
+            returncode = 0
+            stdout = json.dumps(
+                {
+                    "meta": {
+                        "status": "possibly_stale_unknown_shards",
+                        "unknown_shards": ["message/message_0.db"],
+                    }
+                }
+            )
+            stderr = ""
+
+        with patch("harness.opencli_bridge.shutil.which", return_value="/usr/local/bin/opencli"):
+            with patch("harness.opencli_bridge.subprocess.run", return_value=Completed()):
+                with patch("harness.opencli_bridge._ensure_wx_message_shard_keys", return_value={"ok": True}):
+                    result = run_opencli_command(["wx", "history", "文件传输助手", "--json"])
+
+        self.assertFalse(result["ok"])
+        self.assertIn("possibly_stale_unknown_shards", result["stderr"])
+        self.assertEqual(result["wx_meta_health"]["unknown_shards"], ["message/message_0.db"])
 
     def test_harness_opencli_routes(self):
         app = FastAPI()
