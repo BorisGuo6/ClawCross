@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 import re
 import shutil
@@ -36,6 +37,12 @@ SOURCE_SENTINELS = {
     "query_engine": "QueryEngine.ts",
     "cli": "entrypoints/cli.tsx",
     "tools": "tools.ts",
+}
+BUILD_ARTIFACTS = {
+    "snapshot_launcher": "dist/claude-code-snapshot.js",
+    "delegate": "dist/claude-code-delegate",
+    "entry_external": "dist/claude-code-entry-external-bin",
+    "stubbed_selfcontained": "dist/claude-code-stubbed-selfcontained",
 }
 
 
@@ -131,6 +138,39 @@ def run_command(cmd: list[str], *, timeout: int = 30) -> CommandResult:
         return CommandResult(1, "", str(exc))
 
 
+def detect_claude_auth_status(claude_path: str) -> dict:
+    """Return non-sensitive Claude Code auth metadata."""
+    if not claude_path:
+        return {
+            "checked": False,
+            "logged_in": False,
+            "status": "missing_cli",
+            "errors": ["claude executable not found on PATH"],
+        }
+    result = run_command([claude_path, "auth", "status"], timeout=8)
+    output = strip_ansi((result.stdout or result.stderr).strip())
+    errors: list[str] = []
+    parsed: dict = {}
+    if result.returncode != 0:
+        errors.append(output or "claude auth status failed")
+    else:
+        try:
+            parsed = json.loads(output)
+        except json.JSONDecodeError:
+            errors.append("claude auth status returned non-JSON output")
+
+    logged_in = bool(parsed.get("loggedIn"))
+    return {
+        "checked": True,
+        "logged_in": logged_in,
+        "status": "logged_in" if logged_in else "logged_out",
+        "auth_method": parsed.get("authMethod", ""),
+        "api_provider": parsed.get("apiProvider", ""),
+        "subscription_type": parsed.get("subscriptionType", ""),
+        "errors": errors,
+    }
+
+
 def detect_claude_code_source_snapshot(source_dir: str | Path | None = None) -> dict:
     """Describe the vendored Claude Code source snapshot, if present."""
     root = Path(source_dir) if source_dir is not None else CLAUDE_CODE_SOURCE_DIR
@@ -145,6 +185,29 @@ def detect_claude_code_source_snapshot(source_dir: str | Path | None = None) -> 
             errors.append(str(exc))
     package_json = root.parent / "package.json"
     standalone_package = package_json.is_file()
+    build_artifacts = {}
+    for name, rel in BUILD_ARTIFACTS.items():
+        artifact = root.parent / rel
+        artifact_exists = artifact.is_file()
+        size_bytes = 0
+        executable = False
+        if artifact_exists:
+            try:
+                stat = artifact.stat()
+                size_bytes = stat.st_size
+                executable = bool(stat.st_mode & 0o111)
+            except OSError as exc:
+                errors.append(str(exc))
+        build_artifacts[name] = {
+            "path": str(artifact),
+            "exists": artifact_exists,
+            "size_bytes": size_bytes,
+            "executable": executable,
+        }
+    functional_artifact = build_artifacts["delegate"]
+    stubbed_artifact = build_artifacts["stubbed_selfcontained"]
+    functional = bool(functional_artifact["exists"] and functional_artifact["executable"])
+    buildable = bool(stubbed_artifact["exists"] and stubbed_artifact["executable"])
     return {
         "path": str(root),
         "exists": exists,
@@ -152,10 +215,18 @@ def detect_claude_code_source_snapshot(source_dir: str | Path | None = None) -> 
         "entrypoints": entrypoints,
         "package_json": str(package_json),
         "standalone_package": standalone_package,
-        "runnable": bool(standalone_package and entrypoints.get("cli")),
+        "build_artifacts": build_artifacts,
+        "buildable": buildable,
+        "functional": functional,
+        "runnable": functional,
+        "runnable_artifact": functional_artifact["path"] if functional_artifact["exists"] else "",
         "note": (
-            "source-only snapshot; runtime uses installed claude CLI/acpx"
-            if exists and not standalone_package
+            "source snapshot with functional delegate build; runtime uses installed claude CLI/acpx"
+            if exists and functional_artifact["exists"]
+            else "source snapshot with generated stubbed build only; runtime uses installed claude CLI/acpx"
+            if exists and stubbed_artifact["exists"]
+            else "source-only snapshot; runtime uses installed claude CLI/acpx"
+            if exists
             else ""
         ),
         "errors": errors,
@@ -176,6 +247,9 @@ def detect_claude_code() -> dict:
             errors.append((result.stderr or result.stdout or "claude --version failed").strip())
     else:
         errors.append("claude executable not found on PATH")
+    auth_status = detect_claude_auth_status(claude_path)
+    for error in auth_status.get("errors") or []:
+        errors.append(str(error))
 
     acpx_claude_supported = False
     acpx_help = ""
@@ -194,6 +268,9 @@ def detect_claude_code() -> dict:
         "status": "available" if available else "unavailable",
         "claude_path": claude_path,
         "claude_version": claude_version,
+        "auth_status": auth_status,
+        "auth_ready": bool(auth_status.get("logged_in")),
+        "execution_status": "unverified",
         "acpx_path": acpx_path,
         "acpx_claude_supported": acpx_claude_supported,
         "source_snapshot": detect_claude_code_source_snapshot(),

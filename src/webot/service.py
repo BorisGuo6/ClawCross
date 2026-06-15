@@ -487,6 +487,9 @@ class WeBotService:
         bridge = get_bridge_runtime_payload(user_id, session_id)
         voice = self._serialize_voice_payload(user_id, session_id)
         buddy = serialize_buddy_state(user_id)
+        claude_status = dict(detect_claude_code_cached(ttl_seconds=60))
+        if getattr(keepalive, "last_status", ""):
+            claude_status["execution_status"] = keepalive.last_status
         return {
             "status": "success",
             "session_id": session_id,
@@ -540,7 +543,7 @@ class WeBotService:
             "voice": voice,
             "buddy": buddy,
             "claude_code": {
-                "status": detect_claude_code_cached(ttl_seconds=60),
+                "status": claude_status,
                 "keepalive": self._serialize_claude_keepalive(keepalive),
             },
         }
@@ -1213,11 +1216,14 @@ class WeBotService:
     ):
         self.verify_auth_or_token(user_id, password, x_internal_token)
         keepalive = get_claude_keepalive_state(user_id, session_id or "default")
+        claude_status = dict(detect_claude_code_cached(ttl_seconds=10))
+        if getattr(keepalive, "last_status", ""):
+            claude_status["execution_status"] = keepalive.last_status
         return {
             "status": "success",
             "session_id": session_id or "default",
             "claude_code": {
-                "status": detect_claude_code_cached(ttl_seconds=10),
+                "status": claude_status,
                 "keepalive": self._serialize_claude_keepalive(keepalive),
             },
         }
@@ -1265,12 +1271,21 @@ class WeBotService:
             session_name=req.session_name,
             timeout=req.timeout_seconds,
         )
+        error_tail = "\n".join(
+            part
+            for part in (
+                str(result.get("error") or "").strip(),
+                str(result.get("stderr_tail") or "").strip(),
+                str(result.get("stdout_tail") or "").strip(),
+            )
+            if part
+        )[-1000:]
         record_claude_keepalive_result(
             req.user_id,
             req.session_id,
             status="success" if result.get("ok") else "failed",
             result=str(result.get("stdout_tail") or "")[-2000:],
-            error=str(result.get("error") or result.get("stderr_tail") or "")[-1000:],
+            error=error_tail,
             metadata={"probe": True, "session_name": result.get("session_name", "")},
         )
         await self._publish_runtime_snapshot(
@@ -1303,12 +1318,21 @@ class WeBotService:
                 model=req.model or state.model,
                 timeout=req.timeout_seconds or state.timeout_seconds,
             )
+        error_tail = "\n".join(
+            part
+            for part in (
+                str(result.get("error") or "").strip(),
+                str(result.get("stderr_tail") or "").strip(),
+                str(result.get("stdout_tail") or "").strip(),
+            )
+            if part
+        )[-1000:]
         record = record_claude_keepalive_result(
             req.user_id,
             req.session_id,
             status="success" if result.get("ok") else "failed",
             result=str(result.get("stdout_tail") or "")[-2000:],
-            error=str(result.get("error") or result.get("stderr_tail") or "")[-1000:],
+            error=error_tail,
             metadata={"kickoff": True, "use_acp": req.use_acp},
         )
         await self._publish_runtime_snapshot(

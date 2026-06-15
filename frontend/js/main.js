@@ -2775,13 +2775,26 @@ function _buildExtendedSections(runtime, item) {
         const status = claude.status || {};
         const keepalive = claude.keepalive || {};
         const sourceSnapshot = status.source_snapshot || {};
+        const authStatus = status.auth_status || {};
+        const buildArtifacts = sourceSnapshot.build_artifacts || {};
+        const delegateBuild = buildArtifacts.delegate || {};
+        const stubbedBuild = buildArtifacts.stubbed_selfcontained || {};
+        const displayedBuild = delegateBuild.exists ? delegateBuild : stubbedBuild;
+        const displayedBuildKind = delegateBuild.exists ? 'delegate' : 'stubbed';
         const available = status.available ? 'available' : (status.status || 'unavailable');
         const version = status.claude_version || status.claude_path || '';
+        const authLine = authStatus.checked
+            ? `auth: ${authStatus.status || 'unknown'}${authStatus.subscription_type ? ` · ${authStatus.subscription_type}` : ''}${status.execution_status ? ` · execution=${status.execution_status}` : ''}`
+            : '';
         const sourceLine = sourceSnapshot.exists
             ? `source: ${sourceSnapshot.path || 'vendor/claude-code-main/src'} (${sourceSnapshot.file_count || 0} files)`
             : '';
+        const buildSizeMb = displayedBuild.size_bytes ? `${(Number(displayedBuild.size_bytes) / 1024 / 1024).toFixed(1)} MB` : '';
+        const buildLine = displayedBuild.exists
+            ? `${displayedBuildKind} build: ${displayedBuild.path || ''}${buildSizeMb ? ` (${buildSizeMb}${displayedBuild.executable ? ', executable' : ''})` : ''}`
+            : '';
         const sourceMode = sourceSnapshot.exists
-            ? (sourceSnapshot.standalone_package ? 'standalone source package' : 'source snapshot only')
+            ? (sourceSnapshot.functional ? 'functional delegate build available' : (sourceSnapshot.buildable ? 'stubbed build only' : 'source snapshot only'))
             : '';
         const lastLine = keepalive.last_status
             ? `${keepalive.last_status}${keepalive.last_run_at ? ` · ${String(keepalive.last_run_at).slice(0, 16)}` : ''}`
@@ -2791,7 +2804,9 @@ function _buildExtendedSections(runtime, item) {
                 <div class="webot-runtime-title">${t('subagent_runtime_claude_code')}</div>
                 <div class="webot-runtime-detail">${_escapeAndFormatText(`${available} · keepalive=${keepalive.enabled ? 'on' : 'off'}`)}</div>
                 ${version ? `<div class="webot-runtime-caption">${_escapeAndFormatText(version)}</div>` : ''}
+                ${authLine ? `<div class="webot-runtime-caption">${_escapeAndFormatText(authLine)}</div>` : ''}
                 ${sourceLine ? `<div class="webot-runtime-detail">${_escapeAndFormatText(sourceLine)}</div>` : ''}
+                ${buildLine ? `<div class="webot-runtime-detail">${_escapeAndFormatText(buildLine)}</div>` : ''}
                 ${sourceMode ? `<div class="webot-runtime-caption">${_escapeAndFormatText(sourceMode)}</div>` : ''}
                 ${keepalive.prompt ? `<div class="webot-runtime-detail">${_escapeAndFormatText(`prompt: ${keepalive.prompt}`)}</div>` : ''}
                 ${lastLine ? `<div class="webot-runtime-detail">${_escapeAndFormatText(lastLine)}</div>` : ''}

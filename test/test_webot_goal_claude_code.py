@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 import webot.memory as memory
 import webot.runtime_store as runtime_store
-from webot.claude_code import detect_claude_code_source_snapshot, parse_reset_time
+from webot.claude_code import detect_claude_auth_status, detect_claude_code_source_snapshot, parse_reset_time
 from webot.routes import create_webot_router
 
 
@@ -96,6 +96,48 @@ class WeBotGoalClaudeCodeTests(unittest.TestCase):
             self.assertTrue(snapshot["entrypoints"]["cli"])
             self.assertFalse(snapshot["standalone_package"])
             self.assertFalse(snapshot["runnable"])
+            self.assertFalse(snapshot["functional"])
+            self.assertFalse(snapshot["build_artifacts"]["stubbed_selfcontained"]["exists"])
+            self.assertFalse(snapshot["build_artifacts"]["delegate"]["exists"])
+
+    def test_claude_code_source_snapshot_detects_delegate_build(self):
+        with TemporaryDirectory() as tmpdir:
+            package_root = Path(tmpdir) / "claude-code-main"
+            root = package_root / "src"
+            (root / "entrypoints").mkdir(parents=True)
+            for rel in ("main.tsx", "QueryEngine.ts", "tools.ts", "entrypoints/cli.tsx"):
+                (root / rel).write_text("// source\n", encoding="utf-8")
+            (package_root / "package.json").write_text('{"type":"module"}\n', encoding="utf-8")
+            artifact = package_root / "dist" / "claude-code-delegate"
+            artifact.parent.mkdir()
+            artifact.write_text("#!/bin/sh\n", encoding="utf-8")
+            artifact.chmod(0o755)
+
+            snapshot = detect_claude_code_source_snapshot(root)
+
+            self.assertTrue(snapshot["standalone_package"])
+            self.assertTrue(snapshot["runnable"])
+            self.assertTrue(snapshot["functional"])
+            self.assertEqual(snapshot["runnable_artifact"], str(artifact))
+            self.assertTrue(snapshot["build_artifacts"]["delegate"]["executable"])
+
+    def test_claude_auth_status_redacts_identity_fields(self):
+        with TemporaryDirectory() as tmpdir:
+            exe = Path(tmpdir) / "claude"
+            exe.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' '{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"email\":\"person@example.com\",\"subscriptionType\":\"max\"}'\n",
+                encoding="utf-8",
+            )
+            exe.chmod(0o755)
+
+            status = detect_claude_auth_status(str(exe))
+
+            self.assertTrue(status["logged_in"])
+            self.assertEqual(status["auth_method"], "claude.ai")
+            self.assertEqual(status["api_provider"], "firstParty")
+            self.assertEqual(status["subscription_type"], "max")
+            self.assertNotIn("email", status)
 
     def test_routes_expose_goals_and_claude_code_runtime(self):
         with TemporaryDirectory() as tmpdir:
