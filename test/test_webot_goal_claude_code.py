@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 import webot.memory as memory
 import webot.runtime_store as runtime_store
-from webot.claude_code import parse_reset_time
+from webot.claude_code import detect_claude_code_source_snapshot, parse_reset_time
 from webot.routes import create_webot_router
 
 
@@ -81,6 +81,21 @@ class WeBotGoalClaudeCodeTests(unittest.TestCase):
         self.assertIsNotNone(duration)
         self.assertEqual(duration.hour, 11)
         self.assertEqual(duration.minute, 15)
+
+    def test_claude_code_source_snapshot_detects_vendored_src(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "src"
+            (root / "entrypoints").mkdir(parents=True)
+            for rel in ("main.tsx", "QueryEngine.ts", "tools.ts", "entrypoints/cli.tsx"):
+                (root / rel).write_text("// source\n", encoding="utf-8")
+
+            snapshot = detect_claude_code_source_snapshot(root)
+
+            self.assertTrue(snapshot["exists"])
+            self.assertEqual(snapshot["file_count"], 4)
+            self.assertTrue(snapshot["entrypoints"]["cli"])
+            self.assertFalse(snapshot["standalone_package"])
+            self.assertFalse(snapshot["runnable"])
 
     def test_routes_expose_goals_and_claude_code_runtime(self):
         with TemporaryDirectory() as tmpdir:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -28,6 +29,14 @@ RESET_PATTERNS = [
 ]
 
 _STATUS_CACHE: tuple[float, dict] | None = None
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CLAUDE_CODE_SOURCE_DIR = PROJECT_ROOT / "vendor" / "claude-code-main" / "src"
+SOURCE_SENTINELS = {
+    "main": "main.tsx",
+    "query_engine": "QueryEngine.ts",
+    "cli": "entrypoints/cli.tsx",
+    "tools": "tools.ts",
+}
 
 
 @dataclass(frozen=True)
@@ -122,6 +131,37 @@ def run_command(cmd: list[str], *, timeout: int = 30) -> CommandResult:
         return CommandResult(1, "", str(exc))
 
 
+def detect_claude_code_source_snapshot(source_dir: str | Path | None = None) -> dict:
+    """Describe the vendored Claude Code source snapshot, if present."""
+    root = Path(source_dir) if source_dir is not None else CLAUDE_CODE_SOURCE_DIR
+    exists = root.is_dir()
+    entrypoints = {name: (root / rel).is_file() for name, rel in SOURCE_SENTINELS.items()}
+    file_count = 0
+    errors: list[str] = []
+    if exists:
+        try:
+            file_count = sum(1 for path in root.rglob("*") if path.is_file())
+        except OSError as exc:
+            errors.append(str(exc))
+    package_json = root.parent / "package.json"
+    standalone_package = package_json.is_file()
+    return {
+        "path": str(root),
+        "exists": exists,
+        "file_count": file_count,
+        "entrypoints": entrypoints,
+        "package_json": str(package_json),
+        "standalone_package": standalone_package,
+        "runnable": bool(standalone_package and entrypoints.get("cli")),
+        "note": (
+            "source-only snapshot; runtime uses installed claude CLI/acpx"
+            if exists and not standalone_package
+            else ""
+        ),
+        "errors": errors,
+    }
+
+
 def detect_claude_code() -> dict:
     claude_path = shutil.which("claude") or ""
     acpx_path = shutil.which("acpx") or ""
@@ -156,6 +196,7 @@ def detect_claude_code() -> dict:
         "claude_version": claude_version,
         "acpx_path": acpx_path,
         "acpx_claude_supported": acpx_claude_supported,
+        "source_snapshot": detect_claude_code_source_snapshot(),
         "errors": errors,
         "checked_at": _utc_now(),
     }

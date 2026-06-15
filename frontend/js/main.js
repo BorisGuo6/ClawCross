@@ -2774,8 +2774,15 @@ function _buildExtendedSections(runtime, item) {
         const claude = runtime.claude_code || {};
         const status = claude.status || {};
         const keepalive = claude.keepalive || {};
+        const sourceSnapshot = status.source_snapshot || {};
         const available = status.available ? 'available' : (status.status || 'unavailable');
         const version = status.claude_version || status.claude_path || '';
+        const sourceLine = sourceSnapshot.exists
+            ? `source: ${sourceSnapshot.path || 'vendor/claude-code-main/src'} (${sourceSnapshot.file_count || 0} files)`
+            : '';
+        const sourceMode = sourceSnapshot.exists
+            ? (sourceSnapshot.standalone_package ? 'standalone source package' : 'source snapshot only')
+            : '';
         const lastLine = keepalive.last_status
             ? `${keepalive.last_status}${keepalive.last_run_at ? ` · ${String(keepalive.last_run_at).slice(0, 16)}` : ''}`
             : '';
@@ -2784,6 +2791,8 @@ function _buildExtendedSections(runtime, item) {
                 <div class="webot-runtime-title">${t('subagent_runtime_claude_code')}</div>
                 <div class="webot-runtime-detail">${_escapeAndFormatText(`${available} · keepalive=${keepalive.enabled ? 'on' : 'off'}`)}</div>
                 ${version ? `<div class="webot-runtime-caption">${_escapeAndFormatText(version)}</div>` : ''}
+                ${sourceLine ? `<div class="webot-runtime-detail">${_escapeAndFormatText(sourceLine)}</div>` : ''}
+                ${sourceMode ? `<div class="webot-runtime-caption">${_escapeAndFormatText(sourceMode)}</div>` : ''}
                 ${keepalive.prompt ? `<div class="webot-runtime-detail">${_escapeAndFormatText(`prompt: ${keepalive.prompt}`)}</div>` : ''}
                 ${lastLine ? `<div class="webot-runtime-detail">${_escapeAndFormatText(lastLine)}</div>` : ''}
                 ${keepalive.last_error ? `<div class="webot-runtime-detail">${_escapeAndFormatText(keepalive.last_error)}</div>` : ''}
