@@ -42,6 +42,23 @@ import locale
 import urllib.request
 from dotenv import load_dotenv
 
+
+def _ensure_loopback_no_proxy():
+    """Keep local service health checks off the system HTTP proxy."""
+    required = ("127.0.0.1", "localhost", "::1")
+    for key in ("NO_PROXY", "no_proxy"):
+        raw = os.getenv(key, "")
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        seen = {p.lower() for p in parts}
+        for host in required:
+            if host.lower() not in seen:
+                parts.append(host)
+                seen.add(host.lower())
+        os.environ[key] = ",".join(parts)
+
+
+_ensure_loopback_no_proxy()
+
 # 确保 Python 输出使用 UTF-8 编码
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")

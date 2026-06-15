@@ -23,6 +23,23 @@ import urllib.request
 import uuid
 
 
+def _ensure_loopback_no_proxy():
+    """Keep Clawcross localhost API calls off macOS/Python system proxies."""
+    required = ("127.0.0.1", "localhost", "::1")
+    for key in ("NO_PROXY", "no_proxy"):
+        raw = os.getenv(key, "")
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        seen = {p.lower() for p in parts}
+        for host in required:
+            if host.lower() not in seen:
+                parts.append(host)
+                seen.add(host.lower())
+        os.environ[key] = ",".join(parts)
+
+
+_ensure_loopback_no_proxy()
+
+
 def _configure_stdio():
     """配置标准输出的编码，避免 Windows 控制台非 UTF-8 编码导致帮助信息崩溃"""
     for stream in (sys.stdout, sys.stderr):
