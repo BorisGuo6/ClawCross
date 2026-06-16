@@ -34,6 +34,32 @@ def test_cleans_known_tracking_params_without_destroying_content_params():
     )
 
 
+def test_normalizes_bare_xiaohongshu_urls_and_shortlinks():
+    text = """
+小红书链接 https://m.xiaohongshu.com/explore/6a1ac1ab0000000006034fa8?xsec_token=abc&xsec_source=app_share&share_channel=wechat。
+短链 https://www.xhslink.com/a/1abc2def?xhsshare=CopyLink&appuid=123
+"""
+
+    normalized = normalize_markdown_links(text)
+
+    assert (
+        "https://www.xiaohongshu.com/discovery/item/6a1ac1ab0000000006034fa8。"
+        in normalized
+    )
+    assert "https://xhslink.com/a/1abc2def" in normalized
+    assert "xsec_token" not in normalized
+    assert "xhsshare" not in normalized
+    assert validate_reading_list_markdown(normalized) == []
+
+
+def test_canonicalizes_wechat_article_share_urls():
+    assert normalize_url(
+        "https://mp.weixin.qq.com/s?__biz=MzA&mid=224748&idx=1&sn=abc"
+        "&chksm=tracking&scene=21&subscene=10000&clicktime=1780173968"
+        "#wechat_redirect"
+    ) == "https://mp.weixin.qq.com/s?__biz=MzA&mid=224748&idx=1&sn=abc"
+
+
 def test_replaces_placeholder_titles_with_overrides_and_url_fallbacks():
     text = """
 [TWITTER BANNER TITLE META TAG](https://www.pptmaster.app/?utm_source=chatgpt.com)
@@ -106,5 +132,16 @@ Unresolved source links:
     assert any("placeholder source title remains" in issue for issue in issues)
     assert any("bad link title remains" in issue for issue in issues)
     assert any("chatgpt tracking parameter remains" in issue for issue in issues)
+    assert any("uncanonicalized URL remains" in issue for issue in issues)
     assert any("duplicate normalized URL remains" in issue for issue in issues)
     assert any("Unresolved source links" in issue for issue in issues)
+
+
+def test_validator_blocks_dirty_urls_even_with_clean_titles():
+    issues = validate_reading_list_markdown(
+        "[小红书笔记](https://www.xiaohongshu.com/explore/abc?xsec_token=dirty&share_channel=wechat)\n"
+        "https://mp.weixin.qq.com/s?__biz=MzA&mid=1&idx=1&sn=abc&scene=21#wechat_redirect"
+    )
+
+    assert any("uncanonicalized URL remains" in issue for issue in issues)
+    assert any("uncanonicalized bare URL remains" in issue for issue in issues)

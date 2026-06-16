@@ -13,6 +13,31 @@ from typing import Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[([^\]\n]+)\]\(([^)\n]+)\)")
+BARE_URL_RE = re.compile(r"(?<!\]\()https?://[^\s<>\]\)\"']+")
+TRAILING_BARE_URL_CHARS = ".,;:!?，。！？；：、"
+
+XIAOHONGSHU_HOSTS = {
+    "www.xiaohongshu.com",
+    "xiaohongshu.com",
+    "m.xiaohongshu.com",
+}
+
+XIAOHONGSHU_SHORTLINK_HOSTS = {
+    "xhslink.com",
+    "www.xhslink.com",
+    "xhs.cn",
+    "www.xhs.cn",
+}
+
+WECHAT_ARTICLE_HOSTS = {
+    "mp.weixin.qq.com",
+}
+WECHAT_ARTICLE_QUERY_PARAMS = {
+    "__biz",
+    "mid",
+    "idx",
+    "sn",
+}
 
 TRACKING_PARAMS = {
     "app_platform",
@@ -50,8 +75,8 @@ STRIP_ALL_QUERY_HOSTS = {
     "m.bilibili.com",
     "space.bilibili.com",
     "www.bilibili.com",
-    "www.xiaohongshu.com",
-    "xiaohongshu.com",
+    *XIAOHONGSHU_HOSTS,
+    *XIAOHONGSHU_SHORTLINK_HOSTS,
     "zhuanlan.zhihu.com",
     "voxeldance.com",
     "www.voxeldance.com",
@@ -66,6 +91,10 @@ ROOT_SLASH_HOSTS = {
 HOST_ALIASES = {
     "originflow.ai": "www.originflow.ai",
     "pptmaster.app": "www.pptmaster.app",
+    "xiaohongshu.com": "www.xiaohongshu.com",
+    "m.xiaohongshu.com": "www.xiaohongshu.com",
+    "www.xhslink.com": "xhslink.com",
+    "www.xhs.cn": "xhs.cn",
 }
 
 NOISE_LINES = {
@@ -114,7 +143,14 @@ def normalize_url(url: str) -> str:
     host = netloc.split("@")[-1].split(":")[0]
 
     query = ""
-    if parsed.query and host not in STRIP_ALL_QUERY_HOSTS:
+    if parsed.query and host in WECHAT_ARTICLE_HOSTS:
+        kept_params = [
+            (key, param_value)
+            for key, param_value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key.lower() in WECHAT_ARTICLE_QUERY_PARAMS
+        ]
+        query = urlencode(kept_params, doseq=True)
+    elif parsed.query and host not in STRIP_ALL_QUERY_HOSTS:
         kept_params = []
         for key, param_value in parse_qsl(parsed.query, keep_blank_values=True):
             normalized_key = key.lower()
@@ -123,12 +159,16 @@ def normalize_url(url: str) -> str:
             kept_params.append((key, param_value))
         query = urlencode(kept_params, doseq=True)
 
-    path = parsed.path
+    path = _normalize_path(host, parsed.path)
     if not path and host in ROOT_SLASH_HOSTS:
         path = "/"
 
     fragment = ""
-    if host not in STRIP_ALL_QUERY_HOSTS and not parsed.fragment.startswith("utm_"):
+    if (
+        host not in STRIP_ALL_QUERY_HOSTS
+        and host not in WECHAT_ARTICLE_HOSTS
+        and not parsed.fragment.startswith("utm_")
+    ):
         fragment = parsed.fragment
 
     return urlunsplit((scheme, netloc, path, query, fragment))
@@ -182,7 +222,7 @@ def normalize_markdown_links(
 
         matches = list(MARKDOWN_LINK_RE.finditer(line))
         if not matches:
-            output_lines.append(line)
+            output_lines.append(_normalize_bare_urls(line))
             continue
 
         pure_link_line = len(matches) == 1 and line.strip() == matches[0].group(0)
@@ -199,7 +239,7 @@ def normalize_markdown_links(
             cleaned_title = normalize_title(title, normalized, title_overrides=title_overrides)
             return f"[{cleaned_title}]({normalized})"
 
-        output_lines.append(MARKDOWN_LINK_RE.sub(replace, line))
+        output_lines.append(_normalize_bare_urls(MARKDOWN_LINK_RE.sub(replace, line)))
 
     return "\n".join(output_lines).strip()
 
@@ -222,11 +262,17 @@ def validate_reading_list_markdown(text: str) -> list[str]:
             issues.append(f"placeholder source title remains: {title}")
         if _title_looks_bad(title, url):
             issues.append(f"bad link title remains: {title}")
+        if _requires_canonical_url(url) and normalize_url(url) != url.strip().strip("<>"):
+            issues.append(f"uncanonicalized URL remains: {normalize_url(url)}")
 
         key = canonical_url(url)
         if key in seen_urls:
             issues.append(f"duplicate normalized URL remains: {normalize_url(url)}")
         seen_urls.add(key)
+
+    for raw_url in _iter_bare_urls(text):
+        if _requires_canonical_url(raw_url) and normalize_url(raw_url) != raw_url.strip().strip("<>"):
+            issues.append(f"uncanonicalized bare URL remains: {normalize_url(raw_url)}")
 
     return issues
 
@@ -257,6 +303,46 @@ def _lookup_title_override(
 def _is_noise_line(line: str) -> bool:
     normalized = re.sub(r"\s+", " ", line.strip())
     return normalized in NOISE_LINES
+
+
+def _normalize_path(host: str, path: str) -> str:
+    if host in XIAOHONGSHU_HOSTS:
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 2 and parts[0] == "explore":
+            return f"/discovery/item/{parts[1]}"
+        if len(parts) >= 3 and parts[0] == "discovery" and parts[1] == "item":
+            return f"/discovery/item/{parts[2]}"
+    return path
+
+
+def _normalize_bare_urls(line: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        raw_url = match.group(0)
+        url = raw_url.rstrip(TRAILING_BARE_URL_CHARS)
+        suffix = raw_url[len(url):]
+        return f"{normalize_url(url)}{suffix}"
+
+    return BARE_URL_RE.sub(replace, line)
+
+
+def _iter_bare_urls(text: str) -> list[str]:
+    urls: list[str] = []
+    for match in BARE_URL_RE.finditer(text):
+        raw_url = match.group(0)
+        urls.append(raw_url.rstrip(TRAILING_BARE_URL_CHARS))
+    return urls
+
+
+def _requires_canonical_url(url: str) -> bool:
+    parsed = urlsplit(url.strip().strip("<>"))
+    host = parsed.netloc.lower().split("@")[-1].split(":")[0]
+    if host in XIAOHONGSHU_HOSTS or host in XIAOHONGSHU_SHORTLINK_HOSTS or host in WECHAT_ARTICLE_HOSTS:
+        return True
+    for key, _value in parse_qsl(parsed.query, keep_blank_values=True):
+        normalized_key = key.lower()
+        if normalized_key.startswith("utm_") or normalized_key in TRACKING_PARAMS:
+            return True
+    return False
 
 
 def _title_looks_bad(title: str, url: str) -> bool:
