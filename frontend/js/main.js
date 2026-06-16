@@ -2786,6 +2786,7 @@ function _buildExtendedSections(runtime, item) {
         const authLine = authStatus.checked
             ? `auth: ${authStatus.status || 'unknown'}${authStatus.subscription_type ? ` · ${authStatus.subscription_type}` : ''}${status.execution_status ? ` · execution=${status.execution_status}` : ''}`
             : '';
+        const executionHint = status.execution_hint || keepalive.execution?.hint || '';
         const sourceLine = sourceSnapshot.exists
             ? `source: ${sourceSnapshot.path || 'vendor/claude-code-main/src'} (${sourceSnapshot.file_count || 0} files)`
             : '';
@@ -2805,6 +2806,7 @@ function _buildExtendedSections(runtime, item) {
                 <div class="webot-runtime-detail">${_escapeAndFormatText(`${available} · keepalive=${keepalive.enabled ? 'on' : 'off'}`)}</div>
                 ${version ? `<div class="webot-runtime-caption">${_escapeAndFormatText(version)}</div>` : ''}
                 ${authLine ? `<div class="webot-runtime-caption">${_escapeAndFormatText(authLine)}</div>` : ''}
+                ${executionHint ? `<div class="webot-runtime-detail">${_escapeAndFormatText(executionHint)}</div>` : ''}
                 ${sourceLine ? `<div class="webot-runtime-detail">${_escapeAndFormatText(sourceLine)}</div>` : ''}
                 ${buildLine ? `<div class="webot-runtime-detail">${_escapeAndFormatText(buildLine)}</div>` : ''}
                 ${sourceMode ? `<div class="webot-runtime-caption">${_escapeAndFormatText(sourceMode)}</div>` : ''}

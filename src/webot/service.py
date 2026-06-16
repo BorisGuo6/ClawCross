@@ -109,6 +109,31 @@ def _safe_json_loads(value: str | None) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _classify_claude_execution_error(status: str, error_text: str) -> dict[str, str]:
+    normalized = (error_text or "").lower()
+    if status == "success":
+        return {"status": "success", "error_kind": "", "hint": ""}
+    if "request not allowed" in normalized or "api error: 403" in normalized:
+        return {
+            "status": status or "failed",
+            "error_kind": "auth_reconnect_required",
+            "hint": "Claude Code is logged in, but the service rejected execution. Run `claude auth login --claudeai` or provide ANTHROPIC_API_KEY for --bare mode.",
+        }
+    if "agent needs reconnect" in normalized:
+        return {
+            "status": status or "failed",
+            "error_kind": "agent_reconnect_required",
+            "hint": "acpx reports that the Claude agent needs reconnect. Reconnect Claude Code authentication and retry the probe.",
+        }
+    if "not logged in" in normalized:
+        return {
+            "status": status or "failed",
+            "error_kind": "not_logged_in",
+            "hint": "Claude Code is not logged in. Run `claude auth login --claudeai` or configure ANTHROPIC_API_KEY for --bare mode.",
+        }
+    return {"status": status or "unverified", "error_kind": "", "hint": ""}
+
+
 class WeBotService:
     """Runtime APIs for WeBot subagent registry, runtime visibility, and tool policy."""
 
@@ -223,6 +248,7 @@ class WeBotService:
 
     @staticmethod
     def _serialize_claude_keepalive(item) -> dict[str, Any]:
+        execution = _classify_claude_execution_error(item.last_status, item.last_error)
         return {
             "enabled": item.enabled,
             "tool": item.tool,
@@ -241,6 +267,7 @@ class WeBotService:
             "last_status": item.last_status,
             "last_error": item.last_error,
             "last_result": item.last_result,
+            "execution": execution,
             "reset_at": item.reset_at,
             "metadata": dict(item.metadata),
             "updated_at": item.updated_at,
@@ -489,7 +516,10 @@ class WeBotService:
         buddy = serialize_buddy_state(user_id)
         claude_status = dict(detect_claude_code_cached(ttl_seconds=60))
         if getattr(keepalive, "last_status", ""):
-            claude_status["execution_status"] = keepalive.last_status
+            execution = _classify_claude_execution_error(keepalive.last_status, keepalive.last_error)
+            claude_status["execution_status"] = execution["status"]
+            claude_status["execution_error_kind"] = execution["error_kind"]
+            claude_status["execution_hint"] = execution["hint"]
         return {
             "status": "success",
             "session_id": session_id,
@@ -1218,7 +1248,10 @@ class WeBotService:
         keepalive = get_claude_keepalive_state(user_id, session_id or "default")
         claude_status = dict(detect_claude_code_cached(ttl_seconds=10))
         if getattr(keepalive, "last_status", ""):
-            claude_status["execution_status"] = keepalive.last_status
+            execution = _classify_claude_execution_error(keepalive.last_status, keepalive.last_error)
+            claude_status["execution_status"] = execution["status"]
+            claude_status["execution_error_kind"] = execution["error_kind"]
+            claude_status["execution_hint"] = execution["hint"]
         return {
             "status": "success",
             "session_id": session_id or "default",

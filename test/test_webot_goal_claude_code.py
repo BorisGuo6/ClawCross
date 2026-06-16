@@ -173,7 +173,7 @@ class WeBotGoalClaudeCodeTests(unittest.TestCase):
                 }
                 with patch("webot.service.detect_claude_code_cached", return_value=fake_status), patch(
                     "webot.service.probe_claude_acp", return_value=fake_probe
-                ):
+                ) as probe_mock:
                     with TestClient(app) as client:
                         created = client.post(
                             "/webot/session-goals",
@@ -232,6 +232,36 @@ class WeBotGoalClaudeCodeTests(unittest.TestCase):
                         self.assertEqual(payload["goals"]["active_goal"]["last_report"], "ACP probe passed")
                         self.assertTrue(payload["claude_code"]["status"]["available"])
                         self.assertTrue(payload["claude_code"]["keepalive"]["enabled"])
+
+                        probe_mock.return_value = {
+                            "ok": False,
+                            "status": "failed",
+                            "session_name": "test",
+                            "stdout_tail": 'API Error: 403 {"error":{"message":"Request not allowed"}}',
+                            "stderr_tail": "agent needs reconnect",
+                            "error": "",
+                        }
+                        failed_probe = client.post(
+                            "/webot/claude-code/probe",
+                            json={"user_id": "alice", "session_id": "default"},
+                        )
+                        self.assertEqual(failed_probe.status_code, 200)
+                        self.assertEqual(failed_probe.json()["status"], "failed")
+
+                        runtime = client.get(
+                            "/webot/session-runtime",
+                            params={"user_id": "alice", "session_id": "default"},
+                        )
+                        payload = runtime.json()
+                        self.assertEqual(
+                            payload["claude_code"]["status"]["execution_error_kind"],
+                            "auth_reconnect_required",
+                        )
+                        self.assertEqual(
+                            payload["claude_code"]["keepalive"]["execution"]["error_kind"],
+                            "auth_reconnect_required",
+                        )
+                        self.assertIn("claude auth login", payload["claude_code"]["status"]["execution_hint"])
             finally:
                 runtime_store.DEFAULT_DB_PATH = original_runtime_db_path
                 memory.USER_FILES_DIR = original_user_files_dir
