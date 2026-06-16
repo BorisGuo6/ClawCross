@@ -32,6 +32,7 @@ XIAOHONGSHU_SHORTLINK_HOSTS = {
 WECHAT_ARTICLE_HOSTS = {
     "mp.weixin.qq.com",
 }
+
 WECHAT_ARTICLE_QUERY_PARAMS = {
     "__biz",
     "mid",
