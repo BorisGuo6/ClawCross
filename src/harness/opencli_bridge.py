@@ -115,6 +115,47 @@ OPENCLI_EXTERNAL_CATALOG: list[dict[str, Any]] = [
     },
 ]
 
+OPENCLI_AGENT_EXTENSION_CATALOG: list[dict[str, Any]] = [
+    {
+        "name": "ponytail",
+        "kind": "agent-ruleset",
+        "description": (
+            "Ponytail agent rules / skills package for lean coding behavior. "
+            "Install it into Codex, Claude Code, OpenClaw, Gemini, OpenCode, "
+            "or the target agent host; it is not an ACPX transport command."
+        ),
+        "homepage": "https://github.com/DietrichGebert/ponytail",
+        "tags": [
+            "ponytail",
+            "agent-rules",
+            "agent-skill",
+            "codex-plugin",
+            "claude-plugin",
+            "openclaw-skill",
+            "gemini-extension",
+        ],
+        "install": {
+            "codex": ["codex", "plugin", "marketplace", "add", "DietrichGebert/ponytail"],
+            "claude_code": [
+                "/plugin",
+                "marketplace",
+                "add",
+                "DietrichGebert/ponytail",
+            ],
+            "openclaw": ["clawhub", "install", "ponytail"],
+            "gemini": ["gemini", "extensions", "install", "https://github.com/DietrichGebert/ponytail"],
+        },
+        "commands": [
+            "/ponytail [lite|full|ultra|off]",
+            "/ponytail-review",
+            "/ponytail-audit",
+            "/ponytail-debt",
+            "/ponytail-gain",
+            "/ponytail-help",
+        ],
+    },
+]
+
 OPENCLI_BROWSER_CAPABILITIES: list[dict[str, Any]] = [
     {
         "name": "browser",
@@ -159,6 +200,20 @@ OPENCLI_BROWSER_CAPABILITIES: list[dict[str, Any]] = [
         "commands": ["bind", "state", "find", "extract", "network"],
         "example": ["browser", "outlook", "state"],
         "tags": ["outlook", "mail", "email", "browser"],
+    },
+    {
+        "name": "deepseek-plus-plus-browser",
+        "description": (
+            "Use browser primitives against an already logged-in DeepSeek++ Chrome "
+            "extension / chat.deepseek.com tab. Extension install and login stay "
+            "manual; ClawCross only exposes the browser bridge capability."
+        ),
+        "extension_id": "kdmpkkahkhdmdhfkdihkopikgcocbpbf",
+        "chrome_webstore": "https://chromewebstore.google.com/detail/deepseek++/kdmpkkahkhdmdhfkdihkopikgcocbpbf",
+        "domains": ["chat.deepseek.com"],
+        "commands": ["bind", "state", "find", "click", "type", "extract", "screenshot", "network", "unbind"],
+        "example": ["browser", "deepseek-plus-plus", "bind"],
+        "tags": ["deepseek", "deepseek++", "chrome-extension", "browser", "logged-in", "ai-agent"],
     },
 ]
 
@@ -470,6 +525,7 @@ def get_opencli_status(query: str = "") -> dict[str, Any]:
             external.append(enriched)
 
     browser = [dict(item) for item in OPENCLI_BROWSER_CAPABILITIES if _matches_query(item, query)]
+    agent_extensions = [dict(item) for item in OPENCLI_AGENT_EXTENSION_CATALOG if _matches_query(item, query)]
     payload: dict[str, Any] = {
         "ok": True,
         "opencli_installed": bool(opencli),
@@ -479,6 +535,7 @@ def get_opencli_status(query: str = "") -> dict[str, Any]:
         "capabilities": {
             "browser": browser,
             "external_clis": external,
+            "agent_extensions": agent_extensions,
         },
     }
     if not opencli:

@@ -33,6 +33,23 @@ class OpenCliBridgeTests(unittest.TestCase):
         browser_names = {item["name"] for item in mail["capabilities"]["browser"]}
         self.assertIn("gmail-browser", browser_names)
 
+    def test_status_exposes_agent_extension_and_deepseek_browser_capability(self):
+        with patch("harness.opencli_bridge.shutil.which", return_value=""):
+            ponytail = get_opencli_status(query="ponytail")
+            deepseek = get_opencli_status(query="deepseek++")
+
+        extension_names = {item["name"] for item in ponytail["capabilities"]["agent_extensions"]}
+        self.assertIn("ponytail", extension_names)
+        ponytail_item = ponytail["capabilities"]["agent_extensions"][0]
+        self.assertEqual(ponytail_item["kind"], "agent-ruleset")
+        self.assertIn("openclaw", ponytail_item["install"])
+
+        browser_names = {item["name"] for item in deepseek["capabilities"]["browser"]}
+        self.assertIn("deepseek-plus-plus-browser", browser_names)
+        deepseek_item = deepseek["capabilities"]["browser"][0]
+        self.assertEqual(deepseek_item["extension_id"], "kdmpkkahkhdmdhfkdihkopikgcocbpbf")
+        self.assertIn("chat.deepseek.com", deepseek_item["domains"])
+
     def test_run_uses_opencli_binary_without_shell_and_parses_json(self):
         class Completed:
             returncode = 0

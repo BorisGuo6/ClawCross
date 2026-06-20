@@ -2886,6 +2886,60 @@ def cmd_channel(args):
         print(output)
 
 
+def cmd_codegraph(args):
+    """CodeGraph code intelligence wrapper."""
+    from src.services.codegraph_service import (
+        callers_codegraph,
+        codegraph_doctor,
+        codegraph_status,
+        explore_codegraph,
+        format_codegraph_result,
+        init_codegraph,
+        node_codegraph,
+        search_codegraph,
+    )
+
+    action = args.action
+    value = getattr(args, "value", "") or ""
+    common = {
+        "project_path": args.path or "",
+        "timeout_seconds": args.timeout or 0,
+        "max_output_chars": args.max_chars or 0,
+    }
+
+    if action == "doctor":
+        result = codegraph_doctor(project_path=args.path or "")
+    elif action == "status":
+        result = codegraph_status(**common)
+    elif action == "init":
+        result = init_codegraph(**common)
+    elif action == "explore":
+        if not value:
+            print("❌ codegraph explore requires a query", file=sys.stderr)
+            return
+        result = explore_codegraph(value, **common)
+    elif action == "node":
+        if not value:
+            print("❌ codegraph node requires a symbol or file path", file=sys.stderr)
+            return
+        result = node_codegraph(value, offset=args.offset or 0, limit=args.limit or 0, **common)
+    elif action == "search":
+        if not value:
+            print("❌ codegraph search requires a query", file=sys.stderr)
+            return
+        result = search_codegraph(value, limit=args.limit or 20, **common)
+    elif action == "callers":
+        if not value:
+            print("❌ codegraph callers requires a symbol", file=sys.stderr)
+            return
+        result = callers_codegraph(value, limit=args.limit or 50, **common)
+    else:
+        print(f"❌ 未知操作: {action}", file=sys.stderr)
+        return
+
+    print(format_codegraph_result(result, as_json=args.json))
+
+
 def build_parser():
     """构建命令行参数解析器"""
     p = argparse.ArgumentParser(
@@ -3148,6 +3202,23 @@ def build_parser():
     c.add_argument("--timeout-seconds", type=int, default=60, help="远端执行超时秒数")
     c.add_argument("opencli_args", nargs=argparse.REMAINDER, help="wx 参数，必要时在前面加 --")
 
+    # codegraph
+    c = sub.add_parser("codegraph", help="CodeGraph 本地代码智能")
+    c.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["doctor", "status", "init", "explore", "node", "search", "callers"],
+        help="操作 (默认: status)",
+    )
+    c.add_argument("value", nargs="?", help="query / symbol / file path")
+    c.add_argument("--path", default="", help="repo 路径；默认当前工作目录")
+    c.add_argument("--json", action="store_true", help="输出 JSON payload")
+    c.add_argument("--timeout", type=int, default=0, help="覆盖 CODEGRAPH_TIMEOUT")
+    c.add_argument("--max-chars", type=int, default=0, help="覆盖 CODEGRAPH_MAX_OUTPUT_CHARS")
+    c.add_argument("--offset", type=int, default=0, help="node 文件读取起始行")
+    c.add_argument("--limit", type=int, default=0, help="node/search/callers 返回限制")
+
     # status
     sub.add_parser("status", help="检查各服务状态")
 
@@ -3212,6 +3283,7 @@ def main():
         "opencli-status": cmd_opencli_status,
         "opencli": cmd_opencli_run,
         "wx": cmd_opencli_run,
+        "codegraph": cmd_codegraph,
         "token": cmd_token,
         "status": cmd_status,
     }

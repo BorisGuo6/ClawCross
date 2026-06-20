@@ -4,6 +4,7 @@ description: "A multi-agent orchestration platform with visual workflow (OASIS).
 user-invokable: true
 compatibility:
   - "deepseek"
+  - "deepseek++"
   - "openai"
   - "gemini"
   - "claude"
@@ -11,6 +12,7 @@ compatibility:
   - "ollama"
   - "antigravity"
   - "minimax"
+  - "ponytail"
 
 argument-hint: "[RECOMMENDED] LLM_API_KEY, LLM_BASE_URL (auto-detected from OpenClaw/Antigravity, or configured via frontend wizard on first login). [MODEL] If LLM_MODEL is not provided, the frontend setup wizard will auto-detect available models. [OPTIONAL] TTS_MODEL/TTS_VOICE, STT_MODEL/WHISPER_MODEL, OPENCLAW_*, TINYFISH_*, TELEGRAM_BOT_TOKEN/QQ_APP_ID, PORT_*. [TUNNEL] Cloudflare Tunnel starts automatically with 'start' command for mobile access; PUBLIC_DOMAIN is set by tunnel.py."
 
@@ -54,6 +56,13 @@ Use the default Matt Pocock triage label vocabulary. See `docs/agents/triage-lab
 ### Domain docs
 
 This repo uses a single-context domain document at `CONTEXT.md`; architectural decisions belong in `docs/adr/`. See `docs/agents/domain.md`.
+
+### CodeGraph
+
+CodeGraph is optional. In repos with a `.codegraph/` directory, prefer the
+CodeGraph MCP/CLI tools for code exploration before grep/read. Never run
+`codegraph init` unless the user explicitly asks to initialize an index. See
+`docs/codegraph.md`.
 
 ## Progressive Disclosure
 

@@ -64,8 +64,9 @@ uv run scripts/cli.py [-u USER] <子命令> [参数...]
 23. [opencli-status](#23-opencli-status) — 查看私有 CLI 能力状态
 24. [opencli](#24-opencli) — 转发 OpenCLI 命令
 25. [wx](#25-wx) — 直接运行 wx CLI
-26. [token](#26-token) — Token 生成与验证
-27. [status](#27-status) — 服务状态检查
+26. [codegraph](#26-codegraph) — CodeGraph 本地代码智能
+27. [token](#27-token) — Token 生成与验证
+28. [status](#28-status) — 服务状态检查
 
 ---
 
@@ -850,6 +851,8 @@ uv run scripts/cli.py tunnel stop
 ```bash
 uv run scripts/cli.py opencli-status
 uv run scripts/cli.py opencli-status --query wx
+uv run scripts/cli.py opencli-status --query ponytail
+uv run scripts/cli.py opencli-status --query deepseek
 ```
 
 | 参数 | 说明 | 必填 | 默认值 |
@@ -865,6 +868,8 @@ uv run scripts/cli.py opencli-status --query wx
 ```bash
 uv run scripts/cli.py opencli -- docker ps
 uv run scripts/cli.py opencli -- wx history 文件传输助手 --json
+uv run scripts/cli.py opencli -- browser deepseek-plus-plus bind
+uv run scripts/cli.py opencli -- browser deepseek-plus-plus state
 ```
 
 | 参数 | 说明 | 必填 | 默认值 |
@@ -874,6 +879,11 @@ uv run scripts/cli.py opencli -- wx history 文件传输助手 --json
 | `--max-output-chars` | stdout/stderr 最大返回字符数 | 否 | `20000` |
 | `--timeout-seconds` | 远端执行超时秒数 | 否 | `60` |
 | `opencli_args` | 要转发的 OpenCLI 参数；若参数本身包含 `--foo`，建议先写一个 `--` 分隔符 | 是 | — |
+
+能力边界：
+
+- Ponytail 是 agent rules / skills 包，不是 OpenCLI 或 ACPX transport。用 `opencli-status --query ponytail` 查看 Codex / Claude Code / OpenClaw / Gemini 的安装提示；实际安装在目标 agent 宿主里完成。
+- DeepSeek++ 是 Chrome 扩展能力。先在本机 Chrome 安装扩展并登录 `chat.deepseek.com`，再用 `browser deepseek-plus-plus ...` 通过 OpenCLI Browser Bridge 读取或操作页面。
 
 ---
 
@@ -899,7 +909,38 @@ PYTHONPATH=src .venv/bin/python scripts/wx_guarded.py --health
 
 ---
 
-## 26. token
+## 26. codegraph
+
+**包装官方 CodeGraph CLI，给 indexed repo 提供本地代码智能。**
+
+ClawCross 不会自动安装 CodeGraph，也不会自动创建索引。只有 `init` 会写 `.codegraph/`：
+
+```bash
+uv run scripts/cli.py codegraph doctor --path /path/to/repo
+uv run scripts/cli.py codegraph init --path /path/to/repo
+uv run scripts/cli.py codegraph status --path /path/to/repo
+uv run scripts/cli.py codegraph explore "How does session routing work?" --path /path/to/repo
+uv run scripts/cli.py codegraph node src/core/agent.py --path /path/to/repo
+uv run scripts/cli.py codegraph search AgentRuntime --path /path/to/repo
+uv run scripts/cli.py codegraph callers build_parser --path /path/to/repo
+```
+
+常用参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--path` | repo 路径 | 当前工作目录 |
+| `--json` | 输出 JSON payload | false |
+| `--timeout` | 覆盖 `CODEGRAPH_TIMEOUT` | 环境变量或 60 |
+| `--max-chars` | 覆盖 `CODEGRAPH_MAX_OUTPUT_CHARS` | 环境变量或 50000 |
+| `--limit` | `node/search/callers` 返回限制 | 命令默认 |
+| `--offset` | `node` 文件读取起始行 | 0 |
+
+未安装 CodeGraph 或 repo 未初始化时，命令会返回 inactive guidance，不会自动索引。
+
+---
+
+## 27. token
 
 **Token 生成与验证**
 
@@ -934,7 +975,7 @@ uv run scripts/cli.py token decode --token "xxx"
 
 ---
 
-## 27. status
+## 28. status
 
 **检查各服务状态**
 

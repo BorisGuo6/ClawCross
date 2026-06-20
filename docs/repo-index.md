@@ -62,6 +62,7 @@ These are the main services Clawcross runs:
 | `src/services/team_creator_service.py` | ClawCross Creator discovery, extraction, build, jobs, and translation pipeline |
 | `src/services/tinyfish_monitor_service.py` | shared TinyFish monitor runtime used by frontend, scheduler, and CLI |
 | `src/services/arxiv_collision_service.py` | daily arXiv Robotics paper-vs-dashboard collision monitor used by scheduler and CLI |
+| `src/services/codegraph_service.py` | optional wrapper around the official CodeGraph CLI for indexed repo code intelligence |
 | `oasis/server.py` | OASIS service |
 | `scripts/launcher.py` | multi-service startup order |
 
@@ -177,6 +178,7 @@ For tool execution or tool exposure:
 - `src/mcp_servers/oasis.py`
 - `src/mcp_servers/scheduler.py`
 - `src/mcp_servers/search.py`
+- `src/mcp_servers/codegraph.py`
 - `src/mcp_servers/session.py`
 - `src/mcp_servers/webot.py`
 - `src/mcp_servers/telegram.py`
@@ -207,6 +209,9 @@ For external AI agent communication via the Agent Client Protocol:
 | `docs/remote-acpx-harness.md` | Remote ACPX layout, runtime flags, and troubleshooting |
 
 Known ACP tools (external AI agents): `openclaw`, `codex`, `claude`, `gemini`, `aider`.
+Ponytail is an agent rules / skills package installed into those host agents,
+not an ACP tool. DeepSeek++ is a Chrome extension surfaced through the OpenCLI
+Browser Bridge, not an ACP tool.
 
 `acpx` is auto-installed during `bash selfskill/scripts/run.sh setup`. If missing, group chat ACP broadcasting and OASIS ExternalExpert ACP mode will be unavailable.
 

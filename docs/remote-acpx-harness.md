@@ -75,6 +75,35 @@ CLAWCROSS_REMOTE_ACPX_ENV=~/.clawcross/remote_acpx.env
 
 Set `CLAWCROSS_REMOTE_AGENT_TRANSPORT=acpx` to hide old Claude daemon sessions.
 
+## Agent Extensions
+
+Ponytail is supported as an agent rules / skills package, not as an ACPX
+transport. Do not set `CLAWCROSS_REMOTE_ACPX_TOOLS=ponytail`; install Ponytail
+inside the underlying agent host instead, then keep using the normal ACPX tool
+name such as `codex`, `claude`, `gemini`, or `openclaw`.
+
+Common install routes:
+
+```bash
+codex plugin marketplace add DietrichGebert/ponytail
+clawhub install ponytail
+gemini extensions install https://github.com/DietrichGebert/ponytail
+```
+
+ClawCross exposes Ponytail install metadata through:
+
+```bash
+uv run scripts/cli.py opencli-status --query ponytail
+```
+
+DeepSeek++ is a Chrome extension / logged-in browser surface. Keep it on the
+OpenCLI Browser Bridge path instead of ACPX:
+
+```bash
+uv run scripts/cli.py opencli-status --query deepseek
+uv run scripts/cli.py opencli -- browser deepseek-plus-plus bind
+```
+
 ## API Behavior
 
 Existing front-end endpoints continue to work:

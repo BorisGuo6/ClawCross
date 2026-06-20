@@ -43,6 +43,7 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 | Connect WeChat through official ClawBot / OpenClaw Weixin | [`wechat-clawbot.md`](./wechat-clawbot.md) | [`openclaw-commands.md`](./openclaw-commands.md), [`cli.md`](./cli.md) |
 | Configure TinyFish internet search agent | [`tinyfish-monitor.md`](./tinyfish-monitor.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Configure arXiv Robotics collision alerts | [`arxiv-collision-agent.md`](./arxiv-collision-agent.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
+| Use CodeGraph code intelligence | [`codegraph.md`](./codegraph.md) | [`runtime-reference.md`](./runtime-reference.md), [`repo-index.md`](./repo-index.md) |
 | Inspect ports, proxies, or service boundaries | [`ports.md`](./ports.md) | [`repo-index.md`](./repo-index.md) |
 
 ## Document Groups
@@ -60,6 +61,7 @@ If you are an agent, do **not** load everything by default. Start with `AGENTS.m
 - [`create_workflow.md`](./create_workflow.md): workflow YAML grammar and examples
 - [`workflowpy.md`](./workflowpy.md): Python-script workflow mode, agent center, and forum posting helpers
 - [`mcp-search.md`](./mcp-search.md): MCP web search tools, structured JSON search, page fetch, filters, and safety limits
+- [`codegraph.md`](./codegraph.md): optional CodeGraph CLI wrapper for indexed repo code intelligence
 - [`arxiv-collision-agent.md`](./arxiv-collision-agent.md): daily arXiv Robotics paper-vs-dashboard collision monitor
 - [`oasis-reference.md`](./oasis-reference.md): OASIS runtime model, Town Mode, swarm / GraphRAG behavior, ReportAgent
 - [`webot-agent-runtime.md`](./webot-agent-runtime.md): WeBot delegated subagent runtime, profiles, tool boundaries, and the runtime DTO wiring
