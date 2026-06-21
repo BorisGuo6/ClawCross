@@ -1811,8 +1811,10 @@ const TEXT_EXTENSIONS = new Set([
 const AUDIO_EXTENSIONS = new Set(['.mp3','.wav','.ogg','.m4a','.flac','.aac','.opus','.aiff','.amr']);
 // 注意：.webm 既可能是音频也可能是视频；分流时以 MIME 为准（见 handleFileSelect）
 const VIDEO_EXTENSIONS = new Set(['.avi','.mp4','.mkv','.mov','.webm','.wmv','.flv','.m4v','.3gp','.ogv']);
+const DOCUMENT_EXTENSIONS = new Set(['.docx','.pptx','.xlsx','.xls','.msg','.epub']);
 const MAX_FILE_SIZE = 512 * 1024; // 512KB per text file
 const MAX_PDF_SIZE = 10 * 1024 * 1024; // 10MB per PDF
+const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024; // 10MB per rich document converted by MarkItDown
 const MAX_AUDIO_SIZE = 25 * 1024 * 1024; // 25MB per audio
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB per video
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 压缩目标：10MB
@@ -1857,6 +1859,7 @@ function handleFileSelect(event) {
         const isVideo = mime.startsWith('video/') || (!mime && VIDEO_EXTENSIONS.has(ext));
         const isAudio = (!isVideo) && (mime.startsWith('audio/') || (!mime && AUDIO_EXTENSIONS.has(ext)));
         const isPdf = mime === 'application/pdf' || ext === '.pdf';
+        const isDocument = DOCUMENT_EXTENSIONS.has(ext);
         if (isImage) {
             if (pendingImages.length >= 5) { alert(t('max_images')); break; }
             if (file.size <= MAX_IMAGE_SIZE) {
@@ -1897,6 +1900,15 @@ function handleFileSelect(event) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 pendingFiles.push({ name: file.name, content: e.target.result, type: 'pdf' });
+                renderFilePreviews();
+            };
+            reader.readAsDataURL(file);
+        } else if (isDocument) {
+            if (file.size > MAX_DOCUMENT_SIZE) { alert(`${file.name}: ${t('file_too_large')} (${(file.size/1024/1024).toFixed(1)}MB)`); continue; }
+            if (pendingFiles.length >= 3) { alert(t('max_files')); break; }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                pendingFiles.push({ name: file.name, content: e.target.result, type: 'document' });
                 renderFilePreviews();
             };
             reader.readAsDataURL(file);

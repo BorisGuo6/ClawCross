@@ -3,6 +3,10 @@ import os
 
 from langchain_core.messages import HumanMessage
 
+from services.markitdown_preprocessor import (
+    convert_uploaded_attachment_to_markdown,
+    decode_attachment_text,
+)
 from utils.api_patch import build_audio_part
 
 
@@ -91,10 +95,16 @@ def build_human_message(
             file_name = file_info.get("name", "未知文件")
             file_type = file_info.get("type", "text")
             file_content = file_info.get("content", "")
+            mime_type = file_info.get("mime_type", "")
 
             if file_type == "pdf":
+                converted = convert_uploaded_attachment_to_markdown(
+                    name=file_name,
+                    content=file_content,
+                    mime_type=mime_type or "application/pdf",
+                )
+                pdf_text = converted.markdown if converted.ok and converted.markdown else _extract_pdf_text(file_content)
                 if vision_supported:
-                    pdf_text = _extract_pdf_text(file_content)
                     if len(pdf_text) > 50000:
                         pdf_text = pdf_text[:50000] + "\n\n... (文件过长，已截断)"
                     pdf_data_uri = file_content if file_content.startswith("data:") else f"data:application/pdf;base64,{file_content}"
@@ -105,12 +115,11 @@ def build_human_message(
                             "file_data": pdf_data_uri,
                         },
                     })
-                    file_parts.append(f"📄 **附件: {file_name}** (已上传原始 PDF 供分析，同时附上提取的文本)\n```\n{pdf_text}\n```")
+                    file_parts.append(f"📄 **附件: {file_name}** (已上传原始 PDF 供分析，同时附上 Markdown/文本预处理结果)\n```markdown\n{pdf_text}\n```")
                 else:
-                    pdf_text = _extract_pdf_text(file_content)
                     if len(pdf_text) > 50000:
                         pdf_text = pdf_text[:50000] + "\n\n... (文件过长，已截断)"
-                    file_parts.append(f"📄 **附件: {file_name}**\n```\n{pdf_text}\n```")
+                    file_parts.append(f"📄 **附件: {file_name}**\n```markdown\n{pdf_text}\n```")
             elif file_type == "media":
                 ext = os.path.splitext(file_name)[1].lower()
                 mime = media_mime.get(ext, "application/octet-stream")
@@ -124,10 +133,19 @@ def build_human_message(
                 })
                 file_parts.append(f"🎬 **附件: {file_name}** (已上传原始媒体文件供分析)")
             else:
-                if len(file_content) > 50000:
-                    full_len = len(file_info.get("content", ""))
-                    file_content = file_content[:50000] + f"\n\n... (文件过长，已截断，共 {full_len} 字符)"
-                file_parts.append(f"📄 **附件: {file_name}**\n```\n{file_content}\n```")
+                converted = convert_uploaded_attachment_to_markdown(
+                    name=file_name,
+                    content=file_content,
+                    mime_type=mime_type,
+                )
+                normalized_content = converted.markdown if converted.ok and converted.markdown else None
+                if normalized_content is None:
+                    normalized_content = decode_attachment_text(file_content) or str(file_content)
+                if len(normalized_content) > 50000:
+                    full_len = len(normalized_content)
+                    normalized_content = normalized_content[:50000] + f"\n\n... (文件过长，已截断，共 {full_len} 字符)"
+                label = "Markdown 预处理" if converted.source == "markitdown" else "文本预处理"
+                file_parts.append(f"📄 **附件: {file_name}** ({label})\n```markdown\n{normalized_content}\n```")
 
         if file_parts:
             file_text = "\n\n" + "\n\n".join(file_parts)

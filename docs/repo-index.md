@@ -63,6 +63,9 @@ These are the main services Clawcross runs:
 | `src/services/tinyfish_monitor_service.py` | shared TinyFish monitor runtime used by frontend, scheduler, and CLI |
 | `src/services/arxiv_collision_service.py` | daily arXiv Robotics paper-vs-dashboard collision monitor used by scheduler and CLI |
 | `src/services/codegraph_service.py` | optional wrapper around the official CodeGraph CLI for indexed repo code intelligence |
+| `src/services/presentation_skill_service.py` | curated AI PPT / slide-deck skill catalog, scaffold builder, and managed skill installer |
+| `src/services/ideacheck_service.py` | optional wrapper around the official `weathon/ideacheck` CLI for alphaXiv prior-art / idea novelty reports |
+| `src/services/markitdown_preprocessor.py` | optional Microsoft MarkItDown preprocessing for uploaded file attachments and binary `read_file` output |
 | `oasis/server.py` | OASIS service |
 | `scripts/launcher.py` | multi-service startup order |
 
@@ -179,6 +182,8 @@ For tool execution or tool exposure:
 - `src/mcp_servers/scheduler.py`
 - `src/mcp_servers/search.py`
 - `src/mcp_servers/codegraph.py`
+- `src/mcp_servers/presentation.py`
+- `src/mcp_servers/ideacheck.py`
 - `src/mcp_servers/session.py`
 - `src/mcp_servers/webot.py`
 - `src/mcp_servers/telegram.py`
@@ -278,6 +283,11 @@ When changing code, check the nearest validation surface:
 | `test/test_team_creator_imports.py` | ClawCross Creator colleague/mentor import and quick-create route tests |
 | `test/test_skill_evolution.py` | self-evolution strategy, validation-report, and repo-skill update tests |
 | `test/test_skill_import_tools.py` | ArXiv / Feishu helper conversion tests |
+| `test/test_codegraph_service.py` | optional CodeGraph CLI wrapper tests |
+| `test/test_presentation_skill_service.py` | AI PPT / slide-deck skill catalog and managed-skill tests |
+| `test/test_ideacheck_service.py` | optional `weathon/ideacheck` CLI wrapper, MCP, and CLI smoke tests |
+| `test/test_markitdown_preprocessor.py` | uploaded-file Markdown preprocessing tests with a fake MarkItDown module |
+| `test/test_message_builder_markitdown.py` | main-chat file attachment normalization tests |
 | `test/test_team_creator_workflow.py` | ClawCross Creator workflow/build tests |
 | `test/test_team_creator_zip.py` | ClawCross Creator ZIP export tests |
 | `test/test_proxy_login_i18n.py` | frontend i18n and login proxy coverage |

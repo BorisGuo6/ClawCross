@@ -99,6 +99,9 @@ Read only the docs relevant to the current task:
 | OpenClaw integration | [`docs/openclaw-commands.md`](./docs/openclaw-commands.md) | [`docs/build_team.md`](./docs/build_team.md) |
 | ACP / acpx | [`docs/runtime-reference.md`](./docs/runtime-reference.md) | [`docs/oasis-reference.md`](./docs/oasis-reference.md) |
 | TinyFish internet search | [`docs/tinyfish-monitor.md`](./docs/tinyfish-monitor.md) | [`docs/runtime-reference.md`](./docs/runtime-reference.md) |
+| Uploaded files / MarkItDown preprocessing | [`docs/upload-file-preprocessing.md`](./docs/upload-file-preprocessing.md) | [`docs/cli.md`](./docs/cli.md), [`docs/repo-index.md`](./docs/repo-index.md) |
+| AI PPT / slide-deck skill workflows | [`docs/presentation-skills.md`](./docs/presentation-skills.md) | [`docs/cli.md`](./docs/cli.md) |
+| IdeaCheck / alphaXiv prior-art / idea novelty checks | [`docs/ideacheck.md`](./docs/ideacheck.md) | [`docs/cli.md`](./docs/cli.md), [`docs/repo-index.md`](./docs/repo-index.md) |
 | Debug ports / proxies | [`docs/ports.md`](./docs/ports.md) | [`docs/repo-index.md`](./docs/repo-index.md) |
 
 ## Repository Indexing

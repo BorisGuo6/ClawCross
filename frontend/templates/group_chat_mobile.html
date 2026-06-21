@@ -4992,7 +4992,7 @@
           </button>
         </div>
       </div>
-      <input type="file" id="attach-file-input" multiple accept="image/*,.pdf,.txt,.md,.markdown,.rst,.adoc,.org,.tex,.bib,.csv,.tsv,.json,.ndjson,.jsonl,.xml,.yaml,.yml,.toml,.ini,.cfg,.conf,.properties,.env,.log,.html,.htm,.css,.scss,.sass,.less,.styl,.js,.mjs,.cjs,.ts,.tsx,.jsx,.vue,.svelte,.astro,.py,.pyi,.pyx,.ipynb,.rb,.gemspec,.php,.go,.rs,.java,.kt,.kts,.scala,.groovy,.gradle,.c,.h,.cpp,.cc,.cxx,.hpp,.hh,.hxx,.m,.mm,.cs,.fs,.fsx,.fsi,.vb,.swift,.dart,.lua,.pl,.pm,.tcl,.r,.jl,.nim,.zig,.cr,.ex,.exs,.erl,.hrl,.elm,.clj,.cljs,.cljc,.hs,.ml,.mli,.ocaml,.sh,.bash,.zsh,.fish,.bat,.cmd,.ps1,.psm1,.awk,.sed,.dockerfile,.makefile,.mk,.cmake,.bazel,.bzl,.sbt,.sql,.prisma,.graphql,.gql,.proto,.thrift,.tf,.hcl,.nomad,.j2,.jinja,.jinja2,.ejs,.hbs,.mustache,.twig,.liquid,.njk,.editorconfig,.gitignore,.gitattributes,.prettierrc,.eslintrc,.npmrc,.babelrc,.lock,.sum,.mod,.mp3,.wav,.ogg,.m4a,.flac,.aac,.opus,.aiff,.amr,.avi,.mp4,.mkv,.mov,.webm,.wmv,.flv,.m4v,.3gp,.ogv" style="display:none" onchange="handleAttachFiles(this.files)">
+      <input type="file" id="attach-file-input" multiple accept="image/*,.pdf,.docx,.pptx,.xlsx,.xls,.msg,.epub,.txt,.md,.markdown,.rst,.adoc,.org,.tex,.bib,.csv,.tsv,.json,.ndjson,.jsonl,.xml,.yaml,.yml,.toml,.ini,.cfg,.conf,.properties,.env,.log,.html,.htm,.css,.scss,.sass,.less,.styl,.js,.mjs,.cjs,.ts,.tsx,.jsx,.vue,.svelte,.astro,.py,.pyi,.pyx,.ipynb,.rb,.gemspec,.php,.go,.rs,.java,.kt,.kts,.scala,.groovy,.gradle,.c,.h,.cpp,.cc,.cxx,.hpp,.hh,.hxx,.m,.mm,.cs,.fs,.fsx,.fsi,.vb,.swift,.dart,.lua,.pl,.pm,.tcl,.r,.jl,.nim,.zig,.cr,.ex,.exs,.erl,.hrl,.elm,.clj,.cljs,.cljc,.hs,.ml,.mli,.ocaml,.sh,.bash,.zsh,.fish,.bat,.cmd,.ps1,.psm1,.awk,.sed,.dockerfile,.makefile,.mk,.cmake,.bazel,.bzl,.sbt,.sql,.prisma,.graphql,.gql,.proto,.thrift,.tf,.hcl,.nomad,.j2,.jinja,.jinja2,.ejs,.hbs,.mustache,.twig,.liquid,.njk,.editorconfig,.gitignore,.gitattributes,.prettierrc,.eslintrc,.npmrc,.babelrc,.lock,.sum,.mod,.mp3,.wav,.ogg,.m4a,.flac,.aac,.opus,.aiff,.amr,.avi,.mp4,.mkv,.mov,.webm,.wmv,.flv,.m4v,.3gp,.ogv" style="display:none" onchange="handleAttachFiles(this.files)">
       <textarea id="msg-input" data-i18n="input_placeholder" placeholder="输入消息…" rows="1"
                 onkeydown="handleInputKey(event)"
                 oninput="handleInputForMention()"></textarea>
@@ -11426,10 +11426,12 @@ const MC_TEXT_EXTENSIONS = new Set([
 ]);
 const MC_AUDIO_EXTENSIONS = new Set(['.mp3','.wav','.ogg','.m4a','.flac','.aac','.opus','.aiff','.amr']);
 const MC_VIDEO_EXTENSIONS = new Set(['.avi','.mp4','.mkv','.mov','.webm','.wmv','.flv','.m4v','.3gp','.ogv']);
+const MC_DOCUMENT_EXTENSIONS = new Set(['.docx','.pptx','.xlsx','.xls','.msg','.epub']);
 
 // 各品类大小阈值（对齐主页面）
 const MC_MAX_FILE_SIZE = 512 * 1024;          // 512KB per text
 const MC_MAX_PDF_SIZE = 10 * 1024 * 1024;     // 10MB per PDF
+const MC_MAX_DOCUMENT_SIZE = 10 * 1024 * 1024; // 10MB per rich document
 const MC_MAX_VIDEO_SIZE = 50 * 1024 * 1024;   // 50MB per video
 // 注意：录音专用上限 MC_MAX_AUDIO_SIZE 在录音功能段（25MB）
 const MC_MAX_IMAGE_SIZE = 10 * 1024 * 1024;   // 图片压缩目标 10MB
@@ -11451,6 +11453,12 @@ const _extMimeMap = {
   'ini': 'text/plain', 'cfg': 'text/plain', 'conf': 'text/plain',
   'env': 'text/plain', 'properties': 'text/plain',
   'pdf': 'application/pdf',
+  'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'xls': 'application/vnd.ms-excel',
+  'msg': 'application/vnd.ms-outlook',
+  'epub': 'application/epub+zip',
 };
 
 // 图片压缩（行为对齐 main.js compressImage）：返回 dataURL
@@ -11506,6 +11514,7 @@ function handleAttachFiles(files) {
     const isVideo = mime.startsWith('video/') || (!file.type && MC_VIDEO_EXTENSIONS.has(ext));
     const isAudio = (!isVideo) && (mime.startsWith('audio/') || (!file.type && MC_AUDIO_EXTENSIONS.has(ext)));
     const isPdf = mime === 'application/pdf' || ext === '.pdf';
+    const isDocument = MC_DOCUMENT_EXTENSIONS.has(ext);
 
     if (isImage) {
       if (_mcCountByType('image') >= MC_MAX_IMAGES) { toast(t('max_images')); return; }
@@ -11565,6 +11574,21 @@ function handleAttachFiles(files) {
           type: 'file', name: file.name,
           data: _mcStripDataUrl(reader.result),
           mime_type: 'application/pdf',
+        });
+        renderAttachPreview();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    if (isDocument) {
+      if (file.size > MC_MAX_DOCUMENT_SIZE) { toast(`${file.name}: ${t('file_too_large')} (${(file.size/1024/1024).toFixed(1)}MB)`); return; }
+      if (_mcCountByType('file') >= MC_MAX_FILES) { toast(t('max_files')); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingAttachments.push({
+          type: 'file', name: file.name,
+          data: _mcStripDataUrl(reader.result),
+          mime_type: mime || 'application/octet-stream',
         });
         renderAttachPreview();
       };

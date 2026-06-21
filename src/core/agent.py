@@ -1186,6 +1186,16 @@ class TeamAgent:
                 "args": [os.path.join(self._src_dir, "mcp_servers", "codegraph.py")],
                 "transport": "stdio",
             },
+            "presentation_skill_service": {
+                "command": python_command,
+                "args": [os.path.join(self._src_dir, "mcp_servers", "presentation.py")],
+                "transport": "stdio",
+            },
+            "ideacheck_service": {
+                "command": python_command,
+                "args": [os.path.join(self._src_dir, "mcp_servers", "ideacheck.py")],
+                "transport": "stdio",
+            },
         })
 
         # 3. Fetch tool definitions (new API: no context manager needed)
@@ -1198,6 +1208,8 @@ class TeamAgent:
             "read_file", "write_file", "list_files", "run_command",
             "search_files", "run_python_code", "list_images", "attach_image_to_context",
             "lsp", "workspace_diagnostics", "codegraph_status", "codegraph_explore", "codegraph_node",
+            "presentation_skill_catalog", "presentation_skill_scaffold",
+            "ideacheck_status", "ideacheck_check",
         })
 
         # 4. Build LangGraph workflow

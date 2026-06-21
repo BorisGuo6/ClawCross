@@ -77,6 +77,7 @@ from services.team_snapshot_skills import (
     add_user_skills_to_zip,
     restore_skills_from_team_dir,
 )
+from services.markitdown_preprocessor import convert_uploaded_attachment_to_markdown
 
 # 加载 .env 配置
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -3562,14 +3563,22 @@ def _acpx_prompt_and_attachments_from_openai_messages(messages: list) -> tuple[s
                         mime, b64 = _parse_openai_data_uri(raw_fd)
                     else:
                         mime, b64 = "application/octet-stream", raw_fd
-                    if b64 and mime and _acpx_is_text_mime(mime):
-                        decoded = _acpx_decode_b64_utf8(b64)
-                        if decoded is not None:
-                            text_bits.append(f"\n📄 附件「{name}」内容:\n```\n{decoded}\n```")
+                    if b64:
+                        converted = convert_uploaded_attachment_to_markdown(
+                            name=name,
+                            content=b64,
+                            mime_type=mime or "",
+                        )
+                        if converted.ok and converted.markdown:
+                            text_bits.append(f"\n📄 附件「{name}」Markdown 预处理结果:\n```markdown\n{converted.markdown}\n```")
+                        elif mime and _acpx_is_text_mime(mime):
+                            decoded = _acpx_decode_b64_utf8(b64)
+                            if decoded is not None:
+                                text_bits.append(f"\n📄 附件「{name}」内容:\n```\n{decoded}\n```")
+                            else:
+                                text_bits.append(f"[附件: {name} ({mime}), 解码失败]")
                         else:
-                            text_bits.append(f"[附件: {name} ({mime}), 解码失败]")
-                    elif b64:
-                        text_bits.append(f"[附件: {name} ({mime or 'unknown'}), 二进制文件无法随 ACP 发送]")
+                            text_bits.append(f"[附件: {name} ({mime or 'unknown'}), 二进制文件无法随 ACP 发送]")
             merged = "\n".join(x for x in text_bits if x).strip()
             if merged:
                 blocks.append(f"[{role}]\n{merged}")

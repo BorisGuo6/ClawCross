@@ -9,6 +9,7 @@ import hashlib
 import tempfile
 from mcp.server.fastmcp import FastMCP
 
+from services.markitdown_preprocessor import convert_local_file_to_markdown
 from webot.workspace import resolve_session_workspace
 
 mcp = FastMCP("FileManager")
@@ -202,10 +203,19 @@ async def read_file(
         preview = _read_binary_preview(file_path)
         sha_text = f"\n🔐 sha256: {_file_sha256(file_path)}" if include_sha256 else ""
         if _is_binary_preview(preview):
+            converted = convert_local_file_to_markdown(file_path)
+            if converted.ok and converted.markdown:
+                return (
+                    f"📄 文件 '{filename}' 是二进制/富文档，已通过 MarkItDown 预处理为 Markdown：\n"
+                    f"📦 大小: {_format_size(size)}{sha_text}\n"
+                    f"🧩 mime: {converted.mime_type}\n"
+                    f"📏 returned_chars: {len(converted.markdown)}\n\n"
+                    f"{converted.markdown}"
+                )
             return (
                 f"📄 文件 '{filename}' 是二进制文件。\n"
                 f"📦 大小: {_format_size(size)}{sha_text}\n"
-                "建议只读取元信息，或改用专门的二进制处理工具。"
+                "建议只读取元信息，或安装/启用 MarkItDown 后重试。"
             )
 
         if size == 0:

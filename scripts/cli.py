@@ -2940,6 +2940,80 @@ def cmd_codegraph(args):
     print(format_codegraph_result(result, as_json=args.json))
 
 
+def cmd_presentation_skill(args):
+    """Curated AI presentation skill helpers."""
+    from src.services.presentation_skill_service import (
+        build_presentation_scaffold,
+        format_presentation_result,
+        install_presentation_skill,
+        presentation_skill_catalog,
+    )
+
+    action = args.action
+    if action == "catalog":
+        result = presentation_skill_catalog()
+    elif action == "scaffold":
+        result = build_presentation_scaffold(
+            args.topic or "",
+            audience=args.audience or "",
+            format=args.format or "html",
+            sources=args.sources or "",
+            style=args.style or "",
+            constraints=args.constraints or "",
+        )
+    elif action == "install":
+        result = install_presentation_skill(
+            args.user or DEFAULT_USER,
+            team=args.team or "",
+            name=args.name or "ai-presentation-maker",
+            overwrite=bool(args.overwrite),
+        )
+    else:
+        print(f"❌ 未知操作: {action}", file=sys.stderr)
+        return
+
+    print(format_presentation_result(result, as_json=args.json))
+
+
+def cmd_ideacheck(args):
+    """weathon/ideacheck prior-art novelty checker wrapper."""
+    from src.services.ideacheck_service import (
+        build_ideacheck_serve_command,
+        format_ideacheck_result,
+        ideacheck_doctor,
+        run_ideacheck_check,
+    )
+
+    action = args.action
+    if action in {"doctor", "status"}:
+        result = ideacheck_doctor(out_dir=args.out_dir or "")
+    elif action == "check":
+        result = run_ideacheck_check(
+            args.idea or "",
+            idea_file=args.idea_file or "",
+            out_dir=args.out_dir or "",
+            before=args.before or "",
+            backend=args.backend or "claude",
+            base_url=args.base_url or "",
+            model=args.model or "",
+            api_key=args.api_key or "",
+            open_report=bool(args.open),
+            timeout_seconds=args.timeout or 0,
+            max_output_chars=args.max_chars or 0,
+        )
+    elif action == "serve-command":
+        result = build_ideacheck_serve_command(
+            host=args.host or "127.0.0.1",
+            port=args.port or 8000,
+            out_dir=args.out_dir or "",
+        )
+    else:
+        print(f"❌ 未知操作: {action}", file=sys.stderr)
+        return
+
+    print(format_ideacheck_result(result, as_json=args.json))
+
+
 def build_parser():
     """构建命令行参数解析器"""
     p = argparse.ArgumentParser(
@@ -3219,6 +3293,55 @@ def build_parser():
     c.add_argument("--offset", type=int, default=0, help="node 文件读取起始行")
     c.add_argument("--limit", type=int, default=0, help="node/search/callers 返回限制")
 
+    # presentation-skill
+    c = sub.add_parser("presentation-skill", help="AI PPT / slide skill catalog and managed skill installer")
+    c.add_argument(
+        "action",
+        nargs="?",
+        default="catalog",
+        choices=["catalog", "scaffold", "install"],
+        help="操作 (默认: catalog)",
+    )
+    c.add_argument("--json", action="store_true", help="输出 JSON payload")
+    c.add_argument("--topic", default="", help="scaffold: deck topic")
+    c.add_argument("--audience", default="", help="scaffold: target audience")
+    c.add_argument(
+        "--format",
+        default="html",
+        choices=["html", "pptx", "images", "research-pack", "motion"],
+        help="scaffold: target artifact route",
+    )
+    c.add_argument("--sources", default="", help="scaffold: URLs/files/notes")
+    c.add_argument("--style", default="", help="scaffold: visual direction preference")
+    c.add_argument("--constraints", default="", help="scaffold: length/export/brand/time constraints")
+    c.add_argument("--team", default="", help="install: team scope")
+    c.add_argument("--name", default="ai-presentation-maker", help="install: managed skill name")
+    c.add_argument("--overwrite", action="store_true", help="install: update existing skill")
+
+    # ideacheck
+    c = sub.add_parser("ideacheck", help="weathon/ideacheck alphaXiv idea-novelty checker")
+    c.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["doctor", "status", "check", "serve-command"],
+        help="操作 (默认: status)",
+    )
+    c.add_argument("idea", nargs="?", help="check: research idea text")
+    c.add_argument("--idea-file", default="", help="check: read idea from file")
+    c.add_argument("--out-dir", default="", help="run output directory; default CLAWCROSS_DATA_DIR/ideacheck/runs")
+    c.add_argument("--before", default="", help="check: only consider papers before YYYY-MM-DD")
+    c.add_argument("--backend", default="claude", choices=["claude", "openai"], help="ideacheck backend")
+    c.add_argument("--base-url", default="", help="openai backend base URL")
+    c.add_argument("--model", default="", help="openai backend model id")
+    c.add_argument("--api-key", default="", help="openai backend API key")
+    c.add_argument("--open", action="store_true", help="open HTML report when the run completes")
+    c.add_argument("--timeout", type=int, default=0, help="override IDEACHECK_TIMEOUT")
+    c.add_argument("--max-chars", type=int, default=0, help="override IDEACHECK_MAX_OUTPUT_CHARS")
+    c.add_argument("--host", default="127.0.0.1", help="serve-command: host")
+    c.add_argument("--port", type=int, default=8000, help="serve-command: port")
+    c.add_argument("--json", action="store_true", help="输出 JSON payload")
+
     # status
     sub.add_parser("status", help="检查各服务状态")
 
@@ -3284,6 +3407,8 @@ def main():
         "opencli": cmd_opencli_run,
         "wx": cmd_opencli_run,
         "codegraph": cmd_codegraph,
+        "presentation-skill": cmd_presentation_skill,
+        "ideacheck": cmd_ideacheck,
         "token": cmd_token,
         "status": cmd_status,
     }

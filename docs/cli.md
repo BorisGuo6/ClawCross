@@ -1,6 +1,6 @@
 # Clawcross CLI 命令大全
 
-> 最后更新：2026-05-18
+> 最后更新：2026-06-21
 
 ## 运行方式
 
@@ -65,8 +65,10 @@ uv run scripts/cli.py [-u USER] <子命令> [参数...]
 24. [opencli](#24-opencli) — 转发 OpenCLI 命令
 25. [wx](#25-wx) — 直接运行 wx CLI
 26. [codegraph](#26-codegraph) — CodeGraph 本地代码智能
-27. [token](#27-token) — Token 生成与验证
-28. [status](#28-status) — 服务状态检查
+27. [presentation-skill](#27-presentation-skill) — AI PPT / slide-deck skill helpers
+28. [ideacheck](#28-ideacheck) — alphaXiv prior-art / idea novelty checker
+29. [token](#29-token) — Token 生成与验证
+30. [status](#30-status) — 服务状态检查
 
 ---
 
@@ -940,7 +942,96 @@ uv run scripts/cli.py codegraph callers build_parser --path /path/to/repo
 
 ---
 
-## 27. token
+## 27. presentation-skill
+
+**AI PPT / slide-deck skill catalog, scaffold, and managed skill installer.**
+
+```bash
+uv run scripts/cli.py presentation-skill catalog
+
+uv run scripts/cli.py presentation-skill scaffold \
+  --topic "UMI Image Layered World Model" \
+  --audience "robotics research group" \
+  --format html \
+  --style "technical Swiss grid" \
+  --constraints "10 slides, speaker notes"
+
+uv run scripts/cli.py -u admin presentation-skill install
+uv run scripts/cli.py -u admin presentation-skill install --team "Research" --overwrite
+```
+
+常用参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `action` | `catalog`, `scaffold`, `install` | `catalog` |
+| `--json` | 输出 JSON payload | false |
+| `--topic` | deck topic for scaffold | — |
+| `--audience` | target audience | — |
+| `--format` | `html`, `pptx`, `images`, `research-pack`, `motion` | `html` |
+| `--sources` | URLs/files/notes to ground the deck | — |
+| `--style` | visual direction preference | — |
+| `--constraints` | length/export/brand/time constraints | — |
+| `--team` | install into team skill scope | — |
+| `--name` | managed skill name | `ai-presentation-maker` |
+| `--overwrite` | update an existing managed skill | false |
+
+`install` only writes the ClawCross managed skill through `webot.skills`; it does not clone or vendor upstream GitHub projects. See [`presentation-skills.md`](./presentation-skills.md).
+
+---
+
+## 28. ideacheck
+
+**包装 [`weathon/ideacheck`](https://github.com/weathon/ideacheck) 官方 CLI，用 alphaXiv 文献检查 research idea 的 prior-art / novelty。**
+
+ClawCross 不会自动安装 ideacheck，也不会复刻其多 agent 实现。`status`/`doctor` 只检查本地 binary；`check` 才会启动官方 `ideacheck check`；`serve-command` 只打印官方 Web GUI 启动命令，不在 CLI 请求里拉起长驻服务。
+
+```bash
+uv run scripts/cli.py ideacheck status
+
+uv run scripts/cli.py ideacheck check \
+  "A robot policy that decomposes ego videos into robot/object/scene layers"
+
+uv run scripts/cli.py ideacheck check \
+  --idea-file docs/my_idea.md \
+  --before 2026-01-01 \
+  --backend openai \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model deepseek-chat
+
+uv run scripts/cli.py ideacheck serve-command --port 8000
+```
+
+常用参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `action` | `doctor`, `status`, `check`, `serve-command` | `status` |
+| `idea` | `check` 的 idea 文本 | — |
+| `--idea-file` | 从文件读取 idea | — |
+| `--out-dir` | report 输出目录 | `CLAWCROSS_DATA_DIR/ideacheck/runs` |
+| `--before` | 只检索该日期前的论文，格式 `YYYY-MM-DD` | — |
+| `--backend` | `claude` 或 `openai` | `claude` |
+| `--base-url` | OpenAI-compatible backend base URL | — |
+| `--model` | OpenAI-compatible backend model | — |
+| `--api-key` | OpenAI-compatible backend key；ClawCross 通过环境变量传给子进程，不在命令输出里打印 | — |
+| `--open` | run 完成后让官方 CLI 打开 HTML 报告 | false |
+| `--timeout` | 覆盖 `IDEACHECK_TIMEOUT` | 环境变量或 1800 |
+| `--max-chars` | 覆盖 `IDEACHECK_MAX_OUTPUT_CHARS` | 环境变量或 80000 |
+| `--json` | 输出 JSON payload | false |
+
+未安装时会返回 inactive guidance。官方安装方式：
+
+```bash
+pip install git+https://github.com/weathon/ideacheck.git
+pip install "ideacheck[openai] @ git+https://github.com/weathon/ideacheck.git"
+```
+
+See [`ideacheck.md`](./ideacheck.md).
+
+---
+
+## 29. token
 
 **Token 生成与验证**
 
@@ -975,7 +1066,7 @@ uv run scripts/cli.py token decode --token "xxx"
 
 ---
 
-## 28. status
+## 30. status
 
 **检查各服务状态**
 

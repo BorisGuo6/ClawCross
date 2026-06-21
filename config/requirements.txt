@@ -18,6 +18,7 @@ aiosqlite
 langgraph-checkpoint-sqlite
 ddgs
 pymupdf
+markitdown[pdf,docx,pptx,xlsx,xls,outlook]
 zep-cloud
 
 # Chatbot dependencies
