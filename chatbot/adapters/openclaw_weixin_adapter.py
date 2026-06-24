@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
 import random
+import re
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,17 +26,19 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
-from src.utils.runtime_paths import ENV_FILE
+from src.utils.runtime_paths import ENV_FILE, WORKSPACE_DIR
 
 load_dotenv(dotenv_path=ENV_FILE)
 
-from .base import ChannelAdapter, ChatMessage
+from .base import AIResponse, ChannelAdapter, ChatMessage
 
 logger = logging.getLogger("chatbot.openclaw_weixin")
 
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_STATE_DIR = "~/.openclaw/openclaw-weixin"
 DEFAULT_PACKAGE_JSON = "~/.openclaw/extensions/openclaw-weixin/package.json"
+DEFAULT_ACP_TIMEOUT_SEC = 600
+DEFAULT_ACP_TTL_SEC = 3600
 
 MESSAGE_TYPE_USER = 1
 MESSAGE_ITEM_TEXT = 1
@@ -95,6 +100,37 @@ def _extract_text_from_items(items: list[dict[str, Any]] | None) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _normalize_target_agent(value: str | None) -> str:
+    raw = (value or "").strip().lower()
+    if raw.startswith("acp:"):
+        raw = raw.split(":", 1)[1].strip()
+    aliases = {
+        "claude-code": "claude",
+        "gemini-cli": "gemini",
+    }
+    raw = aliases.get(raw, raw)
+    return "" if raw in {"", "0", "false", "none", "off", "disabled"} else raw
+
+
+def _coerce_int_env(name: str, default: int, *, min_value: int, max_value: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(min_value, min(max_value, value))
+
+
+def _env_optional(name: str) -> str | None:
+    return os.getenv(name) if name in os.environ else None
+
+
+def _ensure_src_import_path() -> None:
+    src_dir = Path(__file__).resolve().parents[2] / "src"
+    src_text = str(src_dir)
+    if src_text not in sys.path:
+        sys.path.insert(0, src_text)
+
+
 class OpenClawWeixinAdapter(ChannelAdapter):
     """Direct Weixin backend adapter using OpenClaw plugin login credentials."""
 
@@ -116,6 +152,41 @@ class OpenClawWeixinAdapter(ChannelAdapter):
         self._idle_sleep_ms = int(os.getenv("OPENCLAW_WEIXIN_IDLE_SLEEP_MS", "1000"))
         self._bot_agent = os.getenv("OPENCLAW_WEIXIN_BOT_AGENT", "ClawCross/0.1.0").strip() or "ClawCross/0.1.0"
         self._package_json = _expand_path(os.getenv("OPENCLAW_WEIXIN_PACKAGE_JSON", DEFAULT_PACKAGE_JSON))
+        self._target_agent = _normalize_target_agent(
+            os.getenv("OPENCLAW_WEIXIN_TARGET_AGENT") or os.getenv("OPENCLAW_WEIXIN_ACP_TOOL")
+        )
+        self._acp_session_prefix = (
+            os.getenv("OPENCLAW_WEIXIN_ACP_SESSION_PREFIX", "openclaw-weixin").strip()
+            or "openclaw-weixin"
+        )
+        self._acp_timeout_sec = _coerce_int_env(
+            "OPENCLAW_WEIXIN_ACP_TIMEOUT_SEC",
+            DEFAULT_ACP_TIMEOUT_SEC,
+            min_value=5,
+            max_value=3600,
+        )
+        self._acp_ttl_sec = _coerce_int_env(
+            "OPENCLAW_WEIXIN_ACP_TTL_SEC",
+            DEFAULT_ACP_TTL_SEC,
+            min_value=60,
+            max_value=604800,
+        )
+        self._acp_model = os.getenv("OPENCLAW_WEIXIN_ACP_MODEL", "").strip() or None
+        self._acp_max_turns = (
+            _coerce_int_env("OPENCLAW_WEIXIN_ACP_MAX_TURNS", 4, min_value=1, max_value=200)
+            if "OPENCLAW_WEIXIN_ACP_MAX_TURNS" in os.environ
+            else None
+        )
+        self._acp_permission_policy = (
+            os.getenv("OPENCLAW_WEIXIN_ACP_PERMISSION_POLICY", "").strip().lower().replace("_", "-")
+            or None
+        )
+        self._acp_non_interactive_permissions = (
+            os.getenv("OPENCLAW_WEIXIN_ACP_NON_INTERACTIVE_PERMISSIONS", "").strip()
+            or None
+        )
+        self._acp_allowed_tools = _env_optional("OPENCLAW_WEIXIN_ACP_ALLOWED_TOOLS")
+        self._acp_cwd = _expand_path(os.getenv("OPENCLAW_WEIXIN_ACP_CWD", str(WORKSPACE_DIR / "acpx")))
         self._package_name = "@tencent-weixin/openclaw-weixin"
         self._channel_version = "unknown"
         self._ilink_app_id = "bot"
@@ -299,9 +370,69 @@ class OpenClawWeixinAdapter(ChannelAdapter):
         if handled:
             return cli_reply or ""
 
-        api_key = self.build_api_key(username)
-        result = await self.call_ai(content_list, api_key)
+        if self._target_agent:
+            result = await self.call_target_agent(
+                text=text,
+                username=username,
+                from_user_id=from_user_id,
+            )
+        else:
+            api_key = self.build_api_key(username)
+            result = await self.call_ai(content_list, api_key)
         return result.content if result.ok else f"发生错误: {result.error}"
+
+    def _acp_session_key(self, *, username: str, from_user_id: str) -> str:
+        prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", self._acp_session_prefix).strip(".-") or "openclaw-weixin"
+        user_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", username or "user").strip(".-") or "user"
+        digest = hashlib.sha256((from_user_id or username or "anonymous").encode("utf-8")).hexdigest()[:12]
+        return f"{prefix}-{user_slug}-{digest}"[:96].rstrip(".-")
+
+    def _build_acp_prompt(self, *, text: str, username: str, from_user_id: str) -> str:
+        channel_context = (
+            f"你正在通过 ClawCross 的微信通道和用户对话。当前目标 ACP agent 是 {self._target_agent}。\n"
+            "直接输出要发回微信用户的正文；不要输出 JSON，不要解释内部路由。\n"
+            f"ClawCross user: {username}\n"
+            f"Channel: {self.channel}\n"
+            f"Weixin sender hash: {hashlib.sha256((from_user_id or '').encode('utf-8')).hexdigest()[:12]}\n\n"
+            "用户消息：\n"
+        )
+        return f"{channel_context}{text or '(empty message)'}"
+
+    async def call_target_agent(self, *, text: str, username: str, from_user_id: str) -> AIResponse:
+        """Route a Weixin message to an ACP-backed coding agent such as Codex."""
+        try:
+            _ensure_src_import_path()
+            from integrations.acpx_adapter import get_acpx_adapter
+            from integrations.acpx_cli_tools import acpx_agent_tags_with_legacy
+        except Exception as exc:
+            return AIResponse(ok=False, error=f"ACP 模块不可用: {exc}")
+
+        tool = self._target_agent
+        try:
+            allowed_tools = acpx_agent_tags_with_legacy()
+        except Exception:
+            allowed_tools = frozenset()
+        if allowed_tools and tool not in allowed_tools:
+            return AIResponse(ok=False, error=f"不支持的 ACP agent: {tool}")
+
+        try:
+            self._acp_cwd.mkdir(parents=True, exist_ok=True)
+            adapter = get_acpx_adapter(cwd=str(self._acp_cwd))
+            reply = await adapter.prompt(
+                tool=tool,
+                session_key=self._acp_session_key(username=username, from_user_id=from_user_id),
+                prompt_text=self._build_acp_prompt(text=text, username=username, from_user_id=from_user_id),
+                timeout_sec=self._acp_timeout_sec,
+                ttl_sec=self._acp_ttl_sec,
+                model=self._acp_model,
+                max_turns=self._acp_max_turns,
+                permission_policy=self._acp_permission_policy,
+                non_interactive_permissions=self._acp_non_interactive_permissions,
+                allowed_tools=self._acp_allowed_tools,
+            )
+            return AIResponse(ok=True, content=reply)
+        except Exception as exc:
+            return AIResponse(ok=False, error=f"ACP agent {tool} 调用失败: {exc}")
 
     async def run(self) -> None:
         if not self._internal_token:

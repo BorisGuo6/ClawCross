@@ -65,6 +65,23 @@ uv run python chatbot/main.py --openclaw-weixin
 The adapter reads the OpenClaw Weixin token, calls `getupdates` itself, sends
 messages to ClawCross' local Agent API, and replies through `sendmessage`.
 
+To make normal WeChat messages talk directly to Codex through ClawCross ACP
+instead of the configured ClawCross LLM, set:
+
+```bash
+OPENCLAW_WEIXIN_TARGET_AGENT=codex
+OPENCLAW_WEIXIN_ACP_SESSION_PREFIX=openclaw-weixin
+OPENCLAW_WEIXIN_ACP_TIMEOUT_SEC=600
+OPENCLAW_WEIXIN_ACP_MODEL=gpt-5.3-codex-spark/medium
+OPENCLAW_WEIXIN_ACP_MAX_TURNS=4
+```
+
+Each WeChat sender gets a stable ACP session name under that prefix. Leave
+`OPENCLAW_WEIXIN_TARGET_AGENT` empty to keep the previous behavior where normal
+messages use ClawCross' `LLM_MODEL`. `OPENCLAW_WEIXIN_ACP_MODEL` is optional,
+but setting a faster Codex model keeps short WeChat turns from inheriting a slow
+global Codex profile.
+
 Do not also bind the same `openclaw-weixin` account to an OpenClaw agent while
 the ClawCross adapter is polling. Two consumers sharing one sync cursor can race
 and cause messages to be consumed by the wrong runtime.

@@ -21,7 +21,9 @@ from chatbot.adapters.openclaw_weixin_adapter import (  # noqa: E402
     OpenClawWeixinAdapter,
     _client_version,
     _extract_text_from_items,
+    _normalize_target_agent,
 )
+from chatbot.adapters.base import AIResponse  # noqa: E402
 
 
 class OpenClawWeixinAdapterTests(unittest.IsolatedAsyncioTestCase):
@@ -41,6 +43,11 @@ class OpenClawWeixinAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("hello", text)
         self.assertIn("voice text", text)
         self.assertIn("[文件消息: paper.pdf]", text)
+
+    def test_normalize_target_agent_accepts_acp_model_style(self):
+        self.assertEqual(_normalize_target_agent("acp:codex"), "codex")
+        self.assertEqual(_normalize_target_agent("claude-code"), "claude")
+        self.assertEqual(_normalize_target_agent("off"), "")
 
     def test_load_account_uses_openclaw_weixin_state_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -102,6 +109,58 @@ class OpenClawWeixinAdapterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(allowed)
         self.assertEqual(username, "default")
+
+    async def test_target_agent_routes_regular_message_to_acp(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "OPENCLAW_WEIXIN_DEFAULT_ALLOW": "true",
+                "OPENCLAW_WEIXIN_USERNAME": "default",
+                "OPENCLAW_WEIXIN_TARGET_AGENT": "codex",
+            },
+            clear=False,
+        ):
+            adapter = OpenClawWeixinAdapter()
+
+        captured = {}
+
+        async def fake_call_target_agent(*, text, username, from_user_id):
+            captured["text"] = text
+            captured["username"] = username
+            captured["from_user_id"] = from_user_id
+            return AIResponse(ok=True, content="codex ok")
+
+        async def fail_call_ai(*args, **kwargs):
+            raise AssertionError("default LLM path should not be called")
+
+        adapter.call_target_agent = fake_call_target_agent
+        adapter.call_ai = fail_call_ai
+
+        reply = await adapter.handle_message(
+            {
+                "message_type": 1,
+                "from_user_id": "wx-user",
+                "item_list": [{"type": MESSAGE_ITEM_TEXT, "text_item": {"text": "你是 GPT 吗"}}],
+            }
+        )
+
+        self.assertEqual(reply, "codex ok")
+        self.assertEqual(captured["text"], "你是 GPT 吗")
+        self.assertEqual(captured["username"], "default")
+        self.assertEqual(captured["from_user_id"], "wx-user")
+
+    def test_acp_session_key_uses_hash_not_raw_weixin_id(self):
+        with mock.patch.dict(
+            os.environ,
+            {"OPENCLAW_WEIXIN_TARGET_AGENT": "codex", "OPENCLAW_WEIXIN_ACP_SESSION_PREFIX": "wx"},
+            clear=False,
+        ):
+            adapter = OpenClawWeixinAdapter()
+
+        session_key = adapter._acp_session_key(username="default", from_user_id="wx-user-secret")
+
+        self.assertTrue(session_key.startswith("wx-default-"))
+        self.assertNotIn("wx-user-secret", session_key)
 
 
 if __name__ == "__main__":

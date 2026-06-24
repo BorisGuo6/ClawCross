@@ -75,6 +75,10 @@ def _coerce_bool(value: Any) -> bool | None:
     return None
 
 
+def _coerce_max_turns(value: Any) -> int | None:
+    return _coerce_optional_int(value, None, min_value=1, max_value=200)
+
+
 _PERMISSION_POLICIES = ("approve-all", "approve-reads", "deny-all")
 
 
@@ -138,6 +142,7 @@ def normalize_acpx_run_options(
     options = options or {}
     timeout_raw = options.get("timeout_sec", options.get("acp_timeout_sec"))
     ttl_raw = options.get("ttl_sec")
+    model = str(options.get("model") or options.get("acp_model") or os.getenv("ACPX_MODEL", "") or "").strip()
     approve_all = _coerce_bool(options.get("approve_all"))
     if approve_all is None:
         approve_all = _env_bool("ACPX_APPROVE_ALL", True)
@@ -160,11 +165,22 @@ def normalize_acpx_run_options(
     return {
         "timeout_sec": _coerce_optional_int(timeout_raw, default_timeout_sec, min_value=5, max_value=3600),
         "ttl_sec": _coerce_int(ttl_raw, default_ttl_sec, min_value=60, max_value=604800),
+        "model": model or None,
+        "max_turns": _coerce_max_turns(options.get("max_turns", options.get("acp_max_turns"))),
         "approve_all": approve_all,
         "permission_policy": permission_policy,
         "non_interactive_permissions": nip,
         "allowed_tools": allowed_tools,
     }
+
+
+def _ensure_session_timeout(timeout_sec: int | None) -> int:
+    return min(max(timeout_sec or 20, 20), 180)
+
+
+def _is_transport_notice(text: str | None) -> bool:
+    normalized = (text or "").strip()
+    return normalized == "Falling back from WebSockets to HTTPS transport. timeout waiting for child process to exit"
 
 
 def acpx_options_from_agent(
@@ -193,6 +209,10 @@ def acpx_options_from_agent(
             "permission_policy",
             "non_interactive_permissions",
             "allowed_tools",
+            "model",
+            "acp_model",
+            "max_turns",
+            "acp_max_turns",
         ):
             # allowed_tools="" is a meaningful "no tools" signal — keep it.
             if key in src and (key == "allowed_tools" or src[key] not in (None, "")):
@@ -226,7 +246,10 @@ class AcpxAdapter:
         session_key: str,
         acpx_session: str,
         system_prompt: str | None = None,
+        ensure_timeout_sec: int = 20,
         ttl_sec: int = 300,
+        model: str | None = None,
+        max_turns: int | None = None,
         approve_all: bool | None = None,
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
@@ -235,9 +258,11 @@ class AcpxAdapter:
         existed_before = await self._session_exists(tool=tool, acpx_session=acpx_session)
         await self._run_json(
             self._command_prefix(tool=tool, session_key=session_key) + ["sessions", "ensure", "--name", acpx_session],
-            timeout_sec=20,
+            timeout_sec=ensure_timeout_sec,
             allow_nonzero=False,
             ttl_sec=ttl_sec,
+            model=model,
+            max_turns=max_turns,
             approve_all=approve_all,
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
@@ -398,6 +423,8 @@ class AcpxAdapter:
         timeout_sec: int,
         allow_nonzero: bool,
         ttl_sec: int = 300,
+        model: str | None = None,
+        max_turns: int | None = None,
         approve_all: bool | None = None,
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
@@ -415,6 +442,10 @@ class AcpxAdapter:
             "--ttl",
             str(ttl_sec),
         ]
+        if model:
+            cmd.extend(["--model", model])
+        if max_turns:
+            cmd.extend(["--max-turns", str(max_turns)])
         _apply_permission_flags(
             cmd,
             approve_all=approve_all,
@@ -563,6 +594,8 @@ class AcpxAdapter:
         system_prompt: str | None = None,
         attachments: list[dict] | None = None,
         ttl_sec: int = 300,
+        model: str | None = None,
+        max_turns: int | None = None,
         approve_all: bool | None = None,
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
@@ -602,7 +635,10 @@ class AcpxAdapter:
             session_key=session_key,
             acpx_session=acpx_session,
             system_prompt=system_prompt,
+            ensure_timeout_sec=_ensure_session_timeout(timeout_sec),
             ttl_sec=ttl_sec,
+            model=model,
+            max_turns=max_turns,
             approve_all=approve_all,
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
@@ -625,6 +661,8 @@ class AcpxAdapter:
             timeout_sec=timeout_sec,
             attachments=attachments,
             ttl_sec=ttl_sec,
+            model=model,
+            max_turns=max_turns,
             approve_all=approve_all,
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
@@ -647,6 +685,8 @@ class AcpxAdapter:
         system_prompt: str | None = None,
         attachments: list[dict] | None = None,
         ttl_sec: int = 300,
+        model: str | None = None,
+        max_turns: int | None = None,
         approve_all: bool | None = None,
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
@@ -670,7 +710,10 @@ class AcpxAdapter:
             session_key=session_key,
             acpx_session=acpx_session,
             system_prompt=system_prompt,
+            ensure_timeout_sec=_ensure_session_timeout(timeout_sec),
             ttl_sec=ttl_sec,
+            model=model,
+            max_turns=max_turns,
             approve_all=approve_all,
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
@@ -693,6 +736,8 @@ class AcpxAdapter:
             timeout_sec=timeout_sec,
             attachments=attachments,
             ttl_sec=ttl_sec,
+            model=model,
+            max_turns=max_turns,
             approve_all=approve_all,
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
@@ -724,6 +769,8 @@ class AcpxAdapter:
         timeout_sec: int,
         attachments: list[dict] | None,
         ttl_sec: int,
+        model: str | None,
+        max_turns: int | None,
         approve_all: bool | None,
         permission_policy: str | None,
         non_interactive_permissions: str | None,
@@ -736,6 +783,8 @@ class AcpxAdapter:
             prompt_text=prompt_text,
             attachments=attachments,
             ttl_sec=ttl_sec,
+            model=model,
+            max_turns=max_turns,
             approve_all=approve_all,
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
@@ -762,6 +811,8 @@ class AcpxAdapter:
         prompt_text: str,
         attachments: list[dict] | None,
         ttl_sec: int,
+        model: str | None,
+        max_turns: int | None,
         approve_all: bool | None,
         permission_policy: str | None,
         non_interactive_permissions: str | None,
@@ -826,6 +877,10 @@ class AcpxAdapter:
             "--ttl",
             str(ttl_sec),
         ]
+        if model:
+            cmd.extend(["--model", model])
+        if max_turns:
+            cmd.extend(["--max-turns", str(max_turns)])
         _apply_permission_flags(
             cmd,
             approve_all=approve_all,
@@ -845,6 +900,8 @@ class AcpxAdapter:
         timeout_sec: int,
         allow_nonzero: bool,
         ttl_sec: int = 300,
+        model: str | None = None,
+        max_turns: int | None = None,
         approve_all: bool | None = None,
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
@@ -864,6 +921,10 @@ class AcpxAdapter:
             "--ttl",
             str(ttl_sec),
         ]
+        if model:
+            cmd.extend(["--model", model])
+        if max_turns:
+            cmd.extend(["--max-turns", str(max_turns)])
         _apply_permission_flags(
             cmd,
             approve_all=approve_all,
@@ -1070,6 +1131,8 @@ class AcpxAdapter:
             text = content.get("text")
             if not isinstance(text, str):
                 return None
+            if _is_transport_notice(text):
+                return None
             return {"type": "agent_message_chunk", "text": text}
 
         if update_type == "tool_call":
@@ -1115,7 +1178,7 @@ class AcpxAdapter:
             except json.JSONDecodeError:
                 continue
             part = AcpxAdapter._extract_acpx_agent_message_chunks(obj)
-            if part is not None:
+            if part is not None and not _is_transport_notice(part):
                 message_parts.append(part)
             cand = AcpxAdapter._pick_text(obj)
             if cand:
@@ -1143,7 +1206,7 @@ class AcpxAdapter:
                 continue
 
             part = AcpxAdapter._extract_acpx_agent_message_chunks(obj)
-            if part is not None:
+            if part is not None and not _is_transport_notice(part):
                 message_parts.append(part)
 
             if isinstance(obj, dict):

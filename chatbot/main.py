@@ -113,6 +113,11 @@ def list_channels():
             print(f"   state dir: {adapter._state_dir}")
             print(f"   account: {adapter._account_id or '(accounts.json first)'}")
             print(f"   username: {adapter._username}")
+            print(f"   target agent: {adapter._target_agent or '(ClawCross LLM)'}")
+            if adapter._target_agent:
+                print(f"   ACP session prefix: {adapter._acp_session_prefix}")
+                print(f"   ACP model: {adapter._acp_model or '(Codex default)'}")
+                print(f"   ACP max turns: {adapter._acp_max_turns or '(acpx default)'}")
         print()
 
 

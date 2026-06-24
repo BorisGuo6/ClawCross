@@ -161,3 +161,9 @@ The goal is a **silent, non-interactive install**. NEVER repeatedly ask the user
 - [`docs/repo-index.md`](./docs/repo-index.md) — codebase and file index
 - [`docs/cli.md`](./docs/cli.md) — CLI command reference
 - [`docs/ports.md`](./docs/ports.md) — service map and ports
+
+## Specs (Source of Truth)
+
+- Canonical specs live in `specs/`. Start with `specs/map.md` for a quick-reference index of all spec files.
+- Before making changes or suggestions in an area that has a spec, read the relevant spec file(s) first and follow them.
+- If unsure which spec applies, search `specs/` and propose the most relevant file(s) before proceeding.

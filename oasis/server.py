@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import asyncio
+import tempfile
 import uuid
 from contextlib import asynccontextmanager
 
@@ -159,18 +160,21 @@ def _preload_openclaw_skills():
         return
     
     try:
-        # Execute openclaw skills list --json command
-        result = subprocess.run(
-            [openclaw_bin, "skills", "list", "--json"],
-            capture_output=True, text=True, timeout=30,
-        )
+        # OpenClaw can emit more than 64KB of skill metadata; a regular file
+        # avoids stdout pipe truncation in some CLI builds.
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
+            result = subprocess.run(
+                [openclaw_bin, "skills", "list", "--json"],
+                stdout=stdout_file, stderr=subprocess.PIPE, text=True, timeout=30,
+            )
+            stdout_file.seek(0)
+            raw_output = stdout_file.read()
         
         if result.returncode != 0:
             print(f"[OASIS] ⚠️ openclaw skills list failed: {result.stderr.strip()[:200]}")
             return
         
         # Parse JSON response
-        raw_output = result.stdout
         idx = raw_output.find('{')
         if idx < 0:
             print("[OASIS] ⚠️ Failed to parse openclaw skills list output")
@@ -222,6 +226,13 @@ def _check_owner(forum: DiscussionForum, user_id: str):
 async def lifespan(app: FastAPI):
     # Preload OpenClaw skills information at startup
     _preload_openclaw_skills()
+    init_openclaw_routes(
+        openclaw_bin=_OPENCLAW_BIN,
+        get_env_fn=_get_env,
+        skills_cache=_openclaw_skills_cache,
+        managed_skills_dir=_openclaw_managed_skills_dir,
+        bundled_skills=_openclaw_bundled_skills,
+    )
     
     # Load historical discussions
     loaded = DiscussionForum.load_all()

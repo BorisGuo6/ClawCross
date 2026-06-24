@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from integrations.acpx_adapter import AcpxError, get_acpx_adapter, normalize_acpx_run_options
+from integrations.acpx_adapter import AcpxError, _ensure_session_timeout, get_acpx_adapter, normalize_acpx_run_options
 from integrations.base import (
     PreparedAgentStream,
     ResetAgentRequest,
@@ -65,6 +65,8 @@ class GenericAcpConnector(AgentConnector):
                     system_prompt=options.get("system_prompt"),
                     attachments=attachments,
                     ttl_sec=run_options["ttl_sec"],
+                    model=run_options["model"],
+                    max_turns=run_options["max_turns"],
                     approve_all=run_options["approve_all"],
                     permission_policy=run_options["permission_policy"],
                     non_interactive_permissions=run_options["non_interactive_permissions"],
@@ -95,6 +97,8 @@ class GenericAcpConnector(AgentConnector):
                 system_prompt=options.get("system_prompt"),
                 attachments=attachments,
                 ttl_sec=run_options["ttl_sec"],
+                model=run_options["model"],
+                max_turns=run_options["max_turns"],
                 approve_all=run_options["approve_all"],
                 permission_policy=run_options["permission_policy"],
                 non_interactive_permissions=run_options["non_interactive_permissions"],
@@ -190,7 +194,10 @@ class GenericAcpConnector(AgentConnector):
             session_key=request.session or "default",
             acpx_session=acpx_session,
             system_prompt=options.get("system_prompt"),
+            ensure_timeout_sec=_ensure_session_timeout(run_options["timeout_sec"]),
             ttl_sec=run_options["ttl_sec"],
+            model=run_options["model"],
+            max_turns=run_options["max_turns"],
             approve_all=run_options["approve_all"],
             permission_policy=run_options["permission_policy"],
             non_interactive_permissions=run_options["non_interactive_permissions"],
@@ -203,6 +210,8 @@ class GenericAcpConnector(AgentConnector):
             prompt_text=prompt_text,
             attachments=attachments,
             ttl_sec=run_options["ttl_sec"],
+            model=run_options["model"],
+            max_turns=run_options["max_turns"],
             approve_all=run_options["approve_all"],
             permission_policy=run_options["permission_policy"],
             non_interactive_permissions=run_options["non_interactive_permissions"],

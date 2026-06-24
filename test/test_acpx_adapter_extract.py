@@ -1,5 +1,6 @@
 """AcpxAdapter stdout parsing (JSON-RPC stream vs legacy JSON)."""
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -28,16 +29,58 @@ def test_extract_text_legacy_reply_key():
     assert AcpxAdapter._extract_text(legacy) == "hello"
 
 
+def test_extract_text_ignores_codex_transport_notice():
+    sample = """
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"x","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Falling back from WebSockets to HTTPS transport. timeout waiting for child process to exit"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"x","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"codex ok"}}}}
+""".strip()
+
+    assert AcpxAdapter._extract_text(sample) == "codex ok"
+
+
 def test_normalize_acpx_run_options_clamps_and_parses(monkeypatch):
     monkeypatch.setenv("ACPX_APPROVE_ALL", "0")
     monkeypatch.setenv("ACPX_NON_INTERACTIVE_PERMISSIONS", "read-only")
 
-    opts = normalize_acpx_run_options({"timeout_sec": "99999", "ttl_sec": 1})
+    opts = normalize_acpx_run_options(
+        {"timeout_sec": "99999", "ttl_sec": 1, "model": "gpt-5.3-codex-spark/medium", "max_turns": "4"}
+    )
 
     assert opts["timeout_sec"] == 3600
     assert opts["ttl_sec"] == 60
+    assert opts["model"] == "gpt-5.3-codex-spark/medium"
+    assert opts["max_turns"] == 4
     assert opts["approve_all"] is False
     assert opts["non_interactive_permissions"] == "read-only"
+
+
+def test_ensure_session_forwards_model_and_max_turns():
+    adapter = AcpxAdapter.__new__(AcpxAdapter)
+    captured = {}
+
+    async def fake_session_exists(*, tool, acpx_session):
+        return False
+
+    async def fake_run_json(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return "{}"
+
+    adapter._session_exists = fake_session_exists
+    adapter._run_json = fake_run_json
+
+    asyncio.run(
+        adapter.ensure_session(
+            tool="codex",
+            session_key="session",
+            acpx_session="session",
+            model="gpt-5.3-codex-spark/medium",
+            max_turns=4,
+        )
+    )
+
+    assert captured["kwargs"]["model"] == "gpt-5.3-codex-spark/medium"
+    assert captured["kwargs"]["max_turns"] == 4
 
 
 def test_normalize_acpx_run_options_defaults_to_short_idle_ttl(monkeypatch):
