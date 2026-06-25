@@ -214,6 +214,7 @@ SLASH_COMMANDS = [
     ("/restart", "restart the ClawCross backend"),
     ("/cancel", "cancel internal-agent generation"),
     ("/front", "get a public magic link (web UI login)"),
+    ("/sync", "sync WeChat File Transfer Helper links to Notion Reading List"),
     ("/help", "show commands"),
     ("/exit", "quit"),
 ]
@@ -233,6 +234,7 @@ SLASH_MENU = [
     ("/cron [<team>]", "list cron alarms", "/cron", True),
     ("/channel", "list / setup chatbot channels", "/channel", True),
     ("/front", "get a public magic link (web UI login)", "/front", True),
+    ("/sync", "sync WeChat File Transfer Helper links to Notion Reading List", "/sync", True),
     ("/exit", "quit", "/exit", True),
 ]
 CLI_COMMANDS = [
@@ -248,6 +250,7 @@ CLI_COMMANDS = [
     ("clawcross skill [agent]", "list skills (optionally filtered by agent)"),
     ("clawcross cron [team]", "list cron alarms (optionally for one team)"),
     ("clawcross channel [list|setup ...]", "list / interactively set up chatbot channels"),
+    ("clawcross sync [--dry-run]", "sync WeChat File Transfer Helper links to Notion Reading List"),
     ("clawcross platforms", "list available platforms"),
     ("clawcross state", "print state json"),
     ("clawcross cancel", "cancel internal generation"),
@@ -258,6 +261,7 @@ SENSITIVE_CONFIG_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASS|COOKIE|AUTH)"
 CHAT_SLASH_COMMANDS = [
     ("/cross help", "show this command list"),
     ("/cross platforms", "list agent platforms"),
+    ("/cross platform [list|use <platform>]", "list/switch platforms"),
     ("/cross use <platform>", "switch platform"),
     ("/cross session", "list sessions for current platform"),
     ("/cross session <id>", "switch session by id"),
@@ -273,6 +277,12 @@ CHAT_SLASH_COMMANDS = [
     ("/cross restart", "request a backend restart"),
     ("/cross cancel", "cancel internal generation"),
     ("/cross front", "get a public magic link"),
+    ("/cross sync [--dry-run]", "sync File Transfer Helper links to Notion Reading List"),
+    ("/sync [--dry-run]", "direct WeChat shortcut for the same Reading List sync"),
+    ("/cross opencli-status [query]", "show local OpenCLI capability status"),
+    ("/cross opencli -- <args...>", "run OpenCLI through the guarded harness"),
+    ("/cross wx -- <args...>", "run wx-cli through OpenCLI"),
+    ("/cross notion -- <args...>", "run Notion CLI (`ntn`) through OpenCLI"),
     ("/cross exit", "leave /cross mode"),
 ]
 
@@ -614,6 +624,122 @@ def _handle_chat_opencli_line(line: str) -> str | None:
     except (FileNotFoundError, PermissionError, ValueError, RuntimeError) as exc:
         return f"OpenCLI command failed: {exc}"
     return _format_opencli_run_for_chat(result)
+
+
+def _sync_usage(prefix: str) -> str:
+    return (
+        f"Usage: {prefix} [reading-list] [--dry-run] [--limit N] [--date YYYY-MM-DD] "
+        "[--chat NAME] [--page-id ID] [--parent page:<id>|data-source:<id>] "
+        "[--data-source-id ID]"
+    )
+
+
+def _parse_reading_list_sync_args(args: list[str]) -> tuple[dict[str, Any], str | None]:
+    options: dict[str, Any] = {
+        "chat_name": "文件传输助手",
+        "history_limit": 80,
+        "dry_run": False,
+        "target_date": None,
+        "page_id": None,
+        "parent": None,
+        "data_source_id": None,
+    }
+    idx = 0
+    while idx < len(args):
+        arg = args[idx]
+        normalized = arg.lower().replace("_", "-")
+        if normalized in {"reading-list", "reading", "file-helper", "wechat", "wx"}:
+            idx += 1
+            continue
+        if normalized == "--dry-run":
+            options["dry_run"] = True
+            idx += 1
+            continue
+        if normalized in {"-n", "--limit"}:
+            if idx + 1 >= len(args):
+                return options, "--limit requires a value"
+            try:
+                options["history_limit"] = int(args[idx + 1])
+            except ValueError:
+                return options, "--limit must be an integer"
+            if options["history_limit"] <= 0:
+                return options, "--limit must be greater than zero"
+            idx += 2
+            continue
+        if normalized.startswith("--limit="):
+            try:
+                options["history_limit"] = int(arg.split("=", 1)[1])
+            except ValueError:
+                return options, "--limit must be an integer"
+            if options["history_limit"] <= 0:
+                return options, "--limit must be greater than zero"
+            idx += 1
+            continue
+        if normalized in {"--chat", "--chat-name"}:
+            if idx + 1 >= len(args):
+                return options, "--chat requires a value"
+            options["chat_name"] = args[idx + 1]
+            idx += 2
+            continue
+        if normalized.startswith("--chat="):
+            options["chat_name"] = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        if normalized == "--date":
+            if idx + 1 >= len(args):
+                return options, "--date requires a value"
+            options["target_date"] = args[idx + 1]
+            idx += 2
+            continue
+        if normalized.startswith("--date="):
+            options["target_date"] = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        if normalized == "--page-id":
+            if idx + 1 >= len(args):
+                return options, "--page-id requires a value"
+            options["page_id"] = args[idx + 1]
+            idx += 2
+            continue
+        if normalized.startswith("--page-id="):
+            options["page_id"] = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        if normalized == "--parent":
+            if idx + 1 >= len(args):
+                return options, "--parent requires a value"
+            options["parent"] = args[idx + 1]
+            idx += 2
+            continue
+        if normalized.startswith("--parent="):
+            options["parent"] = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        if normalized == "--data-source-id":
+            if idx + 1 >= len(args):
+                return options, "--data-source-id requires a value"
+            options["data_source_id"] = args[idx + 1]
+            idx += 2
+            continue
+        if normalized.startswith("--data-source-id="):
+            options["data_source_id"] = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        return options, f"unknown sync option: {arg}"
+    return options, None
+
+
+def _run_reading_list_sync(args: list[str], *, prefix: str) -> str:
+    options, error = _parse_reading_list_sync_args(args)
+    if error:
+        return f"{error}\n{_sync_usage(prefix)}"
+    from src.services.reading_list_sync import (
+        format_reading_list_sync_summary,
+        sync_wechat_file_helper_reading_list,
+    )
+
+    summary = sync_wechat_file_helper_reading_list(**options)
+    return format_reading_list_sync_summary(summary)
 
 
 def _cell_width(ch: str) -> int:
@@ -2021,6 +2147,9 @@ def _handle_slash(command: str, state: dict) -> bool:
     if name == "/front":
         _show_magic_link(state)
         return True
+    if name == "/sync":
+        print(_run_reading_list_sync(parts[1:], prefix="/sync"))
+        return True
     if name == "/model":
         from clawcross_cli.model_cmd import handle_model_command
         out = handle_model_command(parts[1:], interactive=True)
@@ -2147,6 +2276,10 @@ _HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/channel logout clawcross_wechat", "stop the ClawCross WeChat daemon"),
         ("/channel status clawcross_wechat", "ask clawcross_wechat for live status"),
     ]),
+    ("Automations", [
+        ("/sync", "sync File Transfer Helper links to the Notion Reading List"),
+        ("/sync --dry-run", "parse, normalize, and count without writing to Notion"),
+    ]),
     ("Shell", [
         ("/state", "dump persisted state.json"),
         ("/restart", "request a backend restart"),
@@ -2175,6 +2308,9 @@ _CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("Platform & session", [
         ("/cross platforms", "list all agent platforms"),
+        ("/cross platform", "list all agent platforms"),
+        ("/cross platform list", "list all agent platforms"),
+        ("/cross platform use <platform>", "switch platform"),
         ("/cross use <platform>", "switch platform (internal / codex / claude / gemini / ...)"),
         ("/cross session", "show sessions for the current platform"),
         ("/cross session <id>", "switch to / create session by id"),
@@ -2223,10 +2359,17 @@ _CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("OpenCLI local CLIs", [
         ("/cross opencli-status [query]", "show local OpenCLI / private CLI capability status"),
+        ("/cross wx -- <args...>", "run wx-cli through the guarded OpenCLI harness"),
         ("/cross wx -- sessions --json", "run wx-cli through the guarded OpenCLI harness"),
         ("/cross wx -- search <keyword>", "search local WeChat data via wx-cli"),
+        ("/cross notion -- <args...>", "run Notion CLI (`ntn`) through OpenCLI"),
         ("/cross notion -- whoami", "run Notion CLI (`ntn`) through OpenCLI"),
         ("/cross opencli -- <args...>", "generic OpenCLI passthrough; mutating commands need --allow-mutating"),
+    ]),
+    ("Automations", [
+        ("/cross sync", "sync File Transfer Helper links to the Notion Reading List"),
+        ("/cross sync --dry-run", "parse, normalize, and count without writing to Notion"),
+        ("/sync --dry-run", "direct WeChat shortcut for the same sync"),
     ]),
     ("Shell", [
         ("/cross state", "show current platform and session"),
@@ -2304,6 +2447,143 @@ def chat_welcome_text(state: dict, magic_link: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def _split_chat_slash(line: str) -> tuple[str, list[str], str | None]:
+    try:
+        parts = shlex.split(line)
+    except ValueError as exc:
+        return "", [], f"Command parse error: {exc}"
+    if not parts:
+        return "", [], None
+    return parts[0].lower(), parts[1:], None
+
+
+def _chat_code_block(text: str) -> str:
+    body = _strip_ansi(text).strip()
+    return f"```\n{body}\n```" if body else ""
+
+
+def _capture_chat_output(func, *args, **kwargs) -> str:
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        func(*args, **kwargs)
+    return _strip_ansi(out.getvalue()).strip()
+
+
+def _chat_platform_table(state: dict) -> str:
+    return _chat_code_block(_capture_chat_output(cmd_platforms, None, state))
+
+
+def _chat_switch_platform(state: dict, platform: str) -> str:
+    _set_chat_platform(state, platform)
+    current = _current(state)
+    return (
+        f"Agent switched to {current.get('platform', platform)}.\n"
+        "Send a message to continue on this agent."
+    )
+
+
+def _handle_chat_slash_line(line: str, state: dict) -> tuple[bool, str] | None:
+    """Non-terminal dispatcher for ClawCross shell slash commands.
+
+    This intentionally mirrors ``_handle_slash`` but keeps chatbot semantics:
+    no curses pickers, no stdin prompts, and platform switches use the
+    per-chat default session instead of terminal shell session carry-over.
+    """
+    name, args, error = _split_chat_slash(line)
+    if error:
+        return True, error
+    if not name:
+        return True, ""
+
+    if name in {"/exit", "/quit", "/q"}:
+        _save_state(state)
+        return False, ""
+    if name in {"/help", "help"}:
+        return True, chat_help_text()
+
+    if name == "/platforms":
+        return True, _chat_platform_table(state)
+    if name == "/use":
+        if not args:
+            return True, _chat_platform_table(state)
+        return True, _chat_switch_platform(state, args[0])
+    if name == "/platform":
+        if not args or args[0].lower() in {"list", "ls"}:
+            return True, _chat_platform_table(state)
+        if args[0].lower() == "use":
+            if len(args) < 2:
+                table = _chat_platform_table(state)
+                return True, f"{table}\nUsage: /cross platform use <platform>"
+            return True, _chat_switch_platform(state, args[1])
+        return True, "Unknown /cross platform action. Try: /cross platform list or /cross platform use <platform>."
+
+    if name == "/session":
+        if not args:
+            rows, list_error = _list_current_platform_sessions(state)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                _print_session_rows(rows, state, list_error)
+            return True, _chat_code_block(out.getvalue())
+        _set_session(state, args[0])
+        _save_state(state)
+        return True, f"session: {_current(state)['session']}"
+
+    if name == "/new":
+        if args and args[0].lower() == "session":
+            session = _switch_to_new_session(state)
+            return True, f"session: {session}"
+        return True, "Usage: /cross new session"
+
+    if name == "/mode":
+        if not args:
+            return True, _chat_code_block(_capture_chat_output(_choose_mode, state))
+        requested = args[0].strip().lower()
+        if requested not in VALID_MODES:
+            return True, f"unknown mode: {args[0]!r}. choices: {', '.join(VALID_MODES)}"
+        _current(state)["mode"] = requested
+        _save_state(state)
+        return True, f"mode: {_current(state)['mode']}"
+
+    if name == "/state":
+        return True, _chat_code_block(_capture_chat_output(cmd_state, None, state))
+    if name == "/restart":
+        return True, _capture_chat_output(cmd_restart, None, state)
+    if name == "/cancel":
+        class CancelArgs:
+            user = ""
+            session = ""
+        return True, _capture_chat_output(cmd_cancel, CancelArgs(), state)
+    if name == "/front":
+        return True, _capture_chat_output(_show_magic_link, state)
+    if name == "/sync":
+        return True, _run_reading_list_sync(args, prefix="/cross sync")
+
+    if name == "/model":
+        from clawcross_cli.model_cmd import handle_model_command
+        return True, handle_model_command(args, interactive=False) or ""
+
+    current_user = (state.get("current", {}).get("user") or "").strip() or None
+    if name == "/team":
+        from clawcross_cli.display_cmd import handle_team_command
+        return True, handle_team_command(args, interactive=False, user=current_user) or ""
+    if name == "/workflow":
+        from clawcross_cli.display_cmd import handle_workflow_command
+        return True, handle_workflow_command(args, interactive=False, user=current_user) or ""
+    if name == "/skill":
+        from clawcross_cli.display_cmd import handle_skill_command
+        return True, handle_skill_command(args, interactive=False, user=current_user) or ""
+    if name == "/cron":
+        from clawcross_cli.display_cmd import handle_cron_command
+        return True, handle_cron_command(args, interactive=False, user=current_user) or ""
+    if name == "/channel":
+        from clawcross_cli.channel_cmd import handle_channel_command
+        return True, handle_channel_command(args, interactive=False) or ""
+
+    if name.startswith("/"):
+        return True, f"unknown command: {name}. Try /cross help."
+    return None
+
+
 def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
     """Handle one ClawCross shell input line for non-terminal chat channels.
 
@@ -2313,6 +2593,8 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
     if not line:
         return True, ""
     lower = line.lower()
+    if lower in {"/cross", "/cli"}:
+        return True, chat_welcome_text(state)
     if lower.startswith("/cross "):
         line = "/" + line.split(maxsplit=1)[1].strip()
         lower = line.lower()
@@ -2326,68 +2608,11 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
     opencli_reply = _handle_chat_opencli_line(line)
     if opencli_reply is not None:
         return True, opencli_reply
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/use":
-        parts = line.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                cmd_platforms(None, state)
-            table = _strip_ansi(out.getvalue()).strip()
-            return True, f"```\n{table}\n```"
-        platform = parts[1].strip().split()[0]
-        _set_chat_platform(state, platform)
-        current = _current(state)
-        return True, (
-            f"Agent switched to {current.get('platform', platform)}.\n"
-            "Send a message to continue on this agent."
-        )
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/session":
-        parts = line.split(maxsplit=1)
-        if len(parts) < 2 or not parts[1].strip():
-            rows, error = _list_current_platform_sessions(state)
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                _print_session_rows(rows, state, error)
-            table = _strip_ansi(out.getvalue()).strip()
-            return True, f"```\n{table}\n```"
-        session = parts[1].strip().split()[0]
-        _set_session(state, session)
-        _save_state(state)
-        return True, f"session: {_current(state)['session']}"
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/model":
-        from clawcross_cli.model_cmd import handle_model_command
-        rest = line.split(maxsplit=1)
-        args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_model_command(args) or ""
-    current_user = (state.get("current", {}).get("user") or "").strip() or None
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/team":
-        from clawcross_cli.display_cmd import handle_team_command
-        rest = line.split(maxsplit=1)
-        args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_team_command(args, user=current_user) or ""
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/workflow":
-        from clawcross_cli.display_cmd import handle_workflow_command
-        rest = line.split(maxsplit=1)
-        args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_workflow_command(args, user=current_user) or ""
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/skill":
-        from clawcross_cli.display_cmd import handle_skill_command
-        rest = line.split(maxsplit=1)
-        args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_skill_command(args, user=current_user) or ""
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/cron":
-        from clawcross_cli.display_cmd import handle_cron_command
-        rest = line.split(maxsplit=1)
-        args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_cron_command(args, user=current_user) or ""
-    if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/channel":
-        from clawcross_cli.channel_cmd import handle_channel_command
-        rest = line.split(maxsplit=1)
-        args = rest[1].strip().split() if len(rest) > 1 else []
-        return True, handle_channel_command(args) or ""
+    chat_slash = _handle_chat_slash_line(line, state)
+    if chat_slash is not None:
+        return chat_slash
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-        if line.startswith("/"):
-            active = _handle_slash(line, state)
-        else:
-            run_prompt(line, state)
+        run_prompt(line, state)
     reply = _strip_ansi(out.getvalue()).strip()
     return active, reply
 

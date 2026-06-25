@@ -101,13 +101,35 @@ The same WeChat bridge also exposes the ClawCross `/cross` shell. Send
 `/cross` once to enter the shell, or send one-shot commands directly:
 
 ```text
+/cross help
+/cross platform
+/cross platform use codex
+/cross mode plan
+/cross session
+/cross new session
+/cross team
+/cross workflow
+/cross skill
+/cross cron
+/cross channel
 /cross opencli-status wx
 /cross wx -- sessions --json
 /cross wx -- search OpenCLI
 /cross opencli-status notion
 /cross notion -- whoami
 /cross opencli -- ntn pages list
+/cross sync --dry-run
+/cross sync
+/sync --dry-run
 ```
+
+Every slash command in the interactive ClawCross shell is reachable from
+WeChat by replacing `/<command>` with `/cross <command>`. Commands that need a
+terminal picker or stdin prompt use deterministic non-interactive behavior in
+WeChat: they list options, show usage, or return the same terminal-required
+message instead of waiting for input. Examples: `/cross model add`,
+`/cross workflow new` without `from <file>`, and `/cross channel setup` tell
+you to use the terminal flow.
 
 `/cross wx` prefixes the command with `wx` and runs it through the guarded
 OpenCLI harness, so the existing wx-cli shard/key freshness checks still apply.
@@ -115,6 +137,45 @@ OpenCLI harness, so the existing wx-cli shard/key freshness checks still apply.
 `/cross opencli -- <args...>` remains available for other OpenCLI-backed local
 CLIs. Mutating commands are blocked by default; use `--allow-mutating` only
 after the user explicitly approves the action.
+
+## Sync File Transfer Helper To Notion Reading List
+
+`/cross sync` reads recent WeChat File Transfer Helper messages through the
+guarded local entrypoint:
+
+```bash
+uv run python scripts/wx_guarded.py -- history 文件传输助手 -n 80 --json
+```
+
+It extracts article/research/product URLs, normalizes and deduplicates canonical
+URLs with `src/services/reading_list_rules.py`, then writes only new entries to
+the Notion Reading List daily page. The WeChat reply reports counts, target
+date/page, skipped-noise count, and blockers only; it does not echo message
+contents, titles, or URLs.
+
+Use dry-run first:
+
+```text
+/cross sync --dry-run
+/sync --dry-run
+```
+
+Configure a Notion target with one of these environment variables before a real
+write:
+
+```bash
+CLAWCROSS_READING_LIST_PAGE_ID=<daily-page-id>
+CLAWCROSS_READING_LIST_PARENT=page:<parent-id>
+CLAWCROSS_READING_LIST_DATA_SOURCE_ID=<data-source-id>
+```
+
+`CLAWCROSS_READING_LIST_PAGE_ID` updates a known page.
+`CLAWCROSS_READING_LIST_DATA_SOURCE_ID` queries for today's Reading List page
+and creates one under `data-source:<id>` when none exists.
+`CLAWCROSS_READING_LIST_PARENT` creates a daily page under a page, database, or
+data-source parent when no fixed page is configured. The Notion CLI must also
+be authenticated (`ntn whoami` should succeed or the relevant `NOTION_API_TOKEN`
+/ workspace env vars must be set).
 
 Do not also bind the same `openclaw-weixin` account to an OpenClaw agent while
 the ClawCross adapter is polling. Two consumers sharing one sync cursor can race

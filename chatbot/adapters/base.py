@@ -31,6 +31,7 @@ logger = logging.getLogger("chatbot.base")
 FRONT_COMMAND = "/front"
 CROSS_COMMAND = "/cross"
 LEGACY_CLI_COMMAND = "/cli"
+SYNC_COMMAND = "/sync"
 
 
 def resolve_chatbot_data_path(value: str | None, default_name: str) -> str:
@@ -196,6 +197,13 @@ class ChannelAdapter(ABC):
         parts = text.strip().split(maxsplit=1)
         return bool(parts) and parts[0].lower() in {CROSS_COMMAND, LEGACY_CLI_COMMAND}
 
+    @staticmethod
+    def is_sync_command(text: str) -> bool:
+        if not text:
+            return False
+        parts = text.strip().split(maxsplit=1)
+        return bool(parts) and parts[0].lower() == SYNC_COMMAND
+
     def _cli_key(self, channel: str, user_id: str) -> str:
         return f"{channel or self.channel}:{user_id or 'anonymous'}"
 
@@ -215,6 +223,15 @@ class ChannelAdapter(ABC):
         key = self._cli_key(channel, user_id)
         stripped = (text or "").strip()
         lower = stripped.lower()
+        if self.is_sync_command(stripped):
+            from scripts.clawcross import handle_chatbot_input, load_chatbot_state
+            state = load_chatbot_state(channel, user_id, username)
+            with self._cli_lock:
+                active, reply = handle_chatbot_input(stripped, state)
+            if not active:
+                self._cli_enabled.discard(key)
+                return True, "ClawCross cross shell closed."
+            return True, reply or "(no output)"
         if self.is_cli_command(stripped):
             arg = stripped.split(maxsplit=1)[1].strip().lower() if len(stripped.split(maxsplit=1)) > 1 else ""
             if arg in {"off", "exit", "quit", "stop"}:

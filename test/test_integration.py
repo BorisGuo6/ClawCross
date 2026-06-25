@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import tempfile
 import types
@@ -13,8 +14,21 @@ if str(SRC_DIR) not in sys.path:
 
 import front
 from chatbot.adapters.base import ChannelAdapter, MagicLink
-from scripts.clawcross import chat_help_text, chat_welcome_text, handle_chatbot_input
+from scripts.clawcross import CHAT_SLASH_COMMANDS, SLASH_MENU, chat_help_text, chat_welcome_text, handle_chatbot_input
 from utils.env_settings import mask_all_sensitive, read_env_all, write_env_settings
+
+
+class _DummyAdapter(ChannelAdapter):
+    channel = "dummy"
+
+    async def handle_message(self, message):
+        return ""
+
+    async def verify_permission(self, raw_message):
+        return True, "dummy"
+
+    async def build_content(self, raw_message):
+        return []
 
 
 class _MockJsonResponse:
@@ -62,19 +76,39 @@ class ChatbotCommandTests(unittest.TestCase):
         self.assertTrue(ChannelAdapter.is_cli_command("/cli"))
         self.assertFalse(ChannelAdapter.is_cli_command("/front"))
 
+    def test_sync_command_is_direct_chatbot_shortcut(self):
+        self.assertTrue(ChannelAdapter.is_sync_command("/sync"))
+        self.assertTrue(ChannelAdapter.is_sync_command("  /Sync --dry-run  "))
+        self.assertFalse(ChannelAdapter.is_sync_command("/syncing"))
+
     def test_chat_help_uses_cross_help_for_chatbot_channel_commands(self):
         help_text = chat_help_text()
         welcome = chat_welcome_text({"current": {"platform": "internal", "user": "default"}})
 
         self.assertIn("/cross help", help_text)
+        self.assertIn("/cross platform", help_text)
         self.assertIn("/cross use <platform>", help_text)
         self.assertIn("/cross session <id>", help_text)
+        self.assertIn("/cross wx -- <args...>", help_text)
         self.assertIn("/cross wx -- sessions --json", help_text)
+        self.assertIn("/cross notion -- <args...>", help_text)
         self.assertIn("/cross notion -- whoami", help_text)
+        self.assertIn("/cross sync", help_text)
+        self.assertIn("/sync --dry-run", help_text)
         self.assertIn("Send /cross help for commands.", welcome)
         self.assertIn("Switch agents with /cross use codex.", welcome)
         self.assertNotIn("Send /help for commands.", welcome)
         self.assertNotIn("Switch agents with /use codex.", welcome)
+
+    def test_chat_help_covers_shell_slash_menu_and_opencli_commands(self):
+        help_text = chat_help_text()
+
+        for _display, _description, insert, _execute in SLASH_MENU:
+            expected = "/cross " + insert.lstrip("/")
+            self.assertIn(expected, help_text)
+        for command, _description in CHAT_SLASH_COMMANDS:
+            command_head = command.split("[", 1)[0].strip()
+            self.assertIn(command_head, help_text)
 
     def test_cross_help_command_returns_chat_help(self):
         _active, reply = handle_chatbot_input(
@@ -163,6 +197,166 @@ class ChatbotCommandTests(unittest.TestCase):
         )
         self.assertIn("OpenCLI OK", reply)
         self.assertIn("boris@example.test", reply)
+
+    def test_cross_sync_command_runs_reading_list_sync(self):
+        with mock.patch(
+            "src.services.reading_list_sync.sync_wechat_file_helper_reading_list",
+            return_value={
+                "ok": True,
+                "dry_run": True,
+                "date": "2026-06-25",
+                "messages_scanned": 3,
+                "links_found": 2,
+                "unique_links": 2,
+                "new_links": 2,
+                "duplicates_skipped": 0,
+                "skipped_noise": 0,
+                "notion_action": "dry_run",
+            },
+        ) as sync:
+            _active, reply = handle_chatbot_input(
+                "/cross sync --dry-run --limit 12",
+                {"current": {"platform": "internal", "user": "default"}},
+            )
+
+        sync.assert_called_once()
+        kwargs = sync.call_args.kwargs
+        self.assertTrue(kwargs["dry_run"])
+        self.assertEqual(kwargs["history_limit"], 12)
+        self.assertIn("Reading List sync OK", reply)
+        self.assertIn("new_links: 2", reply)
+        self.assertNotIn("http", reply)
+
+    def test_direct_sync_command_is_handled_without_cross_mode(self):
+        adapter = _DummyAdapter()
+        with mock.patch(
+            "scripts.clawcross.load_chatbot_state",
+            return_value={"current": {"platform": "internal", "user": "default"}},
+        ) as load_state, mock.patch(
+            "scripts.clawcross.handle_chatbot_input",
+            return_value=(True, "Reading List sync OK"),
+        ) as handle_input:
+            handled, reply = asyncio.run(
+                adapter.handle_cli_mode(
+                    text="/sync --dry-run",
+                    channel="openclaw-weixin",
+                    user_id="u1",
+                    username="boris",
+                )
+            )
+
+        self.assertTrue(handled)
+        self.assertEqual(reply, "Reading List sync OK")
+        load_state.assert_called_once_with("openclaw-weixin", "u1", "boris")
+        handle_input.assert_called_once()
+        self.assertNotIn("openclaw-weixin:u1", adapter._cli_enabled)
+
+    def test_chat_slash_commands_are_callable_non_interactively(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = {
+                "__state_path": str(Path(tmpdir) / "state.json"),
+                "current": {"platform": "internal", "user": "default", "session": "default"},
+            }
+
+            def _print_restart(_args, _state):
+                print("restart mocked")
+                return 0
+
+            def _print_cancel(_args, _state):
+                print("cancel mocked")
+                return 0
+
+            def _print_front(_state):
+                print("magic link mocked")
+
+            with mock.patch(
+                "scripts.clawcross._list_current_platform_sessions",
+                return_value=([{"session": "review-1", "title": "Review thread", "message_count": 2}], None),
+            ), mock.patch("scripts.clawcross.cmd_restart", side_effect=_print_restart), mock.patch(
+                "scripts.clawcross.cmd_cancel", side_effect=_print_cancel
+            ), mock.patch("scripts.clawcross._show_magic_link", side_effect=_print_front):
+                cases = [
+                    ("/cross platform", "Available platforms"),
+                    ("/cross platforms", "Available platforms"),
+                    ("/cross platform list", "Available platforms"),
+                    ("/cross platform use codex", "Agent switched to codex"),
+                    ("/cross use claude", "Agent switched to claude"),
+                    ("/cross mode", "mode:"),
+                    ("/cross mode plan", "mode: plan"),
+                    ("/cross session", "review-1"),
+                    ("/cross session review-2", "session: review-2"),
+                    ("/cross new session", "session:"),
+                    ("/cross state", "state_file:"),
+                    ("/cross restart", "restart mocked"),
+                    ("/cross cancel", "cancel mocked"),
+                    ("/cross front", "magic link mocked"),
+                ]
+
+                for command, expected in cases:
+                    with self.subTest(command=command):
+                        active, reply = handle_chatbot_input(command, state)
+                        self.assertTrue(active)
+                        self.assertIn(expected, reply)
+
+            active, reply = handle_chatbot_input("/cross exit", state)
+            self.assertFalse(active)
+            self.assertEqual(reply, "")
+
+    def test_chat_display_handlers_are_forced_non_interactive(self):
+        state = {
+            "current": {"platform": "internal", "user": "default", "session": "default"},
+        }
+        with mock.patch(
+            "clawcross_cli.model_cmd.handle_model_command",
+            return_value="model ok",
+        ) as model_handler:
+            _active, reply = handle_chatbot_input("/cross model use main", state)
+        self.assertEqual(reply, "model ok")
+        model_handler.assert_called_once_with(["use", "main"], interactive=False)
+
+        with mock.patch(
+            "clawcross_cli.display_cmd.handle_team_command",
+            return_value="team ok",
+        ) as team_handler:
+            _active, reply = handle_chatbot_input('/cross team "Research Team" members', state)
+        self.assertEqual(reply, "team ok")
+        team_handler.assert_called_once_with(["Research Team", "members"], interactive=False, user="default")
+
+        with mock.patch(
+            "clawcross_cli.display_cmd.handle_workflow_command",
+            return_value="workflow ok",
+        ) as workflow_handler:
+            _active, reply = handle_chatbot_input("/cross workflow run demo question hello world", state)
+        self.assertEqual(reply, "workflow ok")
+        workflow_handler.assert_called_once_with(
+            ["run", "demo", "question", "hello", "world"],
+            interactive=False,
+            user="default",
+        )
+
+        with mock.patch(
+            "clawcross_cli.display_cmd.handle_skill_command",
+            return_value="skill ok",
+        ) as skill_handler:
+            _active, reply = handle_chatbot_input('/cross skill "Research Team"', state)
+        self.assertEqual(reply, "skill ok")
+        skill_handler.assert_called_once_with(["Research Team"], interactive=False, user="default")
+
+        with mock.patch(
+            "clawcross_cli.display_cmd.handle_cron_command",
+            return_value="cron ok",
+        ) as cron_handler:
+            _active, reply = handle_chatbot_input('/cross cron "Research Team"', state)
+        self.assertEqual(reply, "cron ok")
+        cron_handler.assert_called_once_with(["Research Team"], interactive=False, user="default")
+
+        with mock.patch(
+            "clawcross_cli.channel_cmd.handle_channel_command",
+            return_value="channel ok",
+        ) as channel_handler:
+            _active, reply = handle_chatbot_input("/cross channel show clawcross_wechat", state)
+        self.assertEqual(reply, "channel ok")
+        channel_handler.assert_called_once_with(["show", "clawcross_wechat"], interactive=False)
 
     def test_chat_session_switch_matches_cli_command(self):
         with tempfile.TemporaryDirectory() as tmpdir:
