@@ -29,9 +29,11 @@ from src.services.reading_list_rules import (
     normalize_title,
     normalize_url,
 )
+from src.utils.runtime_paths import STATE_DIR
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WX_GUARDED_SCRIPT = PROJECT_ROOT / "scripts" / "wx_guarded.py"
+SYNC_STATE_PATH = STATE_DIR / "reading_list_sync_pages.json"
 DEFAULT_CHAT_NAME = "文件传输助手"
 DEFAULT_HISTORY_LIMIT = 80
 DEFAULT_TIMEZONE = "Asia/Shanghai"
@@ -85,6 +87,7 @@ class ReadingListEntry:
 
 WxRunner = Callable[[list[str], int], CommandResult]
 NotionRunner = Callable[[list[str], str | None, int], CommandResult]
+CodexRunner = Callable[[str, int], CommandResult]
 
 
 def sync_wechat_file_helper_reading_list(
@@ -99,8 +102,11 @@ def sync_wechat_file_helper_reading_list(
     timezone_name: str = DEFAULT_TIMEZONE,
     wx_timeout_seconds: int = 80,
     notion_timeout_seconds: int = 80,
+    codex_timeout_seconds: int = 900,
+    mode: str | None = None,
     wx_runner: WxRunner | None = None,
     notion_runner: NotionRunner | None = None,
+    codex_runner: CodexRunner | None = None,
 ) -> dict[str, Any]:
     """Run the guarded WeChat -> Notion Reading List sync.
 
@@ -109,6 +115,7 @@ def sync_wechat_file_helper_reading_list(
     """
 
     date_text = target_date or _today(timezone_name)
+    sync_mode = "dry-run" if dry_run else _normalize_sync_mode(mode)
     summary: dict[str, Any] = {
         "ok": False,
         "dry_run": dry_run,
@@ -122,6 +129,7 @@ def sync_wechat_file_helper_reading_list(
         "skipped_noise": 0,
         "notion_page_id": "",
         "notion_action": "dry_run" if dry_run else "",
+        "mode": sync_mode,
         "updated": False,
         "blocker": "",
     }
@@ -148,6 +156,20 @@ def sync_wechat_file_helper_reading_list(
     if dry_run:
         summary["ok"] = True
         summary["new_links"] = len(entries)
+        return summary
+
+    if sync_mode == "codex":
+        codex_result = _run_codex_sync(
+            entries,
+            date_text=date_text,
+            summary=summary,
+            timeout_seconds=codex_timeout_seconds,
+            codex_runner=codex_runner,
+        )
+        summary.update(codex_result)
+        return summary
+    if sync_mode != "local":
+        summary["blocker"] = f"unsupported_sync_mode: {sync_mode}"
         return summary
 
     target = _resolve_notion_target(
@@ -184,7 +206,11 @@ def sync_wechat_file_helper_reading_list(
         return summary
 
     if target_page_id:
-        updated_markdown = _append_entries(existing_markdown, new_entries, date_text=date_text)
+        try:
+            updated_markdown = _append_entries(existing_markdown, new_entries, date_text=date_text)
+        except ValueError as exc:
+            summary["blocker"] = f"reading_list_validation_failed: {_safe_error(str(exc))}"
+            return summary
         update_result = _run_notion(
             ["pages", "update", target_page_id],
             notion_runner,
@@ -203,7 +229,11 @@ def sync_wechat_file_helper_reading_list(
         summary["blocker"] = "missing_notion_target"
         return summary
 
-    created_markdown = _new_daily_page_markdown(new_entries, date_text=date_text)
+    try:
+        created_markdown = _new_daily_page_markdown(new_entries, date_text=date_text)
+    except ValueError as exc:
+        summary["blocker"] = f"reading_list_validation_failed: {_safe_error(str(exc))}"
+        return summary
     create_result = _run_notion(
         ["pages", "create", "--parent", target_parent, "--json"],
         notion_runner,
@@ -218,6 +248,8 @@ def sync_wechat_file_helper_reading_list(
     summary["updated"] = True
     summary["notion_action"] = "created"
     summary["notion_page_id"] = _extract_page_id(create_result.stdout)
+    if summary["notion_page_id"]:
+        _save_cached_daily_page(date_text, str(summary["notion_page_id"]))
     return summary
 
 
@@ -247,10 +279,11 @@ def extract_reading_list_entries(messages: list[dict[str, Any]]) -> tuple[list[R
 
 def format_reading_list_sync_summary(summary: dict[str, Any]) -> str:
     status = "OK" if summary.get("ok") else "BLOCKED"
+    mode_text = "dry-run" if summary.get("dry_run") else str(summary.get("mode") or "write")
     lines = [
         f"Reading List sync {status}",
         f"date: {summary.get('date') or ''}",
-        f"mode: {'dry-run' if summary.get('dry_run') else 'write'}",
+        f"mode: {mode_text}",
         f"messages_scanned: {int(summary.get('messages_scanned') or 0)}",
         f"links_found: {int(summary.get('links_found') or 0)}",
         f"unique_links: {int(summary.get('unique_links') or 0)}",
@@ -268,6 +301,279 @@ def format_reading_list_sync_summary(summary: dict[str, Any]) -> str:
     if blocker:
         lines.append(f"blocker: {blocker}")
     return "\n".join(lines)
+
+
+def _normalize_sync_mode(value: str | None) -> str:
+    raw = (value or os.getenv("CLAWCROSS_READING_LIST_SYNC_MODE") or "codex").strip().lower()
+    aliases = {
+        "agent": "codex",
+        "acpx": "codex",
+        "codex-agent": "codex",
+        "ntn": "local",
+        "notion-cli": "local",
+    }
+    return aliases.get(raw, raw)
+
+
+def _run_codex_sync(
+    entries: list[ReadingListEntry],
+    *,
+    date_text: str,
+    summary: dict[str, Any],
+    timeout_seconds: int,
+    codex_runner: CodexRunner | None,
+) -> dict[str, Any]:
+    if not entries:
+        return {
+            "ok": True,
+            "new_links": 0,
+            "notion_action": "no_changes",
+        }
+    prompt = _build_codex_sync_prompt(entries, date_text=date_text, summary=summary)
+    result = codex_runner(prompt, timeout_seconds) if codex_runner else _run_codex_acpx_prompt(prompt, timeout_seconds)
+    if result.returncode != 0:
+        return {
+            "ok": False,
+            "blocker": f"codex_sync_failed: {_result_error(result)}",
+        }
+
+    payload = _extract_json_object(result.stdout)
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "blocker": "codex_sync_unstructured_response",
+        }
+    out: dict[str, Any] = {
+        "ok": bool(payload.get("ok")),
+        "notion_action": str(payload.get("notion_action") or "codex"),
+        "updated": bool(payload.get("updated")),
+        "new_links": _safe_int(payload.get("new_links"), int(summary.get("new_links") or 0)),
+        "duplicates_skipped": _safe_int(
+            payload.get("duplicates_skipped"),
+            int(summary.get("duplicates_skipped") or 0),
+        ),
+        "skipped_noise": _safe_int(payload.get("skipped_noise"), int(summary.get("skipped_noise") or 0)),
+    }
+    page_id = str(payload.get("notion_page_id") or "").strip()
+    if page_id:
+        out["notion_page_id"] = page_id
+        _save_cached_daily_page(date_text, page_id)
+    blocker = str(payload.get("blocker") or "").strip()
+    if blocker:
+        out["blocker"] = _safe_error(blocker)
+    return out
+
+
+def _build_codex_sync_prompt(
+    entries: list[ReadingListEntry],
+    *,
+    date_text: str,
+    summary: dict[str, Any],
+) -> str:
+    payload = {
+        "date": date_text,
+        "daily_page_title": _daily_page_title(date_text),
+        "counts": {
+            "messages_scanned": int(summary.get("messages_scanned") or 0),
+            "links_found": int(summary.get("links_found") or 0),
+            "unique_links": int(summary.get("unique_links") or 0),
+            "duplicates_skipped": int(summary.get("duplicates_skipped") or 0),
+            "skipped_noise": int(summary.get("skipped_noise") or 0),
+        },
+        "notion_hints": {
+            "root_page_title": "Reading List",
+            "month_page_title": _month_page_title(date_text),
+            "daily_page_title": _daily_page_title(date_text),
+            "root_page_id": os.getenv("CLAWCROSS_READING_LIST_ROOT_PAGE_ID", "").strip(),
+            "parent": os.getenv("CLAWCROSS_READING_LIST_PARENT", "").strip(),
+            "data_source_id": os.getenv("CLAWCROSS_READING_LIST_DATA_SOURCE_ID", "").strip(),
+        },
+        "entries": [
+            {"title": entry.title, "url": entry.url, "canonical": entry.canonical}
+            for entry in entries
+        ],
+    }
+    return (
+        "You are Codex running a ClawCross WeChat /sync job.\n"
+        "Use your own Notion connector/app integration to update the user's Notion Reading List. "
+        "Do not use shell commands, ntn, browser scraping, or ask the user for more context unless Notion access is unavailable.\n\n"
+        "Task:\n"
+        "- Find the Notion Reading List hierarchy. Prefer the page titled 'Reading List', then the month page in notion_hints.month_page_title, then the daily page in notion_hints.daily_page_title.\n"
+        "- If the daily page does not exist, create it under the month page or the hinted parent.\n"
+        "- Preserve existing entries and skip duplicate canonical URLs.\n"
+        "- Add only article/research/product links from entries.\n"
+        "- Do not expose private WeChat message contents. Your final answer must be strict JSON only.\n\n"
+        "Return exactly this JSON object shape, with no markdown and no extra text:\n"
+        '{"ok":true,"updated":true,"date":"YYYY-MM-DD","notion_page_id":"",'
+        '"notion_action":"created|updated|no_changes|blocked","new_links":0,'
+        '"duplicates_skipped":0,"skipped_noise":0,"blocker":""}\n\n'
+        "Sync package:\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def _run_codex_acpx_prompt(prompt: str, timeout_seconds: int) -> CommandResult:
+    acpx = shutil.which("acpx")
+    if not acpx:
+        return CommandResult(127, "", "acpx binary not found")
+    session = os.getenv("CLAWCROSS_READING_LIST_CODEX_SESSION", "clawcross-reading-list-sync").strip()
+    model = os.getenv("CLAWCROSS_READING_LIST_CODEX_MODEL", "").strip()
+    ttl = os.getenv("CLAWCROSS_READING_LIST_CODEX_TTL", "3600").strip()
+    max_turns = os.getenv("CLAWCROSS_READING_LIST_CODEX_MAX_TURNS", "12").strip()
+
+    content_blocks = [{"type": "text", "text": prompt.strip() or "(empty prompt)"}]
+    tmp_path = PROJECT_ROOT / ".tmp-reading-list-codex-prompt.json"
+    tmp_path.write_text(json.dumps(content_blocks, ensure_ascii=False), encoding="utf-8")
+    cmd = [
+        acpx,
+        "--cwd",
+        str(PROJECT_ROOT),
+        "--ttl",
+        ttl,
+        "--approve-all",
+        "--format",
+        "json",
+        "--json-strict",
+    ]
+    if model:
+        cmd.extend(["--model", model])
+    if max_turns:
+        cmd.extend(["--max-turns", max_turns])
+    cmd.extend(["codex", "prompt", "-s", session, "--file", str(tmp_path)])
+    try:
+        ensure_cmd = [
+            acpx,
+            "--cwd",
+            str(PROJECT_ROOT),
+            "--ttl",
+            ttl,
+            "--approve-all",
+            "--format",
+            "json",
+            "--json-strict",
+        ]
+        if model:
+            ensure_cmd.extend(["--model", model])
+        if max_turns:
+            ensure_cmd.extend(["--max-turns", max_turns])
+        ensure_cmd.extend(["codex", "sessions", "ensure", "--name", session])
+        ensure_proc = subprocess.run(
+            ensure_cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=min(timeout_seconds, 120),
+            cwd=str(PROJECT_ROOT),
+            check=False,
+        )
+        if ensure_proc.returncode != 0:
+            return CommandResult(ensure_proc.returncode, ensure_proc.stdout, ensure_proc.stderr)
+        proc = subprocess.run(
+            cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            cwd=str(PROJECT_ROOT),
+            check=False,
+        )
+        if proc.returncode != 0:
+            return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+        read_cmd = [
+            acpx,
+            "--cwd",
+            str(PROJECT_ROOT),
+            "--ttl",
+            ttl,
+            "--approve-all",
+            "--format",
+            "json",
+            "--json-strict",
+            "codex",
+            "sessions",
+            "read",
+            session,
+            "--tail",
+            "12",
+        ]
+        read_proc = subprocess.run(
+            read_cmd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=min(timeout_seconds, 120),
+            cwd=str(PROJECT_ROOT),
+            check=False,
+        )
+        if read_proc.returncode == 0 and read_proc.stdout.strip():
+            stdout = "\n".join(part for part in (proc.stdout.strip(), read_proc.stdout.strip()) if part)
+            return CommandResult(proc.returncode, stdout, proc.stderr)
+        return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+    except subprocess.TimeoutExpired as exc:
+        return CommandResult(124, exc.stdout or "", exc.stderr or f"timeout after {timeout_seconds}s")
+    finally:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    found: list[dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(stripped):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(stripped[idx:])
+        except json.JSONDecodeError:
+            continue
+        for candidate in _iter_dict_candidates(parsed):
+            if _looks_like_codex_sync_result(candidate):
+                found.append(candidate)
+    if found:
+        return found[-1]
+    return None
+
+
+def _iter_dict_candidates(value: Any) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        candidates.append(value)
+        for child in value.values():
+            candidates.extend(_iter_dict_candidates(child))
+        for key in ("text", "textPreview", "preview", "content", "message", "output", "raw_output"):
+            child = value.get(key)
+            if isinstance(child, str):
+                nested = _extract_json_object(child)
+                if nested is not None:
+                    candidates.append(nested)
+    elif isinstance(value, list):
+        for child in value:
+            candidates.extend(_iter_dict_candidates(child))
+    return candidates
+
+
+def _looks_like_codex_sync_result(value: dict[str, Any]) -> bool:
+    action = str(value.get("notion_action") or "")
+    if str(value.get("date") or "") == "YYYY-MM-DD" or "|" in action:
+        return False
+    return "ok" in value and (
+        "notion_action" in value
+        or "notion_page_id" in value
+        or "new_links" in value
+        or "blocker" in value
+    )
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _today(timezone_name: str) -> str:
@@ -290,6 +596,11 @@ def _load_wechat_history(
         result = wx_runner(args, timeout_seconds)
     else:
         result = _run_wx_guarded(args, timeout_seconds)
+    if result.returncode != 0 and chat_name == DEFAULT_CHAT_NAME:
+        fallback_args = ["history", "filehelper", "-n", str(max(1, history_limit)), "--json"]
+        fallback = wx_runner(fallback_args, timeout_seconds) if wx_runner else _run_wx_guarded(fallback_args, timeout_seconds)
+        if fallback.returncode == 0:
+            result = fallback
     if result.returncode != 0:
         raise RuntimeError(_result_error(result))
     try:
@@ -356,6 +667,10 @@ def _resolve_notion_target(
     notion_runner: NotionRunner | None,
     timeout_seconds: int,
 ) -> dict[str, Any]:
+    cached_page_id = _cached_daily_page(date_text)
+    if cached_page_id:
+        return {"page_id": cached_page_id}
+
     resolved_page_id = _first_nonempty(
         page_id,
         os.getenv("CLAWCROSS_READING_LIST_PAGE_ID"),
@@ -523,10 +838,53 @@ def _append_entries(existing_markdown: str, entries: list[ReadingListEntry], *, 
 
 def _new_daily_page_markdown(entries: list[ReadingListEntry], *, date_text: str) -> str:
     body = "\n".join(entry.markdown() for entry in entries)
-    markdown = f"# Reading List {date_text}\n\n{body}\n"
+    markdown = f"# {_daily_page_title(date_text)}\n\n{body}\n"
     normalized = normalize_markdown_links(markdown)
     assert_valid_reading_list_markdown(normalized)
     return f"{normalized.rstrip()}\n"
+
+
+def _daily_page_title(date_text: str) -> str:
+    try:
+        parsed = datetime.strptime(date_text, "%Y-%m-%d")
+    except ValueError:
+        return date_text
+    return f"{parsed.month}.{parsed.day}"
+
+
+def _month_page_title(date_text: str) -> str:
+    try:
+        parsed = datetime.strptime(date_text, "%Y-%m-%d")
+    except ValueError:
+        return date_text
+    return f"{parsed.year}.{parsed.month}"
+
+
+def _cached_daily_page(date_text: str) -> str:
+    try:
+        data = json.loads(SYNC_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    value = data.get(date_text)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _save_cached_daily_page(date_text: str, page_id: str) -> None:
+    if not page_id:
+        return
+    try:
+        data = json.loads(SYNC_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[date_text] = page_id
+    SYNC_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = SYNC_STATE_PATH.with_suffix(f"{SYNC_STATE_PATH.suffix}.tmp")
+    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp_path, SYNC_STATE_PATH)
 
 
 def _find_daily_page(stdout: str, date_text: str) -> str:

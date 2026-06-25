@@ -2,60 +2,55 @@
 
 ## Cycle
 
-6 - WeChat Reading List sync slash command
+8 - Agently Mail CLI connected to ClawCross WeChat shell
 
 ## 本轮目标
 
-- 给微信里的 ClawCross 增加 `/cross sync`，并支持直接发送 `/sync` 作为快捷入口。
-- 同步链路必须走 ClawCross guarded WeChat 路径：`scripts/wx_guarded.py -- history 文件传输助手 -n 80 --json`，不能直接调用未受保护的 wx。
-- 从文件传输助手近况里抽取适合 Reading List 的文章 / research / product URL，复用 `src/services/reading_list_rules.py` 做 normalize、canonical dedupe、validation。
-- 写入 Notion Reading List daily page 时保留已有内容，只追加新 canonical URL；最终回复只暴露 counts、目标日期/page、skipped-noise count、blocker，不回显微信消息正文、标题或 URL。
+- 按用户要求把 Tencent QQMail Agently Mail CLI 接进 ClawCross，让微信里可以通过 `/cross` 调用已授权的邮箱能力。
+- 让 `/cross opencli-status mail` 能暴露 Agently Mail 安装状态，让 `/cross mail -- <args...>` 走本地无 shell runner 调用 `agently-cli`。
+- 对发信、回复、转发、删除、上传附件等有副作用的邮箱命令默认加保护，只有用户显式带 `--allow-mutating` 时才允许执行。
+- 更新微信斜杠命令帮助和文档，并覆盖回归测试。
 
 ## 改了哪些文件
 
-- `src/services/reading_list_sync.py`
-  - 新增 guarded wx history -> Reading List entry extraction service。
-  - 支持 dry-run、fixed page update、parent create、data-source query/create 三种 Notion target 模式。
-  - 所有对外 summary 只包含计数、日期、page id/action 和 blocker；错误摘要会 mask token/key/cookie 字段。
+- `src/harness/opencli_bridge.py`
+  - 在 OpenCLI external catalog 中登记 `agently-mail` / `agently-cli`，使 `/cross opencli-status mail` 能报告安装状态。
 - `scripts/clawcross.py`
-  - 新增 `/sync` shell slash 和 `/cross sync` chatbot slash。
-  - 支持 `--dry-run`、`--limit`、`--date`、`--chat`、`--page-id`、`--parent`、`--data-source-id`。
-  - `/cross help` 补上 sync 入口与直接 `/sync` 快捷入口。
-- `chatbot/adapters/base.py`
-  - 新增 direct `/sync` 检测；微信/社交渠道可以不先进入 `/cross` shell 也能触发同一个 sync handler。
-- `test/test_reading_list_sync.py`
-  - 覆盖 dry-run 抽取/normalize/dedupe/noise skip、缺少 Notion target blocker、已有 Notion page canonical 去重后 update。
-- `test/test_integration.py`
-  - 覆盖 `/cross sync --dry-run` 调用服务层。
-  - 覆盖 direct `/sync --dry-run` 被 ChannelAdapter 处理且不打开 cross shell。
-  - help 覆盖新命令。
+  - 新增 `/cross mail -- <args...>` slash command。
+  - 新增 `mail` / `agently` / `agently-mail` / `agently-cli` aliases。
+  - 新增 `_run_agently_mail_command` no-shell runner，支持 `AGENTLY_CLI_BIN` override、JSON output parsing、timeout/output limit，以及 mutating command guard。
+  - 让 OpenCLI/chat command formatter 使用 runner label，因此 Agently Mail 输出显示为 `Agently Mail OK`。
 - `docs/wechat-clawbot.md`
-  - 增加 `/cross sync`、`/sync --dry-run` 示例。
-  - 记录 Notion target env：`CLAWCROSS_READING_LIST_PAGE_ID`、`CLAWCROSS_READING_LIST_PARENT`、`CLAWCROSS_READING_LIST_DATA_SOURCE_ID`。
+  - 补充 `/cross opencli-status mail`、`/cross mail -- +me`、`/cross mail -- message ...` 使用说明。
+  - 记录 mutating mail commands 默认被拦截，只有显式 `--allow-mutating` 才执行。
+- `test/test_integration.py`
+  - 覆盖 `/cross mail -- +me` dispatch。
+  - 覆盖 mutating mail command 缺少 `--allow-mutating` 时被阻止。
+  - 更新 help smoke 断言。
+- `test/test_opencli_bridge.py`
+  - 覆盖 `agently-mail` 出现在 OpenCLI status catalog 中。
 - `.multiagent/status.md`
-  - 登记并释放 Cycle 6 reservation，记录验证、live dry-run、Notion blocker、服务重启和 tunnel 状态。
-- `.multiagent/codex-handoff.md`
-  - 本文件，更新为 Cycle 6。
+  - 释放 Cycle 8 reservations，记录验证、服务重启、Cloudflare Tunnel smoke 和当前运行会话。
 
 ## 运行了哪些验证
 
-- `python3 -m py_compile scripts/clawcross.py chatbot/adapters/base.py src/services/reading_list_sync.py test/test_reading_list_sync.py test/test_integration.py` -> passed.
-- `uv run python -m unittest test.test_reading_list_sync test.test_integration.ChatbotCommandTests` -> passed, 17 tests OK.
-- Live chat shell probe `/cross sync --dry-run` -> guarded wx history read succeeded; reported counts only: `messages_scanned=80`, `links_found=72`, `unique_links=68`, `new_links=68`, `duplicates_skipped=1`, `skipped_noise=3`.
-- Live chat shell probe `/cross sync --limit 5` -> write path returned blocker `missing_notion_target` with counts only; no Notion write attempted.
-- `uv run python -m unittest test.test_reading_list_sync test.test_reading_list_rules test.test_integration.ChatbotCommandTests test.test_openclaw_weixin_adapter test.test_opencli_bridge test.test_cli_opencli` -> passed, 45 tests OK.
-- `uv run python -m unittest test.test_integration` -> passed, 45 tests OK.
-- Service restart: `bash selfskill/scripts/run.sh start-foreground` -> foreground exec session `79261`; ports 51200/51201/51202/51209 listening; `openclaw-weixin` channel enabled and polling.
-- Tunnel smoke: `curl -fsS --max-time 12 https://irrigation-start-legislature-merry.trycloudflare.com/mobile_group_chat | head -c 180` -> returned mobile HTML prefix.
-- `ntn whoami` -> blocked with `No workspace selected`; real Notion writes need selected workspace / `NOTION_WORKSPACE_ID` plus a Reading List target env.
+- `agently-cli +me` -> passed，已授权邮箱 alias 为 `borisguo9092@agent.qq.com`，具备 mail read/send/delete scopes。
+- `python3 -m py_compile scripts/clawcross.py src/harness/opencli_bridge.py test/test_integration.py test/test_opencli_bridge.py` -> passed。
+- `uv run python -m unittest test.test_integration.ChatbotCommandTests test.test_opencli_bridge.OpenCliBridgeTests` -> passed，28 tests OK。
+- Live chat shell probe `/cross opencli-status mail` -> reported `agently-mail (agently-cli): installed`。
+- Live chat shell probe `/cross mail -- +me` -> returned `Agently Mail OK` and authorized mailbox metadata。
+- Live chat shell probe `/cross mail -- message +send --to a@example.test --subject Hi --body Hello` -> blocked with explicit `--allow-mutating` requirement; no mail sent。
+- Restarted ClawCross with `bash selfskill/scripts/run.sh start-foreground`; foreground exec session `63469` is running, ports 51200/51201/51202/51209 are listening, and `openclaw-weixin` is enabled。
+- `bash selfskill/scripts/run.sh status` -> ports listening, OpenClaw runtime running, local/remote magic links printed。
+- `curl -fsS --max-time 12 https://irrigation-start-legislature-merry.trycloudflare.com/mobile_group_chat | head -c 180` -> returned mobile HTML prefix; `curl` saw expected broken pipe after `head` closed。
 
 ## 最不确定的点
 
-- Notion target discovery is config-based. Without `CLAWCROSS_READING_LIST_PAGE_ID`, `CLAWCROSS_READING_LIST_PARENT`, or `CLAWCROSS_READING_LIST_DATA_SOURCE_ID`, the command intentionally returns `missing_notion_target` instead of guessing a page.
-- The data-source daily-page lookup is deliberately tolerant of different `ntn datasources query --json` shapes, but it has not been validated against the user's real Reading List data source because `ntn whoami` currently has no selected workspace.
-- The link suitability filter skips obvious media/CDN/private URLs and keeps general http(s) article/product/research URLs. It may include some non-reading noise from a user's File Transfer Helper until we tune domain rules with real accepted/rejected examples.
+- Agently Mail runner 目前放在 `scripts/clawcross.py` 的 WeChat command layer，因为用户目标是微信 `/cross` 直接调用。若后续 CLI/API 也要复用同一能力，可能应下沉到 `src/harness/opencli_bridge.py` 或单独 service。
+- Mutating guard 是保守策略。用户“从微信正常调用”可能希望发信类命令也能自然语言触发，但邮箱写操作的误触成本较高，所以当前要求显式 `--allow-mutating`。
+- 真实的收件箱列表/读取命令未在最终报告中展开邮件内容，避免把私人邮件正文写进 handoff；本轮只验证了授权元数据和命令路由。
 
 ## 要 Claude 挑战的问题
 
-- Should `/cross sync` refuse write mode unless `--confirm` is provided, even though the user's stated goal is a one-shot WeChat sync slash command?
-- Should the Notion target config support a named profile file under ClawCross runtime state instead of environment variables, so multiple Reading List destinations can coexist without editing `.env`?
+- Should the Agently Mail no-shell runner live in `src/harness/opencli_bridge.py` so CLI/API callers can reuse the same policy, or is keeping it in `scripts/clawcross.py` acceptable while the only exposed surface is WeChat `/cross`?
+- Is the `--allow-mutating` guard strict enough and ergonomic enough for WeChat usage, or should mail mutations require a stronger two-step confirmation flow rather than a single flag?

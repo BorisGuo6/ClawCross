@@ -33,6 +33,10 @@ class OpenCliBridgeTests(unittest.TestCase):
         browser_names = {item["name"] for item in mail["capabilities"]["browser"]}
         self.assertIn("gmail-browser", browser_names)
 
+        agently = get_opencli_status(query="agently")
+        external_names = {item["name"] for item in agently["capabilities"]["external_clis"]}
+        self.assertIn("agently-mail", external_names)
+
     def test_status_exposes_agent_extension_and_deepseek_browser_capability(self):
         with patch("harness.opencli_bridge.shutil.which", return_value=""):
             ponytail = get_opencli_status(query="ponytail")

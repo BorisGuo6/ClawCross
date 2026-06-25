@@ -80,6 +80,21 @@ def test_replaces_placeholder_titles_with_overrides_and_url_fallbacks():
     assert validate_reading_list_markdown(normalized) == []
 
 
+def test_derives_readable_titles_from_root_domains():
+    text = """
+[kairos-homeworld.github.io](https://kairos-homeworld.github.io/)
+[vera.csail.mit.edu](https://vera.csail.mit.edu/)
+[xdof.ai](https://xdof.ai/)
+"""
+
+    normalized = normalize_markdown_links(text)
+
+    assert "[Kairos homeworld](https://kairos-homeworld.github.io/)" in normalized
+    assert "[Vera](https://vera.csail.mit.edu/)" in normalized
+    assert "[Xdof](https://xdof.ai/)" in normalized
+    assert validate_reading_list_markdown(normalized) == []
+
+
 def test_deduplicates_pure_link_rows_by_normalized_url():
     text = """
 [CameraNoise](https://lizaigc.github.io/CameraNoise/)

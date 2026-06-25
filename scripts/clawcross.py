@@ -283,6 +283,7 @@ CHAT_SLASH_COMMANDS = [
     ("/cross opencli -- <args...>", "run OpenCLI through the guarded harness"),
     ("/cross wx -- <args...>", "run wx-cli through OpenCLI"),
     ("/cross notion -- <args...>", "run Notion CLI (`ntn`) through OpenCLI"),
+    ("/cross mail -- <args...>", "run Agently Mail CLI (`agently-cli`)"),
     ("/cross exit", "leave /cross mode"),
 ]
 
@@ -541,8 +542,9 @@ def _format_opencli_status_for_chat(status: dict[str, Any]) -> str:
 
 def _format_opencli_run_for_chat(result: dict[str, Any]) -> str:
     ok = bool(result.get("ok"))
+    label = str(result.get("label") or result.get("runner") or "OpenCLI")
     lines = [
-        f"OpenCLI {'OK' if ok else 'FAILED'} (exit {result.get('returncode', '?')})",
+        f"{label} {'OK' if ok else 'FAILED'} (exit {result.get('returncode', '?')})",
     ]
     command = result.get("command")
     if isinstance(command, list) and command:
@@ -577,6 +579,115 @@ def _format_opencli_run_for_chat(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_AGENTLY_MAIL_ALIASES = {"mail", "agently", "agently-mail", "agently-cli"}
+_AGENTLY_MAIL_MUTATING_ACTIONS = {
+    "+delete",
+    "+forward",
+    "+reply",
+    "+send",
+    "+trash",
+}
+
+
+def _parse_json_maybe_for_chat(text: str) -> Any | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    starts = [idx for idx in (raw.find("{"), raw.find("[")) if idx >= 0]
+    if not starts:
+        return None
+    try:
+        return json.loads(raw[min(starts):])
+    except Exception:
+        return None
+
+
+def _truncate_run_output(text: str, limit: int) -> tuple[str, bool]:
+    if limit <= 0:
+        return "", bool(text)
+    if len(text) <= limit:
+        return text, False
+    return text[:limit].rstrip() + f"\n...[truncated {len(text) - limit} chars]", True
+
+
+def _is_agently_mail_mutating(args: list[str]) -> bool:
+    lowered = [item.lower() for item in args]
+    if not lowered:
+        return False
+    if lowered[0] == "message" and len(lowered) >= 2:
+        return lowered[1] in _AGENTLY_MAIL_MUTATING_ACTIONS
+    if lowered[0] == "attachment" and len(lowered) >= 2:
+        return lowered[1] == "+upload"
+    return any(item in _AGENTLY_MAIL_MUTATING_ACTIONS for item in lowered[:2])
+
+
+def _run_agently_mail_command(
+    args: list[str],
+    *,
+    timeout_seconds: int,
+    max_output_chars: int,
+    allow_mutating: bool,
+) -> dict[str, Any]:
+    binary = os.getenv("AGENTLY_CLI_BIN", "").strip() or shutil.which("agently-cli")
+    if not binary:
+        raise FileNotFoundError("agently-cli is not installed; run: npm install -g @tencent-qqmail/agently-cli")
+    clean_args = [str(item) for item in (args or []) if str(item).strip()]
+    if clean_args and clean_args[0] == "agently-cli":
+        clean_args = clean_args[1:]
+    if not clean_args:
+        raise ValueError("Agently Mail command requires arguments. Example: /cross mail -- +me")
+    if clean_args[0] == "auth" and (len(clean_args) < 2 or clean_args[1] == "login"):
+        raise ValueError("Agently Mail OAuth login is interactive; run `agently-cli auth login` in a terminal.")
+    if not allow_mutating and _is_agently_mail_mutating(clean_args):
+        raise PermissionError(
+            "this Agently Mail command can send or modify mail; pass --allow-mutating only after explicit user approval"
+        )
+
+    timeout = max(1, min(int(timeout_seconds or 60), 300))
+    max_chars = max(1000, min(int(max_output_chars or 12000), 200000))
+    command = [binary, *clean_args]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        stdout, stdout_truncated = _truncate_run_output(completed.stdout or "", max_chars)
+        stderr, stderr_truncated = _truncate_run_output(completed.stderr or "", max_chars)
+        parsed = _parse_json_maybe_for_chat(stdout)
+        result: dict[str, Any] = {
+            "ok": completed.returncode == 0,
+            "returncode": int(completed.returncode),
+            "command": command,
+            "stdout": stdout,
+            "stderr": stderr,
+            "truncated": stdout_truncated or stderr_truncated,
+            "label": "Agently Mail",
+        }
+        if parsed is not None:
+            result["json"] = parsed
+        return result
+    except subprocess.TimeoutExpired as exc:
+        stdout, stdout_truncated = _truncate_run_output(exc.stdout or "", max_chars)
+        stderr, stderr_truncated = _truncate_run_output(exc.stderr or "", max_chars)
+        return {
+            "ok": False,
+            "returncode": 124,
+            "command": command,
+            "stdout": stdout,
+            "stderr": stderr or f"Agently Mail command timed out after {timeout}s",
+            "timed_out": True,
+            "truncated": stdout_truncated or stderr_truncated,
+            "label": "Agently Mail",
+        }
+
+
 def _handle_chat_opencli_line(line: str) -> str | None:
     try:
         tokens = shlex.split(line)
@@ -585,7 +696,7 @@ def _handle_chat_opencli_line(line: str) -> str | None:
     if not tokens:
         return None
     command = tokens[0].lstrip("/").lower().replace("_", "-")
-    if command not in {"opencli-status", "opencli", "wx", "notion", "notion-cli", "ntn"}:
+    if command not in {"opencli-status", "opencli", "wx", "notion", "notion-cli", "ntn", *_AGENTLY_MAIL_ALIASES}:
         return None
 
     from harness.opencli_bridge import get_opencli_status, run_opencli_command
@@ -607,6 +718,19 @@ def _handle_chat_opencli_line(line: str) -> str | None:
     elif command in {"notion", "notion-cli", "ntn"}:
         opencli_args = forwarded if forwarded and forwarded[0] in {"ntn", "notion"} else ["ntn", *forwarded]
         usage = "/cross notion -- whoami"
+    elif command in _AGENTLY_MAIL_ALIASES:
+        if not forwarded:
+            return "Agently Mail command requires arguments. Example: /cross mail -- +me"
+        try:
+            result = _run_agently_mail_command(
+                forwarded,
+                timeout_seconds=options["timeout_seconds"],
+                max_output_chars=options["max_output_chars"],
+                allow_mutating=bool(options["allow_mutating"]),
+            )
+        except (FileNotFoundError, PermissionError, ValueError, RuntimeError) as exc:
+            return f"Agently Mail command failed: {exc}"
+        return _format_opencli_run_for_chat(result)
     else:
         opencli_args = forwarded
         usage = "/cross opencli -- wx sessions --json"
@@ -628,7 +752,7 @@ def _handle_chat_opencli_line(line: str) -> str | None:
 
 def _sync_usage(prefix: str) -> str:
     return (
-        f"Usage: {prefix} [reading-list] [--dry-run] [--limit N] [--date YYYY-MM-DD] "
+        f"Usage: {prefix} [reading-list] [--dry-run] [--codex|--local] [--limit N] [--date YYYY-MM-DD] "
         "[--chat NAME] [--page-id ID] [--parent page:<id>|data-source:<id>] "
         "[--data-source-id ID]"
     )
@@ -643,6 +767,7 @@ def _parse_reading_list_sync_args(args: list[str]) -> tuple[dict[str, Any], str 
         "page_id": None,
         "parent": None,
         "data_source_id": None,
+        "mode": None,
     }
     idx = 0
     while idx < len(args):
@@ -653,6 +778,24 @@ def _parse_reading_list_sync_args(args: list[str]) -> tuple[dict[str, Any], str 
             continue
         if normalized == "--dry-run":
             options["dry_run"] = True
+            idx += 1
+            continue
+        if normalized == "--codex":
+            options["mode"] = "codex"
+            idx += 1
+            continue
+        if normalized == "--local":
+            options["mode"] = "local"
+            idx += 1
+            continue
+        if normalized == "--mode":
+            if idx + 1 >= len(args):
+                return options, "--mode requires a value"
+            options["mode"] = args[idx + 1]
+            idx += 2
+            continue
+        if normalized.startswith("--mode="):
+            options["mode"] = arg.split("=", 1)[1]
             idx += 1
             continue
         if normalized in {"-n", "--limit"}:
@@ -2364,6 +2507,8 @@ _CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/cross wx -- search <keyword>", "search local WeChat data via wx-cli"),
         ("/cross notion -- <args...>", "run Notion CLI (`ntn`) through OpenCLI"),
         ("/cross notion -- whoami", "run Notion CLI (`ntn`) through OpenCLI"),
+        ("/cross mail -- <args...>", "run Agently Mail CLI (`agently-cli`)"),
+        ("/cross mail -- +me", "show the authorized Agently Mail aliases"),
         ("/cross opencli -- <args...>", "generic OpenCLI passthrough; mutating commands need --allow-mutating"),
     ]),
     ("Automations", [

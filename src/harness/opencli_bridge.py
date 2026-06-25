@@ -64,6 +64,15 @@ OPENCLI_EXTERNAL_CATALOG: list[dict[str, Any]] = [
         "example": ["ntn", "pages", "list"],
     },
     {
+        "name": "agently-mail",
+        "package": "@tencent-qqmail/agently-cli",
+        "binary": "agently-cli",
+        "description": "Agently Mail CLI: authorized agent-native mailbox, messages, attachments, send/reply/forward",
+        "homepage": "https://agent.qq.com",
+        "tags": ["agently", "mail", "email", "qqmail", "inbox", "ai-agent"],
+        "example": ["agently-cli", "+me"],
+    },
+    {
         "name": "tg",
         "package": "tg-cli",
         "binary": "tg",

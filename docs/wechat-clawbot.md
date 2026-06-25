@@ -117,6 +117,9 @@ The same WeChat bridge also exposes the ClawCross `/cross` shell. Send
 /cross wx -- search OpenCLI
 /cross opencli-status notion
 /cross notion -- whoami
+/cross opencli-status mail
+/cross mail -- +me
+/cross mail -- message +list --limit 10
 /cross opencli -- ntn pages list
 /cross sync --dry-run
 /cross sync
@@ -135,8 +138,16 @@ you to use the terminal flow.
 OpenCLI harness, so the existing wx-cli shard/key freshness checks still apply.
 `/cross notion` prefixes the command with Notion's `ntn` binary. Generic
 `/cross opencli -- <args...>` remains available for other OpenCLI-backed local
-CLIs. Mutating commands are blocked by default; use `--allow-mutating` only
-after the user explicitly approves the action.
+CLIs.
+
+`/cross mail` runs the Tencent QQMail Agently Mail CLI (`agently-cli`) directly
+through a no-shell local runner. Use `/cross mail -- +me` to verify the
+authorized mailbox, `/cross mail -- message +list --limit 10` to list recent
+mail, `/cross mail -- message +read --id <msg-id>` to read one message, and
+`/cross mail -- message +search --q <query>` to search. Mutating commands are
+blocked by default; use `--allow-mutating` only after the user explicitly
+approves the action, for example
+`/cross mail --allow-mutating -- message +send --to a@example.com --subject Hi --body Hello`.
 
 ## Sync File Transfer Helper To Notion Reading List
 
@@ -148,10 +159,13 @@ uv run python scripts/wx_guarded.py -- history 文件传输助手 -n 80 --json
 ```
 
 It extracts article/research/product URLs, normalizes and deduplicates canonical
-URLs with `src/services/reading_list_rules.py`, then writes only new entries to
-the Notion Reading List daily page. The WeChat reply reports counts, target
-date/page, skipped-noise count, and blockers only; it does not echo message
-contents, titles, or URLs.
+URLs with `src/services/reading_list_rules.py`, then delegates write mode to
+Codex through ACPX. Codex receives the normalized sync package and uses its own
+Notion connector/app integration to find or create the Reading List daily page.
+The prompt explicitly forbids shell `ntn`, browser scraping, and private WeChat
+message disclosure. The WeChat reply reports counts, target date/page,
+skipped-noise count, and blockers only; it does not echo message contents,
+titles, or URLs.
 
 Use dry-run first:
 
@@ -160,8 +174,31 @@ Use dry-run first:
 /sync --dry-run
 ```
 
-Configure a Notion target with one of these environment variables before a real
-write:
+Write mode defaults to Codex:
+
+```bash
+CLAWCROSS_READING_LIST_SYNC_MODE=codex
+CLAWCROSS_READING_LIST_CODEX_SESSION=clawcross-reading-list-sync
+CLAWCROSS_READING_LIST_CODEX_TTL=3600
+CLAWCROSS_READING_LIST_CODEX_MAX_TURNS=12
+```
+
+Use these optional hints when the Notion workspace has multiple similarly named
+pages:
+
+```bash
+CLAWCROSS_READING_LIST_ROOT_PAGE_ID=<reading-list-root-page-id>
+CLAWCROSS_READING_LIST_PARENT=page:<parent-id>
+CLAWCROSS_READING_LIST_DATA_SOURCE_ID=<data-source-id>
+```
+
+`CLAWCROSS_READING_LIST_PARENT` should normally point at the current month page.
+Codex will still search for the `Reading List` root, month page, and daily page
+by title; the hints only make the target unambiguous.
+
+For emergency local fallback, pass `/sync --local` or `/cross sync --local`.
+Local mode uses the Notion CLI (`ntn`) instead of Codex and supports these
+targets:
 
 ```bash
 CLAWCROSS_READING_LIST_PAGE_ID=<daily-page-id>
@@ -169,13 +206,11 @@ CLAWCROSS_READING_LIST_PARENT=page:<parent-id>
 CLAWCROSS_READING_LIST_DATA_SOURCE_ID=<data-source-id>
 ```
 
-`CLAWCROSS_READING_LIST_PAGE_ID` updates a known page.
+`CLAWCROSS_READING_LIST_PAGE_ID` updates a known page. In local mode,
 `CLAWCROSS_READING_LIST_DATA_SOURCE_ID` queries for today's Reading List page
-and creates one under `data-source:<id>` when none exists.
+and creates one under `data-source:<id>` when none exists, while
 `CLAWCROSS_READING_LIST_PARENT` creates a daily page under a page, database, or
-data-source parent when no fixed page is configured. The Notion CLI must also
-be authenticated (`ntn whoami` should succeed or the relevant `NOTION_API_TOKEN`
-/ workspace env vars must be set).
+data-source parent when no fixed page is configured.
 
 Do not also bind the same `openclaw-weixin` account to an OpenClaw agent while
 the ClawCross adapter is polling. Two consumers sharing one sync cursor can race

@@ -376,12 +376,15 @@ def _derive_title_from_url(url: str) -> str:
         return f"arXiv {parts[1]}"
     if host == "github.com" and len(parts) >= 2:
         return parts[1]
+    if host.endswith(".github.io"):
+        return _slug_to_title(host.split(".", 1)[0])
     if host == "huggingface.co" and len(parts) >= 3 and parts[0] in {"datasets", "spaces"}:
         kind = "Dataset" if parts[0] == "datasets" else "Space"
         return f"{_slug_to_title(parts[-1])} Hugging Face {kind}"
     if parts:
         return _slug_to_title(parts[-1])
-    return host.removeprefix("www.")
+    bare_host = host.removeprefix("www.")
+    return _slug_to_title(bare_host.split(".", 1)[0])
 
 
 def _slug_to_title(value: str) -> str:

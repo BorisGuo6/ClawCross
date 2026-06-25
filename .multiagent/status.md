@@ -22,7 +22,7 @@ Run a reliable long-horizon coding loop with Codex Desktop as the primary driver
 
 ## Current Phase
 
-Cycle 6 ready for Claude review: `/cross sync` and direct `/sync` now run a guarded WeChat File Transfer Helper -> Notion Reading List sync path. The command uses `scripts/wx_guarded.py` for WeChat history, reuses Reading List normalization rules, avoids duplicate canonical URLs, and reports only counts/page/date/blockers. ClawCross is running in foreground exec session `79261`, Cloudflare Tunnel remains in foreground exec session `32121`, and `openclaw-weixin` is enabled. Automatic Claude Code reviewer invocation may still be blocked unless the local `claude` CLI login has been fixed (`Not logged in · Please run /login` was the Cycle 4 blocker); `.multiagent/.handoff-ready` remains present.
+Cycle 8 ready for Claude review: Agently Mail CLI is connected to the WeChat `/cross` shell. `/cross opencli-status mail` reports the installed `agently-cli`, `/cross mail -- +me` verifies the authorized mailbox, and `/cross mail -- message ...` runs Agently Mail through a no-shell local runner. Mail send/reply/forward/delete/upload actions are blocked unless `--allow-mutating` is present. ClawCross is running in foreground exec session `63469`, Cloudflare Tunnel remains in foreground exec session `32121`, and `openclaw-weixin` is enabled. Automatic Claude Code reviewer invocation may still be blocked unless the local `claude` CLI login has been fixed (`Not logged in · Please run /login` was the Cycle 4 blocker); `.multiagent/.handoff-ready` remains present.
 
 - `spex scaffold` has created `specs/`.
 - `playbook-code` configuration exists at `/Users/boris/.config/playbook/playbook-code.config.yaml`.
@@ -108,3 +108,25 @@ Inventory from `git status --short --branch` on Cycle 3 start. Handling rule: pr
 - Cycle 6: `curl -fsS --max-time 12 https://irrigation-start-legislature-merry.trycloudflare.com/mobile_group_chat | head -c 180` -> returned mobile HTML prefix (curl reported expected broken pipe after `head` closed).
 - Cycle 6: `ntn whoami` -> blocked with `No workspace selected`; real Notion writes require a selected workspace / `NOTION_WORKSPACE_ID` plus a configured Reading List target.
 - Cycle 6 reviewer invocation: `claude -p "$(cat .multiagent/claude-code-reviewer-prompt.md)" ...` -> failed before review with `Not logged in · Please run /login`; fallback `.multiagent/.handoff-ready` refreshed.
+- Cycle 7: `uv run python scripts/clawcross.py config CLAWCROSS_READING_LIST_SYNC_MODE codex` -> wrote runtime config to `/Users/boris/.clawcross/config/.env`.
+- Cycle 7: `uv run python scripts/clawcross.py config CLAWCROSS_READING_LIST_ROOT_PAGE_ID <reading-list-root-page-id>` and `CLAWCROSS_READING_LIST_PARENT page:<month-page-id>` -> wrote Notion target hints for Codex mode.
+- Cycle 7: `python3 -m py_compile src/services/reading_list_sync.py test/test_reading_list_sync.py` -> passed.
+- Cycle 7: `uv run python -m pytest test/test_reading_list_sync.py test/test_reading_list_rules.py -q` -> passed, 20 tests.
+- Cycle 7: `uv run python -m unittest test.test_integration.ChatbotCommandTests` -> passed, 17 tests OK.
+- Cycle 7: direct service dry-run `sync_wechat_file_helper_reading_list(dry_run=True)` -> guarded wx history read succeeded; `messages_scanned=80`, `links_found=72`, `unique_links=68`, `duplicates_skipped=1`, `skipped_noise=3`.
+- Cycle 7: real `_run_reading_list_sync([])` -> `Reading List sync OK`, `mode=codex`, `messages_scanned=80`, `links_found=72`, `unique_links=68`, `new_links=0`, `duplicates_skipped=69`, `skipped_noise=3`, Notion daily page resolved, `notion_action=no_changes`.
+- Cycle 7: real `handle_chatbot_input('/sync')` -> `Reading List sync OK`, `mode=codex`, `messages_scanned=80`, `links_found=72`, `unique_links=68`, `new_links=0`, `duplicates_skipped=69`, `skipped_noise=3`, Notion daily page resolved, `notion_action=no_changes`.
+- Cycle 7: restarted ClawCross with `bash selfskill/scripts/run.sh start-foreground`; foreground exec session `93966` is running, ports 51200/51201/51202/51209 listening, and `openclaw-weixin` channel is enabled.
+- Cycle 7: `bash selfskill/scripts/run.sh status` -> ports 51200/51201/51202/51209 listening; OpenClaw runtime running; current local and remote magic links printed.
+- Cycle 7: `curl -fsS --max-time 12 https://irrigation-start-legislature-merry.trycloudflare.com/mobile_group_chat | head -c 180` -> returned mobile HTML prefix (curl reported expected broken pipe after `head` closed).
+- Cycle 7 reviewer invocation: `claude -p "$(cat .multiagent/claude-code-reviewer-prompt.md)" ...` -> failed before review with `Not logged in · Please run /login`; fallback `.multiagent/.handoff-ready` refreshed.
+- Cycle 8: `agently-cli +me` -> authorized mailbox returned successfully (`borisguo9092@agent.qq.com`), with mail read/send/delete scopes.
+- Cycle 8: `python3 -m py_compile scripts/clawcross.py src/harness/opencli_bridge.py test/test_integration.py test/test_opencli_bridge.py` -> passed.
+- Cycle 8: `uv run python -m unittest test.test_integration.ChatbotCommandTests test.test_opencli_bridge.OpenCliBridgeTests` -> passed, 28 tests OK.
+- Cycle 8: live chat shell probe `/cross opencli-status mail` -> reported `agently-mail (agently-cli): installed`.
+- Cycle 8: live chat shell probe `/cross mail -- +me` -> `Agently Mail OK`, returned the authorized alias and rate limits.
+- Cycle 8: live chat shell probe `/cross mail -- message +send --to a@example.test --subject Hi --body Hello` -> blocked with `--allow-mutating` requirement; no mail sent.
+- Cycle 8: restarted ClawCross with `bash selfskill/scripts/run.sh start-foreground`; foreground exec session `63469` is running, ports 51200/51201/51202/51209 listening, and `openclaw-weixin` channel is enabled.
+- Cycle 8: `bash selfskill/scripts/run.sh status` -> ports 51200/51201/51202/51209 listening; OpenClaw runtime running; current local and remote magic links printed.
+- Cycle 8: `curl -fsS --max-time 12 https://irrigation-start-legislature-merry.trycloudflare.com/mobile_group_chat | head -c 180` -> returned mobile HTML prefix (curl reported expected broken pipe after `head` closed).
+- Cycle 8 reviewer invocation: `claude -p "$(cat .multiagent/claude-code-reviewer-prompt.md)" ...` -> failed before review with `Not logged in · Please run /login`; fallback `.multiagent/.handoff-ready` refreshed.

@@ -93,6 +93,7 @@ class ChatbotCommandTests(unittest.TestCase):
         self.assertIn("/cross wx -- sessions --json", help_text)
         self.assertIn("/cross notion -- <args...>", help_text)
         self.assertIn("/cross notion -- whoami", help_text)
+        self.assertIn("/cross mail -- <args...>", help_text)
         self.assertIn("/cross sync", help_text)
         self.assertIn("/sync --dry-run", help_text)
         self.assertIn("Send /cross help for commands.", welcome)
@@ -197,6 +198,43 @@ class ChatbotCommandTests(unittest.TestCase):
         )
         self.assertIn("OpenCLI OK", reply)
         self.assertIn("boris@example.test", reply)
+
+    def test_cross_mail_alias_runs_agently_cli(self):
+        with mock.patch(
+            "scripts.clawcross._run_agently_mail_command",
+            return_value={
+                "ok": True,
+                "returncode": 0,
+                "command": ["/usr/local/bin/agently-cli", "+me"],
+                "stdout": '{"ok":true,"data":{"aliases":[{"email":"boris@example.test"}]}}',
+                "stderr": "",
+                "json": {"ok": True, "data": {"aliases": [{"email": "boris@example.test"}]}},
+                "label": "Agently Mail",
+            },
+        ) as run_mail:
+            _active, reply = handle_chatbot_input(
+                "/cross mail -- +me",
+                {"current": {"platform": "internal", "user": "default"}},
+            )
+
+        run_mail.assert_called_once_with(
+            ["+me"],
+            timeout_seconds=60,
+            max_output_chars=12000,
+            allow_mutating=False,
+        )
+        self.assertIn("Agently Mail OK", reply)
+        self.assertIn("boris@example.test", reply)
+
+    def test_cross_mail_mutating_command_requires_explicit_allow(self):
+        with mock.patch("scripts.clawcross.shutil.which", return_value="/usr/local/bin/agently-cli"):
+            _active, reply = handle_chatbot_input(
+                "/cross mail -- message +send --to a@example.test --subject Hi --body Hello",
+                {"current": {"platform": "internal", "user": "default"}},
+            )
+
+        self.assertIn("Agently Mail command failed", reply)
+        self.assertIn("--allow-mutating", reply)
 
     def test_cross_sync_command_runs_reading_list_sync(self):
         with mock.patch(
