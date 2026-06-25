@@ -15,7 +15,8 @@
     "build:pretext-vendor": "node tools/build_pretext_vendor.mjs",
     "build:oasis-town": "node tools/build_oasis_town.mjs",
     "test:node": "node test/test_tinyfish_live_shared.js && node test/test_pretext_text_core.js",
-    "test:browser-smoke": "playwright test --config playwright.config.mjs"
+    "test:browser-smoke": "playwright test --config playwright.config.mjs",
+    "prepare": "husky"
   },
   "dependencies": {
     "@chenglou/pretext": "^0.0.7",
@@ -25,6 +26,9 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
-    "esbuild": "^0.25.3"
+    "esbuild": "^0.25.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.8",
+    "prettier": "^3.8.4"
   }
 }

@@ -198,6 +198,65 @@ class RemoteClaudeParserTests(unittest.TestCase):
         self.assertEqual(data["sessions"][0]["remote_key"], "u@h::acpx:codex:project-main")
         self.assertEqual(data["remotes"][0]["transport"], "acpx")
 
+    def test_parse_acpx_read_entries_as_messages(self):
+        payload = {
+            "data": {
+                "id": "record-1",
+                "sessionId": "session-1",
+                "entries": [
+                    {"role": "user", "timestamp": "2026-06-24T01:00:00Z", "textPreview": "hello"},
+                    {"role": "assistant", "timestamp": "2026-06-24T01:00:01Z", "textPreview": "world"},
+                ],
+            }
+        }
+
+        messages = rca._parse_acpx_read_messages(payload, limit=10)
+
+        self.assertEqual([m["role"] for m in messages], ["user", "assistant"])
+        self.assertEqual([m["content"] for m in messages], ["hello", "world"])
+
+    def test_parse_acpx_record_messages_as_messages(self):
+        payload = {
+            "data": {
+                "messages": [
+                    {"User": {"content": [{"Text": "user text"}]}},
+                    {"Agent": {"content": [{"Text": "assistant text"}, {"ToolUse": {"name": "read_file"}}]}},
+                ]
+            }
+        }
+
+        messages = rca._parse_acpx_read_messages(payload, limit=10)
+
+        self.assertEqual([m["role"] for m in messages], ["user", "assistant"])
+        self.assertEqual(messages[0]["content"], "user text")
+        self.assertIn("assistant text", messages[1]["content"])
+        self.assertIn("[tool:read_file]", messages[1]["content"])
+
+    def test_read_messages_routes_acpx_read_entries(self):
+        payload = {
+            "transport": "acpx",
+            "available": True,
+            "found": True,
+            "ok": True,
+            "tool": "codex",
+            "name": "project-main",
+            "data": {
+                "entries": [
+                    {"role": "user", "timestamp": "2026-06-24T01:00:00Z", "textPreview": "question"},
+                    {"role": "assistant", "timestamp": "2026-06-24T01:00:02Z", "textPreview": "answer"},
+                ]
+            },
+        }
+        with mock.patch.object(
+            rca, "load_remote_claude_configs", return_value=[rca.RemoteClaudeConfig(host="h", user="u")]
+        ), mock.patch.object(rca, "_run_remote_python", return_value=payload) as run_mock:
+            data = rca.read_remote_claude_messages("u@h::acpx:codex:project-main", limit=10)
+
+        self.assertTrue(data["ok"])
+        self.assertEqual([m["content"] for m in data["messages"]], ["question", "answer"])
+        self.assertEqual(data["session"]["remote_key"], "u@h::acpx:codex:project-main")
+        self.assertIn("sessions\", \"read", run_mock.call_args.args[0])
+
     def test_send_message_rejects_blank_message(self):
         with self.assertRaises(ValueError):
             rca.send_remote_claude_message("session_abc", "   ")

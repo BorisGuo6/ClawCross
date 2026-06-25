@@ -50,8 +50,38 @@ class CliOpenCliTests(unittest.TestCase):
         self.assertEqual(captured["method"], "POST")
         self.assertTrue(captured["url"].endswith("/harness/opencli/run"))
         self.assertEqual(captured["headers"]["X-User-Id"], "alice")
+        self.assertEqual(captured["data"]["user_id"], "alice")
         self.assertEqual(captured["data"]["args"], ["wx", "history", "文件传输助手", "--json"])
         self.assertEqual(captured["data"]["timeout_seconds"], 60)
+        pretty.assert_called_once_with({"ok": True})
+
+    def test_cmd_opencli_status_targets_agent_harness_route_with_user(self):
+        captured = {}
+
+        def fake_req(method, url, headers=None, data=None, params=None, timeout=30):
+            captured.update(
+                {
+                    "method": method,
+                    "url": url,
+                    "headers": headers,
+                    "params": params,
+                }
+            )
+            return 200, {"ok": True}
+
+        parser = cli.build_parser()
+        args = parser.parse_args(["-u", "alice", "opencli-status", "--query", "notion"])
+
+        with patch.object(cli, "_req", side_effect=fake_req):
+            with patch.object(cli, "_pp") as pretty:
+                with patch.object(cli, "_check_token"):
+                    cli.cmd_opencli_status(args)
+
+        self.assertEqual(captured["method"], "GET")
+        self.assertTrue(captured["url"].endswith("/harness/opencli/status"))
+        self.assertIn(":51200", captured["url"])
+        self.assertEqual(captured["headers"]["X-User-Id"], "alice")
+        self.assertEqual(captured["params"], {"user_id": "alice", "query": "notion"})
         pretty.assert_called_once_with({"ok": True})
 
     def test_cmd_opencli_run_keeps_generic_opencli_args(self):

@@ -72,15 +72,49 @@ instead of the configured ClawCross LLM, set:
 OPENCLAW_WEIXIN_TARGET_AGENT=codex
 OPENCLAW_WEIXIN_ACP_SESSION_PREFIX=openclaw-weixin
 OPENCLAW_WEIXIN_ACP_TIMEOUT_SEC=600
-OPENCLAW_WEIXIN_ACP_MODEL=gpt-5.3-codex-spark/medium
+OPENCLAW_WEIXIN_ACP_MODEL=gpt-5.5/medium
 OPENCLAW_WEIXIN_ACP_MAX_TURNS=4
+OPENCLAW_WEIXIN_ACP_SESSION_CONTEXT_LIMIT=12
+OPENCLAW_WEIXIN_ACP_SESSION_LIST_TIMEOUT_SEC=8
+OPENCLAW_WEIXIN_ACP_SESSION_READ_TAIL=12
+OPENCLAW_WEIXIN_ACP_SESSION_TOOLS=
 ```
 
 Each WeChat sender gets a stable ACP session name under that prefix. Leave
 `OPENCLAW_WEIXIN_TARGET_AGENT` empty to keep the previous behavior where normal
-messages use ClawCross' `LLM_MODEL`. `OPENCLAW_WEIXIN_ACP_MODEL` is optional,
-but setting a faster Codex model keeps short WeChat turns from inheriting a slow
-global Codex profile.
+messages use ClawCross' `LLM_MODEL`. `OPENCLAW_WEIXIN_ACP_MODEL` is optional;
+set it only to a model currently advertised by `acpx codex status`. If the
+configured model disappears, ClawCross falls back to the ACP agent default for
+that prompt. When a WeChat message asks about sessions, ClawCross injects an
+ACPX session snapshot into the Codex prompt: metadata plus a bounded recent
+message preview from `acpx <tool> sessions read --tail`. By default that
+snapshot attempts `codex`, `claude`, `gemini`, and `aider`, with each tool
+listed independently so one unavailable tool does not hide the others.
+`OPENCLAW_WEIXIN_ACP_SESSION_CONTEXT_LIMIT` controls how many recent rows per
+tool are included, `OPENCLAW_WEIXIN_ACP_SESSION_READ_TAIL` controls how many
+recent messages are read for each listed session, and
+`OPENCLAW_WEIXIN_ACP_SESSION_TOOLS` can override the tool list.
+
+## WeChat Cross Shell And Local CLIs
+
+The same WeChat bridge also exposes the ClawCross `/cross` shell. Send
+`/cross` once to enter the shell, or send one-shot commands directly:
+
+```text
+/cross opencli-status wx
+/cross wx -- sessions --json
+/cross wx -- search OpenCLI
+/cross opencli-status notion
+/cross notion -- whoami
+/cross opencli -- ntn pages list
+```
+
+`/cross wx` prefixes the command with `wx` and runs it through the guarded
+OpenCLI harness, so the existing wx-cli shard/key freshness checks still apply.
+`/cross notion` prefixes the command with Notion's `ntn` binary. Generic
+`/cross opencli -- <args...>` remains available for other OpenCLI-backed local
+CLIs. Mutating commands are blocked by default; use `--allow-mutating` only
+after the user explicitly approves the action.
 
 Do not also bind the same `openclaw-weixin` account to an OpenClaw agent while
 the ClawCross adapter is polling. Two consumers sharing one sync cursor can race

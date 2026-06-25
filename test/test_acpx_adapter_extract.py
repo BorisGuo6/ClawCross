@@ -9,7 +9,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from integrations.acpx_adapter import AcpxAdapter, acpx_options_from_agent, normalize_acpx_run_options  # noqa: E402
+from integrations.acpx_adapter import AcpxAdapter, AcpxError, acpx_options_from_agent, normalize_acpx_run_options  # noqa: E402
 
 
 def test_extract_text_jsonrpc_agent_message_chunks():
@@ -81,6 +81,84 @@ def test_ensure_session_forwards_model_and_max_turns():
 
     assert captured["kwargs"]["model"] == "gpt-5.3-codex-spark/medium"
     assert captured["kwargs"]["max_turns"] == 4
+
+
+def test_ensure_session_retries_without_unadvertised_model():
+    adapter = AcpxAdapter.__new__(AcpxAdapter)
+    calls = []
+
+    async def fake_session_exists(*, tool, acpx_session):
+        return False
+
+    async def fake_run_json(args, **kwargs):
+        calls.append(kwargs)
+        if kwargs.get("model"):
+            raise AcpxError('Cannot apply --model "missing": the ACP agent did not advertise that model.')
+        return "{}"
+
+    adapter._session_exists = fake_session_exists
+    adapter._run_json = fake_run_json
+
+    asyncio.run(
+        adapter.ensure_session(
+            tool="codex",
+            session_key="session",
+            acpx_session="session",
+            model="missing",
+            max_turns=4,
+        )
+    )
+
+    assert [call["model"] for call in calls] == ["missing", None]
+
+
+def test_send_prompt_file_retries_without_unadvertised_model(tmp_path):
+    adapter = AcpxAdapter.__new__(AcpxAdapter)
+    temp_a = tmp_path / "prompt-a.json"
+    temp_b = tmp_path / "prompt-b.json"
+    temp_a.write_text("{}", encoding="utf-8")
+    temp_b.write_text("{}", encoding="utf-8")
+    prepare_calls = []
+    run_calls = []
+
+    def fake_prepare_prompt_command(**kwargs):
+        prepare_calls.append(kwargs)
+        if kwargs.get("model"):
+            return ["cmd-with-model"], str(temp_a)
+        return ["cmd-default-model"], str(temp_b)
+
+    async def fake_run_json_command(cmd, **kwargs):
+        run_calls.append(cmd)
+        if cmd == ["cmd-with-model"]:
+            raise AcpxError(
+                '{"type":"error","error":{"message":"The \'gpt-5.3-codex\' model is not supported when using Codex with a ChatGPT account."}}'
+            )
+        return '{"reply":"ok"}'
+
+    adapter.prepare_prompt_command = fake_prepare_prompt_command
+    adapter._run_json_command = fake_run_json_command
+
+    out = asyncio.run(
+        adapter._send_prompt_file(
+            tool="codex",
+            session_key="session",
+            acpx_session="session",
+            prompt_text="hi",
+            timeout_sec=10,
+            attachments=None,
+            ttl_sec=300,
+            model="missing",
+            max_turns=4,
+            approve_all=None,
+            permission_policy=None,
+            non_interactive_permissions=None,
+            allowed_tools=None,
+        )
+    )
+
+    assert out == '{"reply":"ok"}'
+    assert [call["model"] for call in prepare_calls] == ["missing", None]
+    assert run_calls == [["cmd-with-model"], ["cmd-default-model"]]
 
 
 def test_normalize_acpx_run_options_defaults_to_short_idle_ttl(monkeypatch):

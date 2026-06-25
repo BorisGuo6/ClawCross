@@ -1771,6 +1771,11 @@ def _front_headers(args=None):
     return h
 
 
+def _cli_request_user_id(args=None) -> str:
+    uid = getattr(args, "user", None) if args else None
+    return uid or _cli_user or DEFAULT_USER
+
+
 def _normalize_opencli_args(values):
     """Normalize argparse remainder args for OpenCLI-backed commands."""
     normalized = [str(item) for item in (values or []) if str(item).strip()]
@@ -1784,9 +1789,9 @@ def cmd_opencli_status(args):
     _check_token()
     code, body = _req(
         "GET",
-        f"{FRONT_BASE}/harness/opencli/status",
+        f"{AGENT_BASE}/harness/opencli/status",
         headers=_front_headers(args),
-        params={"query": args.query or ""},
+        params={"user_id": _cli_request_user_id(args), "query": args.query or ""},
     )
     if code == 200:
         _pp(body)
@@ -1805,9 +1810,10 @@ def cmd_opencli_run(args):
         return
     code, body = _req(
         "POST",
-        f"{FRONT_BASE}/harness/opencli/run",
+        f"{AGENT_BASE}/harness/opencli/run",
         headers=_front_headers(args),
         data={
+            "user_id": _cli_request_user_id(args),
             "args": opencli_args,
             "profile": args.profile or "",
             "allow_mutating": bool(args.allow_mutating),

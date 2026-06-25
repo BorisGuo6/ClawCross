@@ -183,6 +183,14 @@ def _is_transport_notice(text: str | None) -> bool:
     return normalized == "Falling back from WebSockets to HTTPS transport. timeout waiting for child process to exit"
 
 
+def _is_unavailable_model_error(exc: Exception) -> bool:
+    text = str(exc)
+    return (
+        ("Cannot apply --model" in text and "did not advertise that model" in text)
+        or "model is not supported when using Codex with a ChatGPT account" in text
+    )
+
+
 def acpx_options_from_agent(
     agent_info: dict[str, Any] | None,
     *,
@@ -256,18 +264,40 @@ class AcpxAdapter:
         allowed_tools: str | None = None,
     ) -> bool:
         existed_before = await self._session_exists(tool=tool, acpx_session=acpx_session)
-        await self._run_json(
-            self._command_prefix(tool=tool, session_key=session_key) + ["sessions", "ensure", "--name", acpx_session],
-            timeout_sec=ensure_timeout_sec,
-            allow_nonzero=False,
-            ttl_sec=ttl_sec,
-            model=model,
-            max_turns=max_turns,
-            approve_all=approve_all,
-            permission_policy=permission_policy,
-            non_interactive_permissions=non_interactive_permissions,
-            allowed_tools=allowed_tools,
-        )
+        args = self._command_prefix(tool=tool, session_key=session_key) + ["sessions", "ensure", "--name", acpx_session]
+        try:
+            await self._run_json(
+                args,
+                timeout_sec=ensure_timeout_sec,
+                allow_nonzero=False,
+                ttl_sec=ttl_sec,
+                model=model,
+                max_turns=max_turns,
+                approve_all=approve_all,
+                permission_policy=permission_policy,
+                non_interactive_permissions=non_interactive_permissions,
+                allowed_tools=allowed_tools,
+            )
+        except AcpxError as exc:
+            if not model or not _is_unavailable_model_error(exc):
+                raise
+            logger.warning(
+                "acpx model %s unavailable for %s; retrying session ensure with default model",
+                model,
+                tool,
+            )
+            await self._run_json(
+                args,
+                timeout_sec=ensure_timeout_sec,
+                allow_nonzero=False,
+                ttl_sec=ttl_sec,
+                model=None,
+                max_turns=max_turns,
+                approve_all=approve_all,
+                permission_policy=permission_policy,
+                non_interactive_permissions=non_interactive_permissions,
+                allowed_tools=allowed_tools,
+            )
         created = existed_before is False
         if created and system_prompt and system_prompt.strip():
             self._pending_initial_prompt[self._pending_prompt_key(tool=tool, acpx_session=acpx_session)] = system_prompt.strip()
@@ -482,7 +512,7 @@ class AcpxAdapter:
             raise AcpxError(f"acpx failed ({rc}): {msg}")
         return out
 
-    async def list_sessions(self, *, tool: str) -> list[dict[str, Any]]:
+    async def list_sessions(self, *, tool: str, timeout_sec: int = 45) -> list[dict[str, Any]]:
         """Run `acpx <tool> sessions list --format json` and return slim session rows."""
         aliases = {
             "claude-code": "claude",
@@ -491,7 +521,7 @@ class AcpxAdapter:
         tool_n = aliases.get((tool or "").strip().lower(), (tool or "").strip().lower())
         if tool_n == "openclaw":
             raise AcpxError("sessions list is not supported for openclaw agent mode")
-        raw = await self._run_json([tool_n, "sessions", "list"], timeout_sec=45, allow_nonzero=False)
+        raw = await self._run_json([tool_n, "sessions", "list"], timeout_sec=timeout_sec, allow_nonzero=False)
         text = raw.strip()
         if not text:
             return []
@@ -791,11 +821,45 @@ class AcpxAdapter:
             allowed_tools=allowed_tools,
         )
         try:
-            return await self._run_json_command(
-                prompt_args,
-                timeout_sec=timeout_sec,
-                allow_nonzero=False,
-            )
+            try:
+                return await self._run_json_command(
+                    prompt_args,
+                    timeout_sec=timeout_sec,
+                    allow_nonzero=False,
+                )
+            except AcpxError as exc:
+                if not model or not _is_unavailable_model_error(exc):
+                    raise
+                logger.warning(
+                    "acpx model %s unavailable for %s; retrying prompt with default model",
+                    model,
+                    tool,
+                )
+                fallback_args, fallback_temp_path = self.prepare_prompt_command(
+                    tool=tool,
+                    session_key=session_key,
+                    acpx_session=acpx_session,
+                    prompt_text=prompt_text,
+                    attachments=attachments,
+                    ttl_sec=ttl_sec,
+                    model=None,
+                    max_turns=max_turns,
+                    approve_all=approve_all,
+                    permission_policy=permission_policy,
+                    non_interactive_permissions=non_interactive_permissions,
+                    allowed_tools=allowed_tools,
+                )
+                try:
+                    return await self._run_json_command(
+                        fallback_args,
+                        timeout_sec=timeout_sec,
+                        allow_nonzero=False,
+                    )
+                finally:
+                    try:
+                        os.unlink(fallback_temp_path)
+                    except Exception:
+                        pass
         finally:
             try:
                 os.unlink(temp_path)

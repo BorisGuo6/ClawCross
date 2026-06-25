@@ -69,6 +69,8 @@ class ChatbotCommandTests(unittest.TestCase):
         self.assertIn("/cross help", help_text)
         self.assertIn("/cross use <platform>", help_text)
         self.assertIn("/cross session <id>", help_text)
+        self.assertIn("/cross wx -- sessions --json", help_text)
+        self.assertIn("/cross notion -- whoami", help_text)
         self.assertIn("Send /cross help for commands.", welcome)
         self.assertIn("Switch agents with /cross use codex.", welcome)
         self.assertNotIn("Send /help for commands.", welcome)
@@ -82,6 +84,85 @@ class ChatbotCommandTests(unittest.TestCase):
 
         self.assertIn("Commands:", reply)
         self.assertIn("/cross help", reply)
+
+    def test_cross_opencli_status_command_returns_capabilities(self):
+        with mock.patch(
+            "harness.opencli_bridge.get_opencli_status",
+            return_value={
+                "opencli_installed": True,
+                "opencli_path": "/usr/local/bin/opencli",
+                "capabilities": {
+                    "external_clis": [
+                        {"name": "wx", "binary": "wx", "installed": True},
+                        {"name": "ntn", "binary": "ntn", "installed": True},
+                    ],
+                    "browser": [],
+                },
+                "wx_health": {"available": True, "missing_message_shards": []},
+            },
+        ) as get_status:
+            _active, reply = handle_chatbot_input(
+                "/cross opencli-status notion",
+                {"current": {"platform": "internal", "user": "default"}},
+            )
+
+        get_status.assert_called_once_with(query="notion")
+        self.assertIn("OpenCLI status", reply)
+        self.assertIn("wx (wx): installed", reply)
+        self.assertIn("ntn (ntn): installed", reply)
+
+    def test_cross_wx_command_runs_opencli_harness(self):
+        with mock.patch(
+            "harness.opencli_bridge.run_opencli_command",
+            return_value={
+                "ok": True,
+                "returncode": 0,
+                "command": ["/usr/local/bin/opencli", "wx", "--with-meta", "history"],
+                "stdout": '{"ok":true}',
+                "stderr": "",
+                "json": {"ok": True},
+            },
+        ) as run_opencli:
+            _active, reply = handle_chatbot_input(
+                "/cross wx -- history 文件传输助手 --json",
+                {"current": {"platform": "internal", "user": "default"}},
+            )
+
+        run_opencli.assert_called_once_with(
+            ["wx", "history", "文件传输助手", "--json"],
+            timeout_seconds=60,
+            max_output_chars=12000,
+            profile="",
+            allow_mutating=False,
+        )
+        self.assertIn("OpenCLI OK", reply)
+        self.assertIn('"ok": true', reply)
+
+    def test_cross_notion_alias_runs_ntn_through_opencli_harness(self):
+        with mock.patch(
+            "harness.opencli_bridge.run_opencli_command",
+            return_value={
+                "ok": True,
+                "returncode": 0,
+                "command": ["/usr/local/bin/opencli", "ntn", "whoami"],
+                "stdout": "boris@example.test",
+                "stderr": "",
+            },
+        ) as run_opencli:
+            _active, reply = handle_chatbot_input(
+                "/cross notion -- whoami",
+                {"current": {"platform": "internal", "user": "default"}},
+            )
+
+        run_opencli.assert_called_once_with(
+            ["ntn", "whoami"],
+            timeout_seconds=60,
+            max_output_chars=12000,
+            profile="",
+            allow_mutating=False,
+        )
+        self.assertIn("OpenCLI OK", reply)
+        self.assertIn("boris@example.test", reply)
 
     def test_chat_session_switch_matches_cli_command(self):
         with tempfile.TemporaryDirectory() as tmpdir:

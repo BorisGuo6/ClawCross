@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import select
+import shlex
 import shutil
 import signal
 import subprocess
@@ -21,6 +22,7 @@ import tempfile
 import unicodedata
 import urllib.error
 import urllib.request
+from typing import Any
 
 try:
     import termios
@@ -34,6 +36,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 from src.utils.runtime_paths import ENV_FILE, STATE_DIR, ensure_runtime_dirs
 from src.utils.env_settings import read_env_all, write_env_settings
 ensure_runtime_dirs()
@@ -403,6 +408,212 @@ def _term_height() -> int:
 
 def _strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", str(text))
+
+
+def _quote_display_command(command: list[Any]) -> str:
+    parts = []
+    for idx, raw in enumerate(command or []):
+        text = str(raw)
+        if idx == 0:
+            text = Path(text).name or text
+        parts.append(shlex.quote(text))
+    return " ".join(parts)
+
+
+def _parse_chat_opencli_options(args: list[str]) -> tuple[dict[str, Any], list[str], str | None]:
+    options: dict[str, Any] = {
+        "profile": "",
+        "allow_mutating": False,
+        "max_output_chars": 12000,
+        "timeout_seconds": 60,
+    }
+    forwarded: list[str] = []
+    idx = 0
+    while idx < len(args):
+        arg = args[idx]
+        if arg == "--":
+            forwarded.extend(args[idx + 1 :])
+            break
+        if arg == "--allow-mutating":
+            options["allow_mutating"] = True
+            idx += 1
+            continue
+        if arg == "--profile":
+            if idx + 1 >= len(args):
+                return options, forwarded, "--profile requires a value"
+            options["profile"] = args[idx + 1]
+            idx += 2
+            continue
+        if arg.startswith("--profile="):
+            options["profile"] = arg.split("=", 1)[1]
+            idx += 1
+            continue
+        if arg == "--timeout-seconds":
+            if idx + 1 >= len(args):
+                return options, forwarded, "--timeout-seconds requires a value"
+            try:
+                options["timeout_seconds"] = int(args[idx + 1])
+            except ValueError:
+                return options, forwarded, "--timeout-seconds must be an integer"
+            idx += 2
+            continue
+        if arg.startswith("--timeout-seconds="):
+            try:
+                options["timeout_seconds"] = int(arg.split("=", 1)[1])
+            except ValueError:
+                return options, forwarded, "--timeout-seconds must be an integer"
+            idx += 1
+            continue
+        if arg == "--max-output-chars":
+            if idx + 1 >= len(args):
+                return options, forwarded, "--max-output-chars requires a value"
+            try:
+                options["max_output_chars"] = int(args[idx + 1])
+            except ValueError:
+                return options, forwarded, "--max-output-chars must be an integer"
+            idx += 2
+            continue
+        if arg.startswith("--max-output-chars="):
+            try:
+                options["max_output_chars"] = int(arg.split("=", 1)[1])
+            except ValueError:
+                return options, forwarded, "--max-output-chars must be an integer"
+            idx += 1
+            continue
+        forwarded.append(arg)
+        idx += 1
+    return options, forwarded, None
+
+
+def _truncate_chat_block(text: str, limit: int = 11000) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"\n...[truncated {len(text) - limit} chars]"
+
+
+def _format_opencli_status_for_chat(status: dict[str, Any]) -> str:
+    lines = [
+        "OpenCLI status",
+        f"- opencli: {'installed' if status.get('opencli_installed') else 'missing'}"
+        + (f" ({status.get('opencli_path')})" if status.get("opencli_path") else ""),
+    ]
+    if status.get("warning"):
+        lines.append(f"- warning: {status['warning']}")
+    capabilities = status.get("capabilities") if isinstance(status.get("capabilities"), dict) else {}
+    external = capabilities.get("external_clis") if isinstance(capabilities.get("external_clis"), list) else []
+    if external:
+        lines.append("- external CLIs:")
+        for item in external:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name") or item.get("binary") or "unknown"
+            binary = item.get("binary") or name
+            installed = "installed" if item.get("installed") else "missing"
+            lines.append(f"  - {name} ({binary}): {installed}")
+    browser = capabilities.get("browser") if isinstance(capabilities.get("browser"), list) else []
+    if browser:
+        names = ", ".join(str(item.get("name") or "?") for item in browser if isinstance(item, dict))
+        lines.append(f"- browser capabilities: {names}")
+    wx_health = status.get("wx_health")
+    if isinstance(wx_health, dict):
+        if wx_health.get("available"):
+            missing = wx_health.get("missing_message_shards") or []
+            lines.append(
+                "- wx health: "
+                + ("ok" if not missing else f"missing shards: {', '.join(map(str, missing))}")
+            )
+        else:
+            lines.append(f"- wx health: unavailable ({wx_health.get('reason') or 'unknown'})")
+    if status.get("external_list_error"):
+        lines.append(f"- external list error: {status['external_list_error']}")
+    return "\n".join(lines)
+
+
+def _format_opencli_run_for_chat(result: dict[str, Any]) -> str:
+    ok = bool(result.get("ok"))
+    lines = [
+        f"OpenCLI {'OK' if ok else 'FAILED'} (exit {result.get('returncode', '?')})",
+    ]
+    command = result.get("command")
+    if isinstance(command, list) and command:
+        lines.append(f"command: {_quote_display_command(command)}")
+    if result.get("timed_out"):
+        lines.append("timed_out: true")
+    if result.get("truncated"):
+        lines.append("truncated: true")
+
+    body = ""
+    if result.get("json") is not None:
+        body = json.dumps(result.get("json"), ensure_ascii=False, indent=2)
+        lines.append("json:")
+        lines.append("```json")
+        lines.append(_truncate_chat_block(body))
+        lines.append("```")
+    else:
+        stdout = str(result.get("stdout") or "").strip()
+        stderr = str(result.get("stderr") or "").strip()
+        if stdout:
+            lines.append("stdout:")
+            lines.append("```")
+            lines.append(_truncate_chat_block(stdout))
+            lines.append("```")
+        if stderr:
+            lines.append("stderr:")
+            lines.append("```")
+            lines.append(_truncate_chat_block(stderr))
+            lines.append("```")
+    if len(lines) == 1:
+        lines.append("(no output)")
+    return "\n".join(lines)
+
+
+def _handle_chat_opencli_line(line: str) -> str | None:
+    try:
+        tokens = shlex.split(line)
+    except ValueError as exc:
+        return f"OpenCLI command parse error: {exc}"
+    if not tokens:
+        return None
+    command = tokens[0].lstrip("/").lower().replace("_", "-")
+    if command not in {"opencli-status", "opencli", "wx", "notion", "notion-cli", "ntn"}:
+        return None
+
+    from harness.opencli_bridge import get_opencli_status, run_opencli_command
+
+    args = tokens[1:]
+    if command == "opencli-status":
+        query = " ".join(args).strip()
+        return _format_opencli_status_for_chat(get_opencli_status(query=query))
+
+    options, forwarded, error = _parse_chat_opencli_options(args)
+    if error:
+        return f"OpenCLI option error: {error}"
+    if forwarded and forwarded[0] == "cli":
+        forwarded = forwarded[1:]
+
+    if command == "wx":
+        opencli_args = ["wx", *forwarded]
+        usage = "/cross wx -- sessions --json"
+    elif command in {"notion", "notion-cli", "ntn"}:
+        opencli_args = forwarded if forwarded and forwarded[0] in {"ntn", "notion"} else ["ntn", *forwarded]
+        usage = "/cross notion -- whoami"
+    else:
+        opencli_args = forwarded
+        usage = "/cross opencli -- wx sessions --json"
+
+    if not opencli_args:
+        return f"OpenCLI command requires arguments. Example: {usage}"
+    try:
+        result = run_opencli_command(
+            opencli_args,
+            timeout_seconds=options["timeout_seconds"],
+            max_output_chars=options["max_output_chars"],
+            profile=options["profile"],
+            allow_mutating=bool(options["allow_mutating"]),
+        )
+    except (FileNotFoundError, PermissionError, ValueError, RuntimeError) as exc:
+        return f"OpenCLI command failed: {exc}"
+    return _format_opencli_run_for_chat(result)
 
 
 def _cell_width(ch: str) -> int:
@@ -2010,6 +2221,13 @@ _CHAT_HELP_SECTIONS: list[tuple[str, list[tuple[str, str]]]] = [
         ("/cross channel logout clawcross_wechat", "stop the ClawCross WeChat daemon"),
         ("/cross channel status clawcross_wechat", "ask clawcross_wechat for live status"),
     ]),
+    ("OpenCLI local CLIs", [
+        ("/cross opencli-status [query]", "show local OpenCLI / private CLI capability status"),
+        ("/cross wx -- sessions --json", "run wx-cli through the guarded OpenCLI harness"),
+        ("/cross wx -- search <keyword>", "search local WeChat data via wx-cli"),
+        ("/cross notion -- whoami", "run Notion CLI (`ntn`) through OpenCLI"),
+        ("/cross opencli -- <args...>", "generic OpenCLI passthrough; mutating commands need --allow-mutating"),
+    ]),
     ("Shell", [
         ("/cross state", "show current platform and session"),
         ("/cross restart", "request a backend restart"),
@@ -2105,6 +2323,9 @@ def handle_chatbot_input(text: str, state: dict) -> tuple[bool, str]:
     active = True
     if lower in {"help", "/help"}:
         return True, chat_help_text()
+    opencli_reply = _handle_chat_opencli_line(line)
+    if opencli_reply is not None:
+        return True, opencli_reply
     if line.startswith("/") and line.split(maxsplit=1)[0].lower() == "/use":
         parts = line.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():

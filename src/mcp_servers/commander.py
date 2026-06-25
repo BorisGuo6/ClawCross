@@ -534,25 +534,56 @@ class _StreamingCapture:
 
 def _sandbox_env(workspace: str, username: str) -> dict:
     """构造沙箱环境变量（跨平台）"""
+    passthrough_names = {
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+        "GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND",
+        "GOOGLE_WORKSPACE_PROJECT_ID",
+    }
+    passthrough_names.update(
+        name.strip()
+        for name in (os.getenv("COMMANDER_PASSTHROUGH_ENV", "") or "").split(",")
+        if name.strip()
+    )
+
+    def _apply_passthrough(env: dict) -> dict:
+        for name in passthrough_names:
+            if name in os.environ:
+                env[name] = os.environ[name]
+        return env
+
     if IS_WINDOWS:
-        return {
+        env = {
             "PATH": os.environ.get("PATH", ""),
             "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
             "COMSPEC": os.environ.get("COMSPEC", r"C:\Windows\system32\cmd.exe"),
-            "USERPROFILE": workspace,
+            "USERPROFILE": os.getenv("COMMANDER_HOME", workspace),
             "USERNAME": username,
             "TEMP": os.environ.get("TEMP", workspace),
             "TMP": os.environ.get("TMP", workspace),
         }
+        return _apply_passthrough(env)
     else:
-        return {
-            "PATH": "/usr/local/bin:/usr/bin:/bin",
-            "HOME": workspace,
+        base_path = "/usr/local/bin:/usr/bin:/bin"
+        extra_path = (os.getenv("COMMANDER_EXTRA_PATH", "") or "").strip()
+        if extra_path:
+            base_path = f"{extra_path}:{base_path}"
+        env = {
+            "PATH": base_path,
+            "HOME": os.getenv("COMMANDER_HOME", workspace),
             "USER": username,
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
             "TERM": "xterm",
         }
+        return _apply_passthrough(env)
 
 def _python_cmd() -> str:
     """返回当前平台的 Python 命令名"""

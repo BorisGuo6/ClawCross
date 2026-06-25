@@ -545,6 +545,61 @@ if not ACPX:
     _print(_response_base(ok=False, sessions=sessions, errors=["acpx missing on PATH"]))
     raise SystemExit(0)
 
+def _content_to_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "\n".join(part for part in (_content_to_text(item) for item in value) if part)
+    if isinstance(value, dict):
+        for key in ("text", "content", "input", "Text", "Thinking"):
+            text = _content_to_text(value.get(key))
+            if text:
+                return text
+        if value.get("RedactedThinking"):
+            return "[redacted_thinking]"
+        tool = value.get("ToolUse") if isinstance(value.get("ToolUse"), dict) else None
+        if tool:
+            name = tool.get("name") or tool.get("id") or ""
+            return "[tool:{}]".format(name) if name else "[tool]"
+        image = value.get("Image") if isinstance(value.get("Image"), dict) else None
+        if image:
+            return image.get("source") or "[image]"
+        if value.get("type"):
+            name = value.get("name") or value.get("tool_name") or value.get("id") or ""
+            return "[{}{}]".format(value.get("type"), ":" + str(name) if name else "")
+    return str(value)
+
+def _record_messages_to_entries(messages):
+    entries = []
+    for message in (messages if isinstance(messages, list) else []):
+        if message == "Resume" or not isinstance(message, dict):
+            continue
+        role = ""
+        content = ""
+        if isinstance(message.get("User"), dict):
+            role = "user"
+            content = _content_to_text(message["User"].get("content"))
+        elif isinstance(message.get("Agent"), dict):
+            role = "assistant"
+            content = _content_to_text(message["Agent"].get("content"))
+        else:
+            role = str(message.get("role") or message.get("type") or "event")
+            content = _content_to_text(
+                message.get("textPreview")
+                or message.get("text")
+                or message.get("content")
+                or message.get("message")
+            )
+        if content:
+            entries.append({
+                "role": role,
+                "content": content,
+                "timestamp": message.get("timestamp") or message.get("created_at") or message.get("time") or "",
+            })
+    return entries
+
 os.makedirs(ACPX_CWD, exist_ok=True)
 for tool in TOOLS:
     cmd = _base_cmd() + [tool, "sessions", "list"]
@@ -569,6 +624,7 @@ for tool in TOOLS:
         name = str(item.get("name") or item.get("sessionId") or item.get("session_id") or item.get("id") or "").strip()
         if not name:
             continue
+        entries = _record_messages_to_entries(item.get("messages"))
         sessions.append({
             "tool": tool,
             "name": name,
@@ -579,7 +635,8 @@ for tool in TOOLS:
             "updatedAt": item.get("updatedAt") or item.get("updated_at"),
             "cwd": item.get("cwd"),
             "title": item.get("title"),
-            "message_count": len(item.get("messages") or []) if isinstance(item.get("messages"), list) else 0,
+            "last_message": entries[-1] if entries else None,
+            "message_count": len(entries) or (len(item.get("messages") or []) if isinstance(item.get("messages"), list) else 0),
         })
 _print(_response_base(ok=True, sessions=sessions, errors=errors))
 """
@@ -1233,21 +1290,34 @@ def _content_to_text(value: Any) -> str:
                 text = item.get("text") or item.get("content") or item.get("input") or ""
                 if isinstance(text, list):
                     text = _content_to_text(text)
+                if not text:
+                    nested = _content_to_text(item)
+                    if nested and nested != str(item):
+                        text = nested
+                if not text and item.get("type"):
+                    name = item.get("name") or item.get("tool_name") or item.get("id") or ""
+                    text = f"[{item.get('type')}{':' + str(name) if name else ''}]"
                 if text:
                     parts.append(str(text))
-                elif item.get("type"):
-                    name = item.get("name") or item.get("tool_name") or item.get("id") or ""
-                    label = f"[{item.get('type')}{':' + str(name) if name else ''}]"
-                    parts.append(label)
         return "\n".join(p for p in parts if p)
     if isinstance(value, dict):
-        for key in ("text", "content", "result", "summary"):
+        for key in ("text", "content", "result", "summary", "input", "Text", "Thinking"):
             if key in value:
                 text = _content_to_text(value.get(key))
                 if text:
                     return text
+        if value.get("RedactedThinking"):
+            return "[redacted_thinking]"
+        tool = value.get("ToolUse") if isinstance(value.get("ToolUse"), dict) else None
+        if tool:
+            name = tool.get("name") or tool.get("id") or ""
+            return f"[tool:{name}]" if name else "[tool]"
+        image = value.get("Image") if isinstance(value.get("Image"), dict) else None
+        if image:
+            return image.get("source") or "[image]"
         if value.get("type"):
-            return f"[{value.get('type')}]"
+            name = value.get("name") or value.get("tool_name") or value.get("id") or ""
+            return f"[{value.get('type')}{':' + str(name) if name else ''}]"
     return str(value)
 
 
@@ -1314,6 +1384,17 @@ def _normalize_acpx_session(item: dict[str, Any], *, config: RemoteClaudeConfig)
     tool = str(item.get("tool") or "").strip().lower() or "codex"
     name = str(item.get("name") or item.get("sessionId") or item.get("session_id") or item.get("id") or "").strip()
     status = "closed" if item.get("closed") else "idle"
+    last_message = item.get("last_message") if isinstance(item.get("last_message"), dict) else None
+    if last_message:
+        last_message = {
+            "id": last_message.get("id") or "acpx-last",
+            "role": str(last_message.get("role") or last_message.get("type") or "event"),
+            "type": str(last_message.get("type") or last_message.get("role") or "event"),
+            "content": _content_to_text(last_message.get("content") or last_message.get("textPreview") or last_message.get("text")),
+            "timestamp": last_message.get("timestamp") or last_message.get("created_at") or last_message.get("time") or "",
+        }
+        if not last_message["content"]:
+            last_message = None
     session = {
         "id": name,
         "title": str(item.get("title") or name),
@@ -1327,7 +1408,7 @@ def _normalize_acpx_session(item: dict[str, Any], *, config: RemoteClaudeConfig)
         "transport": "acpx",
         "agent_tool": tool,
         "display_id": name,
-        "last_message": None,
+        "last_message": last_message,
         "message_count_hint": int(item.get("message_count") or 0),
         "remote_host": config.host,
         "remote_user": config.user,
@@ -1406,37 +1487,84 @@ def _extract_acpx_text(output: str) -> str:
     return "".join(chunks).strip() or fallback.strip()
 
 
+def _acpx_record_message_to_message(item: dict[str, Any], idx: int) -> dict[str, Any] | None:
+    role = ""
+    content = ""
+    timestamp = item.get("timestamp") or item.get("created_at") or item.get("time") or ""
+    if isinstance(item.get("User"), dict):
+        role = "user"
+        content = _content_to_text(item["User"].get("content"))
+    elif isinstance(item.get("Agent"), dict):
+        role = "assistant"
+        content = _content_to_text(item["Agent"].get("content"))
+    else:
+        role = str(item.get("role") or item.get("type") or "event").strip()
+        content = _content_to_text(
+            item.get("textPreview")
+            or item.get("text")
+            or item.get("content")
+            or item.get("message")
+            or item.get("summary")
+            or item.get("reply")
+        )
+        if not content:
+            content = _pick_acpx_text(item) or ""
+    if not content:
+        return None
+    return {
+        "id": item.get("id") or item.get("uuid") or idx,
+        "role": role or "event",
+        "type": str(item.get("type") or role or "event"),
+        "content": content,
+        "timestamp": timestamp,
+    }
+
+
+def _coerce_acpx_message_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    messages: list[dict[str, Any]] = []
+    for idx, item in enumerate(value):
+        if item == "Resume" or not isinstance(item, dict):
+            continue
+        message = _acpx_record_message_to_message(item, idx)
+        if message:
+            messages.append(message)
+    return messages
+
+
+def _find_acpx_message_candidates(data: Any) -> list[Any]:
+    if isinstance(data, list):
+        return [data]
+    if not isinstance(data, dict):
+        return []
+    candidates: list[Any] = []
+    for key in ("entries", "messages", "events", "conversation", "items"):
+        value = data.get(key)
+        if isinstance(value, list):
+            candidates.append(value)
+    for key in ("history", "result", "data", "session", "record"):
+        nested = data.get(key)
+        if isinstance(nested, dict) or isinstance(nested, list):
+            candidates.extend(_find_acpx_message_candidates(nested))
+    return candidates
+
+
 def _parse_acpx_read_messages(payload: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:
     data = payload.get("data")
+    if isinstance(data, (dict, list)):
+        messages: list[dict[str, Any]] = []
+        for candidate in _find_acpx_message_candidates(data):
+            messages.extend(_coerce_acpx_message_list(candidate))
+        if messages:
+            return messages[-limit:]
+
     if not isinstance(data, dict):
         text = _extract_acpx_text(str(payload.get("stdout") or ""))
         return [{"id": "acpx-read", "role": "assistant", "type": "acpx", "content": text, "timestamp": ""}] if text else []
 
-    messages_raw = data.get("messages")
-    if not isinstance(messages_raw, list):
-        text = _pick_acpx_text(data) or _extract_acpx_text(str(payload.get("stdout") or ""))
-        return [{"id": "acpx-read", "role": "assistant", "type": "acpx", "content": text, "timestamp": ""}] if text else []
-
-    messages: list[dict[str, Any]] = []
-    for idx, item in enumerate(messages_raw):
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or item.get("type") or "event").strip()
-        content = _content_to_text(item.get("content"))
-        if not content:
-            content = _pick_acpx_text(item) or ""
-        if not content:
-            continue
-        messages.append(
-            {
-                "id": item.get("id") or item.get("uuid") or idx,
-                "role": role,
-                "type": str(item.get("type") or role),
-                "content": content,
-                "timestamp": item.get("timestamp") or item.get("created_at") or item.get("time") or "",
-            }
-        )
-    return messages[-limit:]
+    text = _pick_acpx_text(data) or _extract_acpx_text(str(payload.get("stdout") or ""))
+    return [{"id": "acpx-read", "role": "assistant", "type": "acpx", "content": text, "timestamp": ""}] if text else []
 
 
 def _is_daemon_spare_session(item: dict[str, Any]) -> bool:
