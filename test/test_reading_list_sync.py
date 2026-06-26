@@ -295,6 +295,9 @@ def test_default_write_mode_delegates_to_codex(tmp_path):
     assert "ntn" in prompts[0]
     assert "across the Reading List root/month/daily pages, not only today's daily page" in prompts[0]
     assert "search the Reading List for each canonical URL" in prompts[0]
+    assert "Read the linked content before deciding what to write" in prompts[0]
+    assert "Prefer the canonical primary source over the wrapper link" in prompts[0]
+    assert "arXiv/DOI/OpenReview first" in prompts[0]
 
 
 def test_codex_unstructured_response_returns_blocker():
