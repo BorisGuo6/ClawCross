@@ -94,6 +94,22 @@ def test_extract_resolves_shared_shortlinks_and_skips_noise_urls():
     }
 
 
+def test_extract_uses_wechat_share_card_title_for_separate_url_field():
+    messages = [
+        {
+            "type": "链接/文件",
+            "content": "[链接] 清华 x Striding AI最新！LAWAM：隐世界动作模型将WAM瘦身24倍，同时成功率90%+！",
+            "url": "https://mp.weixin.qq.com/s?__biz=Mzk0&mid=224&idx=1&sn=abc&scene=21",
+        }
+    ]
+
+    entries, counts = extract_reading_list_entries(messages)
+
+    assert counts["links_found"] == 1
+    assert entries[0].title == "清华 x Striding AI最新！LAWAM：隐世界动作模型将WAM瘦身24倍，同时成功率90%+！"
+    assert entries[0].url == "https://mp.weixin.qq.com/s?__biz=Mzk0&mid=224&idx=1&sn=abc"
+
+
 def test_default_file_helper_retries_filehelper_alias():
     payload = {"messages": [{"content": "https://example.com/article"}]}
     calls = []
@@ -296,6 +312,7 @@ def test_default_write_mode_delegates_to_codex(tmp_path):
     assert "across the Reading List root/month/daily pages, not only today's daily page" in prompts[0]
     assert "search the Reading List for each canonical URL" in prompts[0]
     assert "Read the linked content before deciding what to write" in prompts[0]
+    assert "Use the original WeChat share-card title from entries.title as the first search query" in prompts[0]
     assert "Prefer the canonical primary source over the wrapper link" in prompts[0]
     assert "arXiv/DOI/OpenReview first" in prompts[0]
 

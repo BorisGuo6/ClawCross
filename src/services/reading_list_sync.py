@@ -49,6 +49,11 @@ CDATA_TITLE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 TAG_RE = re.compile(r"<[^>]+>")
+MESSAGE_TITLE_RE = re.compile(r"^\s*\[(?:链接|文件)\]\s*(.+?)\s*$")
+MESSAGE_TITLE_NOISE = {
+    "",
+    "当前版本不支持展示该内容，请升级至最新版本。",
+}
 SKIP_HOSTS = {
     "support.weixin.qq.com",
     "weixin110.qq.com",
@@ -281,6 +286,7 @@ def extract_reading_list_entries(
     entries: list[ReadingListEntry] = []
 
     for message in messages:
+        message_title = _message_title_hint(message)
         for text in _message_candidate_texts(message):
             for raw_title, raw_url in _iter_link_candidates(text):
                 counts["links_found"] += 1
@@ -301,7 +307,7 @@ def extract_reading_list_entries(
                     counts["duplicates_skipped"] += 1
                     continue
                 seen.add(key)
-                title = normalize_title(raw_title or url, url)
+                title = normalize_title(raw_title or message_title or url, url)
                 entries.append(ReadingListEntry(title=title, url=url, canonical=key))
 
     return entries, counts
@@ -437,6 +443,7 @@ def _build_codex_sync_prompt(
         "- Before writing, build an existing canonical URL set across the Reading List root/month/daily pages, not only today's daily page. Fetch the current month page and its daily children when available; otherwise search the Reading List for each canonical URL. Skip any entry already present anywhere under Reading List.\n"
         "- Compare duplicates by the provided canonical field after applying the same URL normalization used for existing Notion markdown links. Treat b23.tv, xhs.cn/xhslink.com, xiaohongshu.com, and mp.weixin.qq.com variants as the same item when their canonical URLs match.\n"
         "- Read the linked content before deciding what to write. For Bilibili videos, Xiaohongshu notes, WeChat articles, news/blog posts, and other wrapper pages, inspect the title/description/body and resolve what paper, project, repo, product, or dataset the content is actually about.\n"
+        "- For WeChat public-account links, the mp.weixin page may be inaccessible from automation. Use the original WeChat share-card title from entries.title as the first search query, then search the title plus salient entities to find the original paper/project/repo/product source.\n"
         "- Prefer the canonical primary source over the wrapper link: arXiv/DOI/OpenReview first for papers, then official project pages, GitHub repositories, Hugging Face/model pages, dataset pages, or vendor/product pages. Only keep the wrapper video/article URL when no credible primary source can be identified.\n"
         "- If a wrapper page mentions multiple primary sources, add the primary sources as separate links when they are independently useful, and avoid adding the wrapper itself unless it contains unique context.\n"
         "- Add only article/research/product links from entries.\n"
@@ -769,6 +776,31 @@ def _message_candidate_texts(message: dict[str, Any]) -> list[str]:
     if values:
         return values
     return [value for value in _iter_string_values(message) if value.strip()]
+
+
+def _message_title_hint(message: dict[str, Any]) -> str:
+    for key in ("title", "name", "subject"):
+        value = message.get(key)
+        if isinstance(value, str):
+            title = _clean_message_title(value)
+            if title:
+                return title
+    content = message.get("content")
+    if isinstance(content, str):
+        return _clean_message_title(content)
+    return ""
+
+
+def _clean_message_title(value: str) -> str:
+    cleaned = _clean_title(_decode_message_text(value))
+    match = MESSAGE_TITLE_RE.match(cleaned)
+    if match:
+        cleaned = _clean_title(match.group(1))
+    if cleaned in MESSAGE_TITLE_NOISE:
+        return ""
+    if cleaned.startswith(("http://", "https://")):
+        return ""
+    return cleaned
 
 
 def _iter_string_values(value: Any) -> list[str]:
