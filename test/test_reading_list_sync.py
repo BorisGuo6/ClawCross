@@ -7,6 +7,7 @@ from unittest import mock
 
 from src.services.reading_list_sync import (
     CommandResult,
+    extract_reading_list_entries,
     format_reading_list_sync_summary,
     sync_wechat_file_helper_reading_list,
 )
@@ -68,6 +69,29 @@ def test_dry_run_extracts_normalizes_and_deduplicates_wechat_links():
     assert "new_links: 2" in report
     assert "CameraNoise" not in report
     assert "arxiv.org" not in report
+
+
+def test_extract_resolves_shared_shortlinks_and_skips_noise_urls():
+    messages = [
+        {"content": "video https://b23.tv/abc123?share_medium=android&share_source=weixin"},
+        {"content": "bad https://mp.weixin.qq.com/mp/waerrpage?foo=bar"},
+        {"content": "meeting https://vc.feishu.cn/j/123456"},
+    ]
+
+    def resolver(url, _timeout):
+        assert url == "https://b23.tv/abc123"
+        return "https://www.bilibili.com/video/BV1abcDEF/?share_source=WEIXIN&vd_source=dirty"
+
+    entries, counts = extract_reading_list_entries(messages, url_resolver=resolver)
+
+    assert [entry.url for entry in entries] == ["https://www.bilibili.com/video/BV1abcDEF/"]
+    assert [entry.canonical for entry in entries] == ["https://www.bilibili.com/video/BV1abcDEF"]
+    assert counts == {
+        "links_found": 3,
+        "skipped_noise": 2,
+        "duplicates_skipped": 0,
+        "resolved_links": 1,
+    }
 
 
 def test_default_file_helper_retries_filehelper_alias():
@@ -269,6 +293,8 @@ def test_default_write_mode_delegates_to_codex(tmp_path):
     assert "mode: codex" in format_reading_list_sync_summary(summary)
     assert "Use your own Notion connector/app integration" in prompts[0]
     assert "ntn" in prompts[0]
+    assert "across the Reading List root/month/daily pages, not only today's daily page" in prompts[0]
+    assert "search the Reading List for each canonical URL" in prompts[0]
 
 
 def test_codex_unstructured_response_returns_blocker():

@@ -23,6 +23,9 @@ def test_cleans_known_tracking_params_without_destroying_content_params():
     assert normalize_url("https://b23.tv/FR7x4Yx?share_medium=android&share_source=weixin") == (
         "https://b23.tv/FR7x4Yx"
     )
+    assert normalize_url("https://www.bilibili.com/video/BV123/?share_source=WEIXIN&vd_source=dirty") == (
+        "https://www.bilibili.com/video/BV123/"
+    )
     assert normalize_url("https://zhuanlan.zhihu.com/p/1927639262235993491?utm_source=wechat") == (
         "https://zhuanlan.zhihu.com/p/1927639262235993491"
     )
@@ -58,6 +61,19 @@ def test_canonicalizes_wechat_article_share_urls():
         "&chksm=tracking&scene=21&subscene=10000&clicktime=1780173968"
         "#wechat_redirect"
     ) == "https://mp.weixin.qq.com/s?__biz=MzA&mid=224748&idx=1&sn=abc"
+
+
+def test_replaces_bad_wechat_and_bilibili_titles_with_url_fallbacks():
+    text = """
+[S](https://mp.weixin.qq.com/s?__biz=MzA&mid=224748&idx=1&sn=abc&scene=21#wechat_redirect)
+[https://www.bilibili.com/video/BV123/](https://www.bilibili.com/video/BV123/?share_source=WEIXIN)
+"""
+
+    normalized = normalize_markdown_links(text)
+
+    assert "[WeChat article](https://mp.weixin.qq.com/s?__biz=MzA&mid=224748&idx=1&sn=abc)" in normalized
+    assert "[Bilibili video BV123](https://www.bilibili.com/video/BV123/)" in normalized
+    assert validate_reading_list_markdown(normalized) == []
 
 
 def test_replaces_placeholder_titles_with_overrides_and_url_fallbacks():

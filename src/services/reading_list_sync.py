@@ -16,6 +16,8 @@ import shutil
 import subprocess
 import sys
 from typing import Any, Callable
+import urllib.error
+import urllib.request
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -50,6 +52,7 @@ TAG_RE = re.compile(r"<[^>]+>")
 SKIP_HOSTS = {
     "support.weixin.qq.com",
     "weixin110.qq.com",
+    "vc.feishu.cn",
     "qpic.cn",
     "mmbiz.qpic.cn",
     "wx.qlogo.cn",
@@ -63,6 +66,11 @@ SKIP_HOST_SUFFIXES = (
     ".gtimg.cn",
 )
 PRIVATE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+SHARED_URL_REDIRECT_HOSTS = {
+    "b23.tv",
+    "xhs.cn",
+    "xhslink.com",
+}
 SENSITIVE_RE = re.compile(
     r"(?i)(authorization|cookie|notion[_-]?api[_-]?token|token|secret|password|api[_-]?key)\s*[:=]\s*[^,\s]+"
 )
@@ -88,6 +96,7 @@ class ReadingListEntry:
 WxRunner = Callable[[list[str], int], CommandResult]
 NotionRunner = Callable[[list[str], str | None, int], CommandResult]
 CodexRunner = Callable[[str, int], CommandResult]
+UrlResolver = Callable[[str, int], str | None]
 
 
 def sync_wechat_file_helper_reading_list(
@@ -103,10 +112,12 @@ def sync_wechat_file_helper_reading_list(
     wx_timeout_seconds: int = 80,
     notion_timeout_seconds: int = 80,
     codex_timeout_seconds: int = 900,
+    url_resolve_timeout_seconds: int = 12,
     mode: str | None = None,
     wx_runner: WxRunner | None = None,
     notion_runner: NotionRunner | None = None,
     codex_runner: CodexRunner | None = None,
+    url_resolver: UrlResolver | None = None,
 ) -> dict[str, Any]:
     """Run the guarded WeChat -> Notion Reading List sync.
 
@@ -127,6 +138,7 @@ def sync_wechat_file_helper_reading_list(
         "new_links": 0,
         "duplicates_skipped": 0,
         "skipped_noise": 0,
+        "resolved_links": 0,
         "notion_page_id": "",
         "notion_action": "dry_run" if dry_run else "",
         "mode": sync_mode,
@@ -146,12 +158,17 @@ def sync_wechat_file_helper_reading_list(
         return summary
 
     messages = _extract_messages(payload)
-    entries, counts = extract_reading_list_entries(messages)
+    entries, counts = extract_reading_list_entries(
+        messages,
+        url_resolver=url_resolver,
+        url_resolve_timeout_seconds=url_resolve_timeout_seconds,
+    )
     summary["messages_scanned"] = len(messages)
     summary["links_found"] = counts["links_found"]
     summary["unique_links"] = len(entries)
     summary["skipped_noise"] = counts["skipped_noise"]
     summary["duplicates_skipped"] = counts["duplicates_skipped"]
+    summary["resolved_links"] = counts["resolved_links"]
 
     if dry_run:
         summary["ok"] = True
@@ -253,8 +270,13 @@ def sync_wechat_file_helper_reading_list(
     return summary
 
 
-def extract_reading_list_entries(messages: list[dict[str, Any]]) -> tuple[list[ReadingListEntry], dict[str, int]]:
-    counts = {"links_found": 0, "skipped_noise": 0, "duplicates_skipped": 0}
+def extract_reading_list_entries(
+    messages: list[dict[str, Any]],
+    *,
+    url_resolver: UrlResolver | None = None,
+    url_resolve_timeout_seconds: int = 12,
+) -> tuple[list[ReadingListEntry], dict[str, int]]:
+    counts = {"links_found": 0, "skipped_noise": 0, "duplicates_skipped": 0, "resolved_links": 0}
     seen: set[str] = set()
     entries: list[ReadingListEntry] = []
 
@@ -263,6 +285,14 @@ def extract_reading_list_entries(messages: list[dict[str, Any]]) -> tuple[list[R
             for raw_title, raw_url in _iter_link_candidates(text):
                 counts["links_found"] += 1
                 url = normalize_url(raw_url)
+                resolved_url = _resolve_shared_url_if_needed(
+                    url,
+                    timeout_seconds=url_resolve_timeout_seconds,
+                    url_resolver=url_resolver,
+                )
+                if resolved_url and normalize_url(resolved_url) != url:
+                    counts["resolved_links"] += 1
+                    url = normalize_url(resolved_url)
                 if _is_noise_url(url):
                     counts["skipped_noise"] += 1
                     continue
@@ -291,6 +321,9 @@ def format_reading_list_sync_summary(summary: dict[str, Any]) -> str:
         f"duplicates_skipped: {int(summary.get('duplicates_skipped') or 0)}",
         f"skipped_noise: {int(summary.get('skipped_noise') or 0)}",
     ]
+    resolved_links = int(summary.get("resolved_links") or 0)
+    if resolved_links:
+        lines.append(f"resolved_links: {resolved_links}")
     page_id = str(summary.get("notion_page_id") or "")
     if page_id:
         lines.append(f"notion_page: {page_id}")
@@ -379,6 +412,7 @@ def _build_codex_sync_prompt(
             "unique_links": int(summary.get("unique_links") or 0),
             "duplicates_skipped": int(summary.get("duplicates_skipped") or 0),
             "skipped_noise": int(summary.get("skipped_noise") or 0),
+            "resolved_links": int(summary.get("resolved_links") or 0),
         },
         "notion_hints": {
             "root_page_title": "Reading List",
@@ -400,7 +434,8 @@ def _build_codex_sync_prompt(
         "Task:\n"
         "- Find the Notion Reading List hierarchy. Prefer the page titled 'Reading List', then the month page in notion_hints.month_page_title, then the daily page in notion_hints.daily_page_title.\n"
         "- If the daily page does not exist, create it under the month page or the hinted parent.\n"
-        "- Preserve existing entries and skip duplicate canonical URLs.\n"
+        "- Before writing, build an existing canonical URL set across the Reading List root/month/daily pages, not only today's daily page. Fetch the current month page and its daily children when available; otherwise search the Reading List for each canonical URL. Skip any entry already present anywhere under Reading List.\n"
+        "- Compare duplicates by the provided canonical field after applying the same URL normalization used for existing Notion markdown links. Treat b23.tv, xhs.cn/xhslink.com, xiaohongshu.com, and mp.weixin.qq.com variants as the same item when their canonical URLs match.\n"
         "- Add only article/research/product links from entries.\n"
         "- Do not expose private WeChat message contents. Your final answer must be strict JSON only.\n\n"
         "Return exactly this JSON object shape, with no markdown and no extra text:\n"
@@ -801,6 +836,44 @@ def _clean_title(value: str) -> str:
     return cleaned[:120]
 
 
+def _resolve_shared_url_if_needed(
+    url: str,
+    *,
+    timeout_seconds: int,
+    url_resolver: UrlResolver | None,
+) -> str:
+    parsed = urlsplit(url)
+    host = parsed.netloc.lower().split("@")[-1].split(":")[0]
+    if host not in SHARED_URL_REDIRECT_HOSTS:
+        return url
+    resolver = url_resolver or _default_resolve_shared_url
+    try:
+        resolved = resolver(url, max(1, timeout_seconds))
+    except Exception:
+        return url
+    return (resolved or url).strip() or url
+
+
+def _default_resolve_shared_url(url: str, timeout_seconds: int) -> str:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return response.geturl()
+    except urllib.error.HTTPError as exc:
+        return exc.geturl() or url
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return url
+
+
 def _is_noise_url(url: str) -> bool:
     parsed = urlsplit(url)
     host = parsed.netloc.lower().split("@")[-1].split(":")[0]
@@ -811,6 +884,8 @@ def _is_noise_url(url: str) -> bool:
     if host in SKIP_HOSTS or any(host.endswith(suffix) for suffix in SKIP_HOST_SUFFIXES):
         return True
     path = parsed.path.lower()
+    if host == "mp.weixin.qq.com" and path == "/mp/waerrpage":
+        return True
     if host in {"notion.so", "www.notion.so"} and (path.startswith("/image/") or "external_object_instance" in path):
         return True
     return bool(IMAGE_OR_MEDIA_EXT_RE.search(path))

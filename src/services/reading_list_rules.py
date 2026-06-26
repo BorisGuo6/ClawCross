@@ -348,7 +348,7 @@ def _requires_canonical_url(url: str) -> bool:
 
 def _title_looks_bad(title: str, url: str) -> bool:
     stripped = title.strip()
-    if stripped in BAD_TITLE_MARKERS:
+    if stripped in BAD_TITLE_MARKERS or stripped.lower() in BAD_TITLE_MARKERS:
         return True
     if stripped.startswith(("http://", "https://")):
         return True
@@ -359,6 +359,9 @@ def _title_looks_bad(title: str, url: str) -> bool:
 
     normalized_url = normalize_url(url)
     parsed = urlsplit(normalized_url)
+    host = parsed.netloc.lower()
+    if host in WECHAT_ARTICLE_HOSTS and stripped.lower() in {"s", "mp.weixin.qq.com"}:
+        return True
     return stripped.lower().rstrip("/") == parsed.netloc.lower()
 
 
@@ -370,8 +373,12 @@ def _derive_title_from_url(url: str) -> str:
 
     if "xiaohongshu.com" in host:
         return "小红书笔记"
+    if host in WECHAT_ARTICLE_HOSTS:
+        return "WeChat article"
     if host == "b23.tv" and parts:
         return f"Bilibili video {parts[-1]}"
+    if host in {"www.bilibili.com", "m.bilibili.com"} and len(parts) >= 2 and parts[0] == "video":
+        return f"Bilibili video {parts[1]}"
     if host == "arxiv.org" and len(parts) >= 2 and parts[0] == "abs":
         return f"arXiv {parts[1]}"
     if host == "github.com" and len(parts) >= 2:
