@@ -73,6 +73,11 @@ def _run_ssh(
 def _setup_command() -> str:
     return r"""
 set -eu
+if [ -f "$HOME/.config/proxy-env.sh" ]; then
+  set +u
+  . "$HOME/.config/proxy-env.sh"
+  set -u
+fi
 mkdir -p "$HOME/.local/bin" "$HOME/.clawcross/acpx"
 export PATH="$HOME/.local/bin:$PATH"
 install_node_user() {
@@ -166,6 +171,11 @@ def _smoke_command(tool: str, session: str, *, prompt_smoke: bool) -> str:
     base = f"""
 set -eu
 export PATH="$HOME/.local/bin:$PATH"
+if [ -f "$HOME/.config/proxy-env.sh" ]; then
+  set +u
+  . "$HOME/.config/proxy-env.sh"
+  set -u
+fi
 ENV_FILE="$HOME/.clawcross/remote_acpx.env"
 ACPX_DIR="$HOME/.clawcross/acpx"
 if [ -f "$ENV_FILE" ]; then

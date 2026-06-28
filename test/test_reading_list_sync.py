@@ -5,6 +5,8 @@ import json
 import os
 from unittest import mock
 
+import pytest
+
 from src.services.reading_list_sync import (
     CommandResult,
     extract_reading_list_entries,
@@ -12,6 +14,11 @@ from src.services.reading_list_sync import (
     sync_wechat_file_helper_reading_list,
 )
 import src.services.reading_list_sync as reading_list_sync
+
+
+@pytest.fixture(autouse=True)
+def _isolate_preflight_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(reading_list_sync, "PREFLIGHT_STATE_PATH", tmp_path / "preflight.json")
 
 
 def _wx_runner(payload):
@@ -295,7 +302,9 @@ def test_default_write_mode_delegates_to_codex(tmp_path):
             "",
         )
 
-    with mock.patch.object(reading_list_sync, "SYNC_STATE_PATH", tmp_path / "sync-pages.json"):
+    with mock.patch.object(reading_list_sync, "SYNC_STATE_PATH", tmp_path / "sync-pages.json"), mock.patch.object(
+        reading_list_sync, "PREFLIGHT_STATE_PATH", tmp_path / "preflight.json"
+    ):
         summary = sync_wechat_file_helper_reading_list(
             target_date="2026-06-25",
             wx_runner=_wx_runner(payload),
@@ -317,11 +326,101 @@ def test_default_write_mode_delegates_to_codex(tmp_path):
     assert "arXiv/DOI/OpenReview first" in prompts[0]
 
 
+def test_codex_preflight_skips_repeated_entry_set_without_invoking_codex(tmp_path):
+    payload = {"messages": [{"content": "[New](https://example.com/new?utm_source=wechat)"}]}
+    calls = []
+
+    def codex_runner(_prompt, _timeout):
+        calls.append("called")
+        return CommandResult(
+            0,
+            json.dumps(
+                {
+                    "ok": True,
+                    "updated": True,
+                    "date": "2026-06-25",
+                    "notion_page_id": "daily-page",
+                    "notion_action": "updated",
+                    "new_links": 1,
+                    "duplicates_skipped": 0,
+                    "skipped_noise": 0,
+                    "blocker": "",
+                }
+            ),
+            "",
+        )
+
+    preflight_path = tmp_path / "preflight.json"
+    with mock.patch.object(reading_list_sync, "PREFLIGHT_STATE_PATH", preflight_path):
+        first = sync_wechat_file_helper_reading_list(
+            target_date="2026-06-25",
+            wx_runner=_wx_runner(payload),
+            codex_runner=codex_runner,
+        )
+        second = sync_wechat_file_helper_reading_list(
+            target_date="2026-06-25",
+            wx_runner=_wx_runner(payload),
+            codex_runner=lambda _prompt, _timeout: (_ for _ in ()).throw(AssertionError("Codex should not run")),
+        )
+
+    assert first["ok"] is True
+    assert first["preflight_skipped"] is False
+    assert second["ok"] is True
+    assert second["preflight_skipped"] is True
+    assert second["notion_action"] == "skipped_no_changes"
+    assert second["new_links"] == 0
+    assert calls == ["called"]
+    assert "preflight: skipped_no_changes" in format_reading_list_sync_summary(second)
+
+
+def test_codex_preflight_can_be_disabled(tmp_path):
+    payload = {"messages": [{"content": "[New](https://example.com/new?utm_source=wechat)"}]}
+    calls = []
+
+    def codex_runner(_prompt, _timeout):
+        calls.append("called")
+        return CommandResult(
+            0,
+            json.dumps(
+                {
+                    "ok": True,
+                    "updated": False,
+                    "date": "2026-06-25",
+                    "notion_page_id": "daily-page",
+                    "notion_action": "no_changes",
+                    "new_links": 0,
+                    "duplicates_skipped": 1,
+                    "skipped_noise": 0,
+                    "blocker": "",
+                }
+            ),
+            "",
+        )
+
+    with mock.patch.object(reading_list_sync, "PREFLIGHT_STATE_PATH", tmp_path / "preflight.json"):
+        sync_wechat_file_helper_reading_list(
+            target_date="2026-06-25",
+            wx_runner=_wx_runner(payload),
+            codex_runner=codex_runner,
+        )
+        second = sync_wechat_file_helper_reading_list(
+            target_date="2026-06-25",
+            preflight=False,
+            wx_runner=_wx_runner(payload),
+            codex_runner=codex_runner,
+        )
+
+    assert second["ok"] is True
+    assert second["preflight_skipped"] is False
+    assert calls == ["called", "called"]
+
+
 def test_codex_unstructured_response_returns_blocker():
     payload = {"messages": [{"content": "[New](https://example.com/new)"}]}
 
     summary = sync_wechat_file_helper_reading_list(
         target_date="2026-06-25",
+        preflight=False,
         wx_runner=_wx_runner(payload),
         codex_runner=lambda _prompt, _timeout: CommandResult(0, "done", ""),
     )
@@ -355,6 +454,7 @@ def test_codex_response_parser_tolerates_tool_trace_prefix():
 
     summary = sync_wechat_file_helper_reading_list(
         target_date="2026-06-25",
+        preflight=False,
         wx_runner=_wx_runner(payload),
         codex_runner=lambda _prompt, _timeout: CommandResult(0, stdout, ""),
     )

@@ -250,7 +250,7 @@ CLI_COMMANDS = [
     ("clawcross skill [agent]", "list skills (optionally filtered by agent)"),
     ("clawcross cron [team]", "list cron alarms (optionally for one team)"),
     ("clawcross channel [list|setup ...]", "list / interactively set up chatbot channels"),
-    ("clawcross sync [--dry-run]", "sync WeChat File Transfer Helper links to Notion Reading List"),
+    ("clawcross sync [--dry-run] [--no-preflight]", "sync WeChat File Transfer Helper links to Notion Reading List"),
     ("clawcross platforms", "list available platforms"),
     ("clawcross state", "print state json"),
     ("clawcross cancel", "cancel internal generation"),
@@ -277,8 +277,8 @@ CHAT_SLASH_COMMANDS = [
     ("/cross restart", "request a backend restart"),
     ("/cross cancel", "cancel internal generation"),
     ("/cross front", "get a public magic link"),
-    ("/cross sync [--dry-run]", "sync File Transfer Helper links to Notion Reading List"),
-    ("/sync [--dry-run]", "direct WeChat shortcut for the same Reading List sync"),
+    ("/cross sync [--dry-run] [--no-preflight]", "sync File Transfer Helper links to Notion Reading List"),
+    ("/sync [--dry-run] [--no-preflight]", "direct WeChat shortcut for the same Reading List sync"),
     ("/cross opencli-status [query]", "show local OpenCLI capability status"),
     ("/cross opencli -- <args...>", "run OpenCLI through the guarded harness"),
     ("/cross wx -- <args...>", "run wx-cli through OpenCLI"),
@@ -752,7 +752,7 @@ def _handle_chat_opencli_line(line: str) -> str | None:
 
 def _sync_usage(prefix: str) -> str:
     return (
-        f"Usage: {prefix} [reading-list] [--dry-run] [--codex|--local] [--limit N] [--date YYYY-MM-DD] "
+        f"Usage: {prefix} [reading-list] [--dry-run] [--no-preflight] [--codex|--local] [--limit N] [--date YYYY-MM-DD] "
         "[--chat NAME] [--page-id ID] [--parent page:<id>|data-source:<id>] "
         "[--data-source-id ID]"
     )
@@ -768,6 +768,7 @@ def _parse_reading_list_sync_args(args: list[str]) -> tuple[dict[str, Any], str 
         "parent": None,
         "data_source_id": None,
         "mode": None,
+        "preflight": True,
     }
     idx = 0
     while idx < len(args):
@@ -778,6 +779,10 @@ def _parse_reading_list_sync_args(args: list[str]) -> tuple[dict[str, Any], str 
             continue
         if normalized == "--dry-run":
             options["dry_run"] = True
+            idx += 1
+            continue
+        if normalized == "--no-preflight":
+            options["preflight"] = False
             idx += 1
             continue
         if normalized == "--codex":
@@ -2844,6 +2849,9 @@ def build_parser() -> argparse.ArgumentParser:
     channel = sub.add_parser("channel", help="List / setup chatbot channels (Telegram, Discord, ...)")
     channel.add_argument("args", nargs="*", help="[list|status|show <id>|setup [<id>]|clear <id>]")
 
+    sync = sub.add_parser("sync", help="Sync WeChat File Transfer Helper links to Notion Reading List")
+    sync.add_argument("args", nargs="*", help="[reading-list] [--dry-run] [--no-preflight] [--codex|--local] ...")
+
     return parser
 
 
@@ -2927,6 +2935,9 @@ def main() -> int:
         out = handle_channel_command(list(args.args or []), interactive=True)
         if out:
             print(out)
+        return 0
+    if args.command == "sync":
+        print(_run_reading_list_sync(list(args.args or []), prefix="clawcross sync"))
         return 0
     parser.print_help()
     return 0

@@ -374,6 +374,30 @@ Pick the output route before building:
 5. Artifact build: create `deck.html`, `deck.pptx`, slide images, or a research pack according to the route.
 6. QA: verify text fit, contrast, source grounding, export/open behavior, and write `qa_report.md`.
 
+## Local Upstream Skill Integration
+
+Use this skill as the single orchestrator. When a route names an upstream skill
+and a local copy exists, read that upstream `SKILL.md` before building the
+artifact, then reconcile it with the ClawCross workflow and QA contract above.
+
+Canonical local skill paths:
+
+- Baoyu Slide Deck: `~/.shared-agent-memory/skills/baoyu-slide-deck/SKILL.md`
+- Guizang PPT Skill: `~/.shared-agent-memory/skills/guizang-ppt-skill/SKILL.md`
+- Frontend Slides: `~/.shared-agent-memory/skills/frontend-slides/SKILL.md`
+- Huashu Design: `~/.shared-agent-memory/skills/huashu-design/SKILL.md`
+- Qiaomu Anything to NotebookLM: `~/.shared-agent-memory/skills/qiaomu-anything-to-notebooklm/SKILL.md`
+- PPT Master: `~/.shared-agent-memory/skills/ppt-master/SKILL.md`
+- HTML PPT Skill: `~/.shared-agent-memory/skills/html-ppt-skill/SKILL.md`
+
+Route composition:
+
+- `research-pack`: use Qiaomu for source ingestion, then Baoyu for slide-ready visual prompts when needed.
+- `html`: compare Guizang, Frontend Slides, HTML PPT Skill, and Huashu; pick one primary HTML grammar.
+- `pptx`: use PPT Master as the native editable route, Huashu for visual direction, and Baoyu only when image-first slides are acceptable.
+- `images`: use Baoyu for image-deck workflow and Guizang for editorial/Swiss composition.
+- `motion`: use Huashu for motion direction and HTML PPT Skill for browser presentation/runtime structure.
+
 ## Route Rules
 
 - For HTML decks, prefer semantic HTML/CSS, fixed 16:9 slides, keyboard navigation, print/export CSS, and a presenter or speaker-notes path.

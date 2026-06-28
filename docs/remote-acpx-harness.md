@@ -135,3 +135,32 @@ command over SSH.
   readable by the remote user.
 - SSH failure: ClawCross uses Tailscale IPs/hostnames but still requires
   non-interactive SSH access for the selected user.
+
+## Remote Codex Proxy Monitor
+
+For a remote Codex host behind local `mihomo`, use the monitor script from the
+local ClawCross machine:
+
+```bash
+uv run python scripts/remote_codex_proxy_monitor.py \
+  --target boris@boris-rog.tailf86910.ts.net \
+  --session latest \
+  --resume-mode on-repair \
+  --once --json
+```
+
+The monitor checks Tailscale reachability, verifies the remote `mihomo`
+controller, probes `api.openai.com`, `chatgpt.com/codex`, and `ab.chatgpt.com`
+through `127.0.0.1:7890`, switches selector nodes when probes fail, and sends a
+Codex resume prompt over ACPX after a repair. If the Codex ACP adapter reports
+`/goal` as an unknown slash command, the monitor falls back to a plain-language
+resume prompt.
+
+To install the macOS LaunchAgent on the local ClawCross host:
+
+```bash
+python3 scripts/remote_codex_proxy_monitor.py \
+  --target boris@boris-rog.tailf86910.ts.net \
+  --session latest \
+  --install-launch-agent --interval 120
+```

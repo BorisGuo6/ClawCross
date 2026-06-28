@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import html
 import json
 import os
@@ -36,6 +37,7 @@ from src.utils.runtime_paths import STATE_DIR
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WX_GUARDED_SCRIPT = PROJECT_ROOT / "scripts" / "wx_guarded.py"
 SYNC_STATE_PATH = STATE_DIR / "reading_list_sync_pages.json"
+PREFLIGHT_STATE_PATH = STATE_DIR / "reading_list_sync_preflight.json"
 DEFAULT_CHAT_NAME = "文件传输助手"
 DEFAULT_HISTORY_LIMIT = 80
 DEFAULT_TIMEZONE = "Asia/Shanghai"
@@ -119,6 +121,7 @@ def sync_wechat_file_helper_reading_list(
     codex_timeout_seconds: int = 900,
     url_resolve_timeout_seconds: int = 12,
     mode: str | None = None,
+    preflight: bool = True,
     wx_runner: WxRunner | None = None,
     notion_runner: NotionRunner | None = None,
     codex_runner: CodexRunner | None = None,
@@ -149,6 +152,8 @@ def sync_wechat_file_helper_reading_list(
         "mode": sync_mode,
         "updated": False,
         "blocker": "",
+        "preflight_skipped": False,
+        "preflight_key": "",
     }
 
     try:
@@ -175,10 +180,32 @@ def sync_wechat_file_helper_reading_list(
     summary["duplicates_skipped"] = counts["duplicates_skipped"]
     summary["resolved_links"] = counts["resolved_links"]
 
+    preflight_record = _build_preflight_record(
+        entries,
+        date_text=date_text,
+        chat_name=chat_name,
+        history_limit=history_limit,
+        sync_mode=sync_mode,
+        page_id=page_id,
+        parent=parent,
+        data_source_id=data_source_id,
+    )
+    summary["preflight_key"] = preflight_record["key"]
+
     if dry_run:
         summary["ok"] = True
         summary["new_links"] = len(entries)
         return summary
+
+    if sync_mode == "codex" and preflight and _preflight_enabled():
+        previous = _load_preflight_state().get(preflight_record["key"])
+        if isinstance(previous, dict) and previous.get("ok") is True:
+            summary["ok"] = True
+            summary["updated"] = False
+            summary["new_links"] = 0
+            summary["notion_action"] = "skipped_no_changes"
+            summary["preflight_skipped"] = True
+            return summary
 
     if sync_mode == "codex":
         codex_result = _run_codex_sync(
@@ -189,6 +216,8 @@ def sync_wechat_file_helper_reading_list(
             codex_runner=codex_runner,
         )
         summary.update(codex_result)
+        if summary.get("ok"):
+            _save_preflight_success(preflight_record, summary)
         return summary
     if sync_mode != "local":
         summary["blocker"] = f"unsupported_sync_mode: {sync_mode}"
@@ -225,6 +254,7 @@ def sync_wechat_file_helper_reading_list(
     if not new_entries:
         summary["ok"] = True
         summary["notion_action"] = "no_changes"
+        _save_preflight_success(preflight_record, summary)
         return summary
 
     if target_page_id:
@@ -245,6 +275,7 @@ def sync_wechat_file_helper_reading_list(
         summary["ok"] = True
         summary["updated"] = True
         summary["notion_action"] = "updated"
+        _save_preflight_success(preflight_record, summary)
         return summary
 
     if not target_parent:
@@ -272,6 +303,7 @@ def sync_wechat_file_helper_reading_list(
     summary["notion_page_id"] = _extract_page_id(create_result.stdout)
     if summary["notion_page_id"]:
         _save_cached_daily_page(date_text, str(summary["notion_page_id"]))
+    _save_preflight_success(preflight_record, summary)
     return summary
 
 
@@ -339,7 +371,88 @@ def format_reading_list_sync_summary(summary: dict[str, Any]) -> str:
     blocker = str(summary.get("blocker") or "")
     if blocker:
         lines.append(f"blocker: {blocker}")
+    if summary.get("preflight_skipped"):
+        lines.append("preflight: skipped_no_changes")
     return "\n".join(lines)
+
+
+def _preflight_enabled() -> bool:
+    return os.getenv("CLAWCROSS_READING_LIST_PREFLIGHT", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def _build_preflight_record(
+    entries: list[ReadingListEntry],
+    *,
+    date_text: str,
+    chat_name: str,
+    history_limit: int,
+    sync_mode: str,
+    page_id: str | None,
+    parent: str | None,
+    data_source_id: str | None,
+) -> dict[str, Any]:
+    payload = {
+        "date": date_text,
+        "chat": chat_name,
+        "history_limit": max(1, int(history_limit or DEFAULT_HISTORY_LIMIT)),
+        "mode": sync_mode,
+        "target": {
+            "page_id": _first_nonempty(page_id, os.getenv("CLAWCROSS_READING_LIST_PAGE_ID"), os.getenv("NOTION_READING_LIST_PAGE_ID")),
+            "parent": _first_nonempty(parent, os.getenv("CLAWCROSS_READING_LIST_PARENT"), os.getenv("NOTION_READING_LIST_PARENT")),
+            "data_source_id": _first_nonempty(
+                data_source_id,
+                os.getenv("CLAWCROSS_READING_LIST_DATA_SOURCE_ID"),
+                os.getenv("NOTION_READING_LIST_DATA_SOURCE_ID"),
+            ),
+            "root_page_id": os.getenv("CLAWCROSS_READING_LIST_ROOT_PAGE_ID", "").strip(),
+        },
+        "entry_count": len(entries),
+        "canonical_hash": _entries_hash(entries),
+    }
+    key = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return {**payload, "key": key}
+
+
+def _entries_hash(entries: list[ReadingListEntry]) -> str:
+    canonical_urls = sorted({entry.canonical for entry in entries if entry.canonical})
+    return hashlib.sha256(json.dumps(canonical_urls, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _load_preflight_state() -> dict[str, Any]:
+    try:
+        data = json.loads(PREFLIGHT_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_preflight_success(record: dict[str, Any], summary: dict[str, Any]) -> None:
+    if summary.get("dry_run") or not summary.get("ok"):
+        return
+    data = _load_preflight_state()
+    key = str(record.get("key") or "")
+    if not key:
+        return
+    data[key] = {
+        "ok": True,
+        "date": record.get("date"),
+        "chat": record.get("chat"),
+        "mode": record.get("mode"),
+        "entry_count": record.get("entry_count"),
+        "canonical_hash": record.get("canonical_hash"),
+        "notion_action": summary.get("notion_action") or "",
+        "notion_page_id": summary.get("notion_page_id") or "",
+        "updated_at": datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).isoformat(),
+    }
+    PREFLIGHT_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = PREFLIGHT_STATE_PATH.with_suffix(f"{PREFLIGHT_STATE_PATH.suffix}.tmp")
+    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp_path, PREFLIGHT_STATE_PATH)
 
 
 def _normalize_sync_mode(value: str | None) -> str:

@@ -463,15 +463,16 @@ print(json.dumps({{"sessions": items}}, ensure_ascii=False))
 
 def _remote_acpx_script_prelude() -> str:
     script = r"""
-import json, os, shutil, subprocess, tempfile
+import json, os, re, shutil, subprocess, tempfile
 
 TOOLS = __TOOLS__
 ACPX_CWD = os.path.expanduser(__ACPX_CWD__)
 ENV_PATH = os.path.expanduser(__ENV_PATH__)
+PROXY_ENV_PATH = os.path.expanduser("~/.config/proxy-env.sh")
 TTL_SEC = __TTL_SEC__
 
-def _load_env_file(path):
-    env = os.environ.copy()
+def _merge_env_file(env, path):
+    var_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
     home = os.path.expanduser("~")
     env["PATH"] = os.path.join(home, ".local", "bin") + os.pathsep + env.get("PATH", "")
     try:
@@ -480,8 +481,12 @@ def _load_env_file(path):
                 line = raw.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
                 key, value = line.split("=", 1)
                 key = key.strip()
+                if not var_re.match(key):
+                    continue
                 value = value.strip().strip("'").strip('"')
                 if key:
                     env[key] = value
@@ -489,6 +494,12 @@ def _load_env_file(path):
         pass
     except Exception:
         pass
+    return env
+
+def _load_env_file(path):
+    env = os.environ.copy()
+    _merge_env_file(env, PROXY_ENV_PATH)
+    _merge_env_file(env, path)
     return env
 
 ENV = _load_env_file(ENV_PATH)

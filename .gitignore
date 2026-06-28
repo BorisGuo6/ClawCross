@@ -8,6 +8,7 @@ __pycache__/
 
 # 环境变量配置（含密钥）
 config/.env
+config/.env.bak-*
 
 # 但 .env.example 模板需要上传
 !config/.env.example
