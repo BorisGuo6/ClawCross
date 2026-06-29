@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -33,6 +34,16 @@ class RemoteCodexProxyMonitorTests(unittest.TestCase):
         self.assertFalse(monitor.should_resume({"ok": False, "changed": True}, "on-repair"))
         self.assertTrue(monitor.should_resume({"ok": True}, "always"))
         self.assertFalse(monitor.should_resume({"ok": True}, "never"))
+
+    def test_run_timeout_result_is_json_serializable(self):
+        timeout = subprocess.TimeoutExpired(["tailscale", "ping"], 8, output=b"partial stdout", stderr=b"partial stderr")
+        with mock.patch.object(monitor.subprocess, "run", side_effect=timeout):
+            result = monitor._run(["tailscale", "ping"], timeout=8)
+
+        self.assertEqual(result.returncode, 124)
+        self.assertEqual(result.stdout, "partial stdout")
+        self.assertEqual(result.stderr, "partial stderr")
+        json.dumps({"stdout": result.stdout, "stderr": result.stderr})
 
     def test_remote_probe_command_contains_json_config(self):
         with mock.patch.object(monitor, "_run_ssh", return_value=monitor.CommandResult(0, json.dumps({"ok": True}) + "\n", "")) as run_ssh:

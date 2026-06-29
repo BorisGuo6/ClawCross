@@ -89,6 +89,14 @@ def _ssh_prefix(connect_timeout: int) -> list[str]:
     ]
 
 
+def _ensure_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
+
+
 def _run(
     cmd: list[str],
     *,
@@ -107,7 +115,7 @@ def _run(
             env=env,
         )
     except subprocess.TimeoutExpired as exc:
-        return CommandResult(124, exc.stdout or "", exc.stderr or f"timeout after {timeout}s")
+        return CommandResult(124, _ensure_text(exc.stdout), _ensure_text(exc.stderr) or f"timeout after {timeout}s")
     except Exception as exc:
         return CommandResult(125, "", str(exc))
     return CommandResult(proc.returncode, proc.stdout or "", proc.stderr or "")
