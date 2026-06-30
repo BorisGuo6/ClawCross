@@ -3020,6 +3020,16 @@ def cmd_ideacheck(args):
     print(format_ideacheck_result(result, as_json=args.json))
 
 
+def cmd_codex_quota(args):
+    """Codex quota-aware local queue runner wrapper."""
+    import codex_quota_scheduler
+
+    quota_args = list(getattr(args, "quota_args", []) or ["status"])
+    if quota_args and quota_args[0] == "--":
+        quota_args = quota_args[1:]
+    codex_quota_scheduler.main(quota_args)
+
+
 def build_parser():
     """构建命令行参数解析器"""
     p = argparse.ArgumentParser(
@@ -3348,6 +3358,19 @@ def build_parser():
     c.add_argument("--port", type=int, default=8000, help="serve-command: port")
     c.add_argument("--json", action="store_true", help="输出 JSON payload")
 
+    # codex-quota
+    c = sub.add_parser(
+        "codex-quota",
+        help="Codex 本机队列调度器（显式任务队列 + 冷却窗口 + LaunchAgent）",
+        epilog="示例: uv run scripts/cli.py codex-quota init | status | enqueue '...' | run-once --dry-run | install-launch-agent --load",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    c.add_argument(
+        "quota_args",
+        nargs=argparse.REMAINDER,
+        help="传给 scripts/codex_quota_scheduler.py 的参数",
+    )
+
     # status
     sub.add_parser("status", help="检查各服务状态")
 
@@ -3415,6 +3438,7 @@ def main():
         "codegraph": cmd_codegraph,
         "presentation-skill": cmd_presentation_skill,
         "ideacheck": cmd_ideacheck,
+        "codex-quota": cmd_codex_quota,
         "token": cmd_token,
         "status": cmd_status,
     }

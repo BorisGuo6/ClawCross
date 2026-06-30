@@ -102,3 +102,4 @@ data/debug_llm_payload_last.json
 
 # Local vendored source snapshots
 vendor/
+/.multiagent

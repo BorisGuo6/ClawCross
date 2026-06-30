@@ -22,7 +22,7 @@ Run a reliable long-horizon coding loop with Codex Desktop as the primary driver
 
 ## Current Phase
 
-Cycle 8 ready for Claude review: Agently Mail CLI is connected to the WeChat `/cross` shell. `/cross opencli-status mail` reports the installed `agently-cli`, `/cross mail -- +me` verifies the authorized mailbox, and `/cross mail -- message ...` runs Agently Mail through a no-shell local runner. Mail send/reply/forward/delete/upload actions are blocked unless `--allow-mutating` is present. ClawCross is running in foreground exec session `63469`, Cloudflare Tunnel remains in foreground exec session `32121`, and `openclaw-weixin` is enabled. Automatic Claude Code reviewer invocation may still be blocked unless the local `claude` CLI login has been fixed (`Not logged in · Please run /login` was the Cycle 4 blocker); `.multiagent/.handoff-ready` remains present.
+Cycle 10 ready for Claude review: Codex fixed Claude review P1/P2 findings for the Codex quota scheduler. Cooldown hits no longer consume failure attempts, rate-limit matching is narrower, `status` exposes `stuck_queued`, and regression tests cover the cooldown retry path.
 
 - `spex scaffold` has created `specs/`.
 - `playbook-code` configuration exists at `/Users/boris/.config/playbook/playbook-code.config.yaml`.
@@ -69,6 +69,10 @@ Inventory from `git status --short --branch` on Cycle 3 start. Handling rule: pr
 | `.lintstagedrc`                               | Pre-existing untracked file, unknown owner                                    | Preserve; do not edit unless explicitly assigned.          |
 | `.prettierrc`                                 | Pre-existing untracked file, unknown owner                                    | Preserve; do not edit unless explicitly assigned.          |
 | `docs/agents/skills-audit.md`                 | Pre-existing untracked doc, unknown owner                                     | Preserve; do not edit unless explicitly assigned.          |
+| `scripts/codex_quota_scheduler.py`            | Codex Cycle 9 scheduler; Cycle 10 cooldown-attempt fix                        | Ready for review after Cycle 10 release.                   |
+| `config/codex_quota_scheduler.example.json`   | Codex Cycle 9 scheduler config template                                       | Ready for review after Cycle 10 release.                   |
+| `docs/codex-quota-scheduler.md`               | Codex Cycle 9 scheduler docs; Cycle 10 cooldown semantics update              | Ready for review after Cycle 10 release.                   |
+| `test/test_codex_quota_scheduler.py`          | Codex Cycle 9/10 scheduler regression tests                                   | Ready for review after Cycle 10 release.                   |
 
 ## Validation Log
 
@@ -130,3 +134,16 @@ Inventory from `git status --short --branch` on Cycle 3 start. Handling rule: pr
 - Cycle 8: `bash selfskill/scripts/run.sh status` -> ports 51200/51201/51202/51209 listening; OpenClaw runtime running; current local and remote magic links printed.
 - Cycle 8: `curl -fsS --max-time 12 https://irrigation-start-legislature-merry.trycloudflare.com/mobile_group_chat | head -c 180` -> returned mobile HTML prefix (curl reported expected broken pipe after `head` closed).
 - Cycle 8 reviewer invocation: `claude -p "$(cat .multiagent/claude-code-reviewer-prompt.md)" ...` -> failed before review with `Not logged in · Please run /login`; fallback `.multiagent/.handoff-ready` refreshed.
+- Cycle 9: `python3 -m unittest test.test_codex_quota_scheduler` -> passed, 7 tests OK.
+- Cycle 9: `python3 -m py_compile scripts/codex_quota_scheduler.py scripts/cli.py` -> passed.
+- Cycle 9: `uv run python -m unittest test.test_codex_quota_scheduler` -> passed, 7 tests OK.
+- Cycle 9: `uv run scripts/cli.py codex-quota status` -> returned JSON status; queue empty, not cooling down, inside active window.
+- Cycle 9: `uv run scripts/cli.py codex-quota init` -> created `/Users/boris/.codex/codex_quota_scheduler.json` when missing.
+- Cycle 9: `uv run scripts/cli.py codex-quota run-once --dry-run --ignore-window` -> returned `empty_queue`; no Codex call made.
+- Cycle 9: `uv run scripts/cli.py codex-quota install-launch-agent --load` -> wrote and loaded `/Users/boris/Library/LaunchAgents/com.boris.codex-quota-scheduler.plist`.
+- Cycle 9: `launchctl list | rg 'codex-quota|PID|Status'` -> `com.boris.codex-quota-scheduler` running with PID `72608`, status `0`.
+- Cycle 9: `tail -30 ~/Library/Logs/codex-quota-scheduler.log` -> latest daemon entries show `daemon_start` and `empty_queue`; old parser errors were from the pre-fix plist argument order.
+- Cycle 9: `plutil -lint ~/Library/LaunchAgents/com.boris.codex-quota-scheduler.plist` -> OK.
+- Cycle 10: `uv run python -m unittest test.test_codex_quota_scheduler` -> passed, 9 tests OK.
+- Cycle 10: `python3 -m py_compile scripts/codex_quota_scheduler.py scripts/cli.py` -> passed.
+- Cycle 10: `uv run scripts/cli.py codex-quota status` -> returned JSON status with `stuck_queued: 0`, queue empty, not cooling down, inside active window.

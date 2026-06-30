@@ -1,0 +1,20 @@
+{
+  "timezone": "Asia/Shanghai",
+  "active_start": "08:00",
+  "active_end": "23:30",
+  "weekdays": "MTWRFSU",
+  "queue_path": "~/.codex/codex_quota_queue.json",
+  "state_path": "~/.codex/codex_quota_scheduler_state.json",
+  "log_path": "~/Library/Logs/codex-quota-scheduler.log",
+  "codex_bin": "codex",
+  "default_model": "",
+  "default_sandbox": "workspace-write",
+  "default_approval": "never",
+  "default_timeout_seconds": 3600,
+  "default_max_attempts": 3,
+  "fallback_cooldown_minutes": 45,
+  "poll_interval_seconds": 300,
+  "max_runs_per_daemon_cycle": 1,
+  "use_caffeinate": true,
+  "allow_dangerous_bypass": false
+}
