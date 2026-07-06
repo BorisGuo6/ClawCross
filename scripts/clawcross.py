@@ -41,6 +41,17 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 from src.utils.runtime_paths import ENV_FILE, STATE_DIR, ensure_runtime_dirs
 from src.utils.env_settings import read_env_all, write_env_settings
+try:
+    from integrations.acpx_cli_tools import acpx_agent_tags_with_legacy
+    from integrations.acpx_harness.dispatcher import AcpxHarnessDispatcher
+    from integrations.acpx_harness.registry import get_provider_spec, list_provider_specs
+    from integrations.acpx_provider_registry import list_acp_agent_provider_records
+except Exception:  # pragma: no cover - CLI must still start during partial installs.
+    acpx_agent_tags_with_legacy = None
+    AcpxHarnessDispatcher = None
+    get_provider_spec = None
+    list_provider_specs = None
+    list_acp_agent_provider_records = None
 ensure_runtime_dirs()
 STATE_PATH = STATE_DIR / "state.json"
 STATE_VERSION = 1
@@ -204,6 +215,17 @@ ACP_PLATFORMS = {
     "claude-code",
     "gemini-cli",
 }
+if acpx_agent_tags_with_legacy is not None:
+    try:
+        ACP_PLATFORMS.update(acpx_agent_tags_with_legacy())
+    except Exception:
+        pass
+if list_acp_agent_provider_records is not None:
+    try:
+        for _record in list_acp_agent_provider_records():
+            KNOWN_PLATFORMS.setdefault(_record.id, f"ACP {_record.label} via acpx --agent")
+    except Exception:
+        pass
 SLASH_COMMANDS = [
     ("/platform", "platform actions (list / use)"),
     ("/session", "pick a session (replays last 10 messages on resume)"),
@@ -1516,7 +1538,89 @@ def cmd_platforms(_args, state: dict) -> int:
         marker = "•" if name == current.get("platform") else " "
         print("│ " + marker + " │ " + _pad_display(name, name_col_width) + " │")
     print("└───┴" + "─" * (name_col_width + 2) + "┘")
+    if getattr(_args, "coverage", False):
+        return _print_provider_coverage(getattr(_args, "provider", None) or [])
     return 0
+
+
+def _print_provider_coverage(requested: list[str]) -> int:
+    if list_provider_specs is None or get_provider_spec is None:
+        print("\nProvider coverage unavailable: ACPX harness registry failed to import.", file=sys.stderr)
+        return 1
+    if not requested:
+        requested = [spec.id for spec in list_provider_specs()]
+    rows: list[dict[str, Any]] = []
+    missing: list[str] = []
+    not_ready: list[str] = []
+    for label in requested:
+        spec = get_provider_spec(label)
+        if spec is None:
+            missing.append(label)
+            rows.append({"requested": label, "id": "", "status": "missing", "ok": False})
+            continue
+        ok = bool(spec.installed and spec.enabled)
+        if not ok:
+            not_ready.append(label)
+        rows.append(
+            {
+                "requested": label,
+                "id": spec.id,
+                "status": spec.status,
+                "ok": ok,
+            }
+        )
+
+    req_width = min(max(_display_width(row["requested"]) for row in rows) if rows else 12, 28)
+    id_width = min(max(_display_width(row["id"]) for row in rows) if rows else 12, 24)
+    print("\nProvider coverage")
+    print("┌" + "─" * (req_width + 2) + "┬" + "─" * (id_width + 2) + "┬─────────────┐")
+    print(
+        "│ "
+        + _pad_display("requested", req_width)
+        + " │ "
+        + _pad_display("resolved", id_width)
+        + " │ status      │"
+    )
+    print("├" + "─" * (req_width + 2) + "┼" + "─" * (id_width + 2) + "┼─────────────┤")
+    for row in rows:
+        status = "ok" if row["ok"] else row["status"]
+        print(
+            "│ "
+            + _pad_display(row["requested"], req_width)
+            + " │ "
+            + _pad_display(row["id"], id_width)
+            + " │ "
+            + _pad_display(status, 11)
+            + " │"
+        )
+    print("└" + "─" * (req_width + 2) + "┴" + "─" * (id_width + 2) + "┴─────────────┘")
+    print(f"covered={sum(1 for row in rows if row['ok'])} requested={len(rows)} missing={len(missing)} not_ready={len(not_ready)}")
+    return 0 if not missing and not not_ready else 1
+
+
+def cmd_acpx_runtime_smoke(args, _state: dict) -> int:
+    if AcpxHarnessDispatcher is None:
+        print("ACPX runtime smoke unavailable: ACPX harness dispatcher failed to import.", file=sys.stderr)
+        return 1
+    provider = str(args.provider or "").strip()
+    if not provider:
+        print("--provider is required", file=sys.stderr)
+        return 2
+    prompt = str(args.prompt or "Reply OK only.").strip() or "Reply OK only."
+    session = str(args.session or f"runtime-smoke-{int(time.time())}").strip()
+    dispatcher = AcpxHarnessDispatcher(cwd=str(args.cwd or "") or None)
+    payload = __import__("asyncio").run(
+        dispatcher.runtime_smoke(
+            provider=provider,
+            prompt=prompt,
+            user_id=str(args.user or ""),
+            session_key=session,
+            timeout_sec=int(args.timeout or 45),
+            cwd=str(args.cwd or "") or None,
+        )
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if payload.get("ok") else 1
 
 
 def cmd_state(_args, state: dict) -> int:
@@ -2810,7 +2914,18 @@ def build_parser() -> argparse.ArgumentParser:
     use = sub.add_parser("use", help="Persist the current platform")
     use.add_argument("platform", help="Platform name")
 
-    sub.add_parser("platforms", help="List known platforms")
+    platforms = sub.add_parser("platforms", help="List known platforms")
+    platforms.add_argument("--coverage", action="store_true", help="Verify ACPX provider specs are installed and enabled")
+    platforms.add_argument("--provider", action="append", default=[], help="Provider id or UI label to verify; repeatable")
+
+    smoke = sub.add_parser("acpx-runtime-smoke", help="Run a redacted opt-in ACPX provider runtime smoke")
+    smoke.add_argument("--provider", required=True, help="Provider id or UI label")
+    smoke.add_argument("--prompt", default="Reply OK only.", help="Minimal smoke prompt")
+    smoke.add_argument("--session", default="", help="Session key for the smoke run")
+    smoke.add_argument("--user", default="", help="User id for secret-ref scoping")
+    smoke.add_argument("--cwd", default="", help="Working directory for the provider runtime")
+    smoke.add_argument("--timeout", type=int, default=45, help="Timeout seconds")
+
     sub.add_parser("state", help="Show persisted shell state")
     sub.add_parser("chat", help="Enter interactive shell")
     sub.add_parser("restart", help="Request a backend restart")
@@ -2867,6 +2982,8 @@ def main() -> int:
         return cmd_use(args, state)
     if args.command == "platforms":
         return cmd_platforms(args, state)
+    if args.command == "acpx-runtime-smoke":
+        return cmd_acpx_runtime_smoke(args, state)
     if args.command == "state":
         return cmd_state(args, state)
     if args.command == "chat":

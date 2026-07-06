@@ -3030,6 +3030,16 @@ def cmd_codex_quota(args):
     codex_quota_scheduler.main(quota_args)
 
 
+def cmd_claude_keepalive(args):
+    """Claude keepalive scheduler wrapper."""
+    import claude_keepalive_scheduler
+
+    keepalive_args = list(getattr(args, "keepalive_args", []) or ["status"])
+    if keepalive_args and keepalive_args[0] == "--":
+        keepalive_args = keepalive_args[1:]
+    claude_keepalive_scheduler.main(keepalive_args)
+
+
 def build_parser():
     """构建命令行参数解析器"""
     p = argparse.ArgumentParser(
@@ -3371,6 +3381,19 @@ def build_parser():
         help="传给 scripts/codex_quota_scheduler.py 的参数",
     )
 
+    # claude-keepalive
+    c = sub.add_parser(
+        "claude-keepalive",
+        help="Claude keepalive 调度器（读取 WeBot Claude keepalive 配置 + LaunchAgent）",
+        epilog="示例: uv run scripts/cli.py claude-keepalive status | run-once --dry-run | install-launch-agent --load",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    c.add_argument(
+        "keepalive_args",
+        nargs=argparse.REMAINDER,
+        help="传给 scripts/claude_keepalive_scheduler.py 的参数",
+    )
+
     # status
     sub.add_parser("status", help="检查各服务状态")
 
@@ -3439,6 +3462,7 @@ def main():
         "presentation-skill": cmd_presentation_skill,
         "ideacheck": cmd_ideacheck,
         "codex-quota": cmd_codex_quota,
+        "claude-keepalive": cmd_claude_keepalive,
         "token": cmd_token,
         "status": cmd_status,
     }

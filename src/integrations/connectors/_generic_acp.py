@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from integrations.acpx_adapter import AcpxError, _ensure_session_timeout, get_acpx_adapter, normalize_acpx_run_options
+from integrations.acpx_adapter import AcpxError, normalize_acpx_run_options
+from integrations.acpx_harness.dispatcher import get_acpx_harness_dispatcher
+from integrations.acpx_harness.schema import RunOptions, RunRequest
 from integrations.base import (
     PreparedAgentStream,
     ResetAgentRequest,
@@ -52,67 +54,47 @@ class GenericAcpConnector(AgentConnector):
             prompt_chars=len(prompt_text),
         )
         try:
-            adapter = get_acpx_adapter(cwd=cwd)
             platform = _canonical_platform(request.platform)
-            _acp_mark("connector.adapter_ready", platform=platform)
-            if options.get("return_trace"):
-                trace = await adapter.prompt_with_trace(
-                    tool=platform,
+            dispatcher = get_acpx_harness_dispatcher(cwd=cwd)
+            _acp_mark("connector.dispatcher_ready", platform=platform)
+            result = await dispatcher.send(
+                RunRequest(
+                    provider=platform,
                     session_key=request.session or "default",
-                    prompt_text=prompt_text,
-                    timeout_sec=run_options["timeout_sec"],
-                    reset_session=bool(options.get("reset_session")),
+                    prompt=prompt_text,
+                    user_id=str(options.get("user_id") or options.get("username") or ""),
+                    workspace_id=str(options.get("workspace_id") or ""),
+                    run_id=str(options.get("run_id") or ""),
+                    cwd=cwd,
                     system_prompt=options.get("system_prompt"),
-                    attachments=attachments,
-                    ttl_sec=run_options["ttl_sec"],
-                    model=run_options["model"],
-                    max_turns=run_options["max_turns"],
-                    approve_all=run_options["approve_all"],
-                    permission_policy=run_options["permission_policy"],
-                    non_interactive_permissions=run_options["non_interactive_permissions"],
-                    allowed_tools=run_options["allowed_tools"],
+                    reset_session=bool(options.get("reset_session")),
+                    attachments=attachments or [],
+                    secret_refs=list(options.get("secret_refs") or options.get("env_refs") or []),
+                    return_trace=bool(options.get("return_trace")),
+                    options=RunOptions(**run_options),
                 )
-                _acp_mark("connector.prompt_with_trace.done", chars=len(trace.text or ""))
+            )
+            if not result.ok:
                 return SendToAgentResult(
-                    ok=True,
-                    content=trace.text or "",
-                    raw_response={
-                        "message_chunks": trace.message_chunks,
-                        "messages": trace.messages,
-                        "tool_uses": trace.tool_uses,
-                        "tool_results": trace.tool_results,
-                    },
+                    ok=False,
+                    error=result.error,
                     meta={
                         "connect_type": "acp",
                         "platform": platform,
                         "session": request.session,
+                        **(result.meta or {}),
                     },
                 )
-            reply = await adapter.prompt(
-                tool=platform,
-                session_key=request.session or "default",
-                prompt_text=prompt_text,
-                timeout_sec=run_options["timeout_sec"],
-                reset_session=bool(options.get("reset_session")),
-                system_prompt=options.get("system_prompt"),
-                attachments=attachments,
-                ttl_sec=run_options["ttl_sec"],
-                model=run_options["model"],
-                max_turns=run_options["max_turns"],
-                approve_all=run_options["approve_all"],
-                permission_policy=run_options["permission_policy"],
-                non_interactive_permissions=run_options["non_interactive_permissions"],
-                allowed_tools=run_options["allowed_tools"],
-            )
-            _acp_mark("connector.prompt.done", chars=len(reply or ""))
+            _acp_mark("connector.prompt.done", chars=len(result.content or ""))
             return SendToAgentResult(
                 ok=True,
-                content=reply,
-                raw_response=reply,
+                content=result.content,
+                raw_response=result.raw_response,
                 meta={
                     "connect_type": "acp",
                     "platform": platform,
                     "session": request.session,
+                    **(result.meta or {}),
                 },
             )
         except (AcpxError, RuntimeError) as e:
@@ -136,28 +118,26 @@ class GenericAcpConnector(AgentConnector):
 
         platform = _canonical_platform(request.platform)
         try:
-            adapter = get_acpx_adapter(cwd=options.get("cwd"))
-            if platform == "openclaw":
-                await adapter.ops_openclaw_exec_slash(
+            dispatcher = get_acpx_harness_dispatcher(cwd=options.get("cwd"))
+            result = await dispatcher.reset(
+                RunRequest(
+                    provider=platform,
                     session_key=session_key,
-                    slash="/new",
-                    timeout_sec=run_options["timeout_sec"],
-                    ttl_sec=run_options["ttl_sec"],
-                    approve_all=run_options["approve_all"],
-                    permission_policy=run_options["permission_policy"],
-                    non_interactive_permissions=run_options["non_interactive_permissions"],
-                    allowed_tools=run_options["allowed_tools"],
+                    prompt="",
+                    cwd=options.get("cwd"),
+                    options=RunOptions(**run_options),
                 )
-            else:
-                await adapter.ops_non_openclaw_reset_session(
-                    tool=platform,
-                    session_key=session_key,
-                    timeout_sec=run_options["timeout_sec"],
-                    ttl_sec=run_options["ttl_sec"],
-                    approve_all=run_options["approve_all"],
-                    permission_policy=run_options["permission_policy"],
-                    non_interactive_permissions=run_options["non_interactive_permissions"],
-                    allowed_tools=run_options["allowed_tools"],
+            )
+            if not result.ok:
+                return ResetAgentResult(
+                    ok=False,
+                    error=result.error,
+                    meta={
+                        "connect_type": "acp",
+                        "platform": platform,
+                        "session": session_key,
+                        **(result.meta or {}),
+                    },
                 )
             cleared_http_sessions = await _clear_http_agent_session_records(options, session_key)
             return ResetAgentResult(
@@ -187,42 +167,29 @@ class GenericAcpConnector(AgentConnector):
         prompt_text = request.prompt if isinstance(request.prompt, str) else str(request.prompt or "")
         attachments = options.get("attachments")
         platform = _canonical_platform(request.platform)
-        adapter = get_acpx_adapter(cwd=cwd)
-        acpx_session = adapter.to_acpx_session_name(tool=platform, session_key=request.session or "default")
-        await adapter.ensure_session(
-            tool=platform,
-            session_key=request.session or "default",
-            acpx_session=acpx_session,
-            system_prompt=options.get("system_prompt"),
-            ensure_timeout_sec=_ensure_session_timeout(run_options["timeout_sec"]),
-            ttl_sec=run_options["ttl_sec"],
-            model=run_options["model"],
-            max_turns=run_options["max_turns"],
-            approve_all=run_options["approve_all"],
-            permission_policy=run_options["permission_policy"],
-            non_interactive_permissions=run_options["non_interactive_permissions"],
-            allowed_tools=run_options["allowed_tools"],
-        )
-        cmd, temp_path = adapter.prepare_prompt_command(
-            tool=platform,
-            session_key=request.session or "default",
-            acpx_session=acpx_session,
-            prompt_text=prompt_text,
-            attachments=attachments,
-            ttl_sec=run_options["ttl_sec"],
-            model=run_options["model"],
-            max_turns=run_options["max_turns"],
-            approve_all=run_options["approve_all"],
-            permission_policy=run_options["permission_policy"],
-            non_interactive_permissions=run_options["non_interactive_permissions"],
-            allowed_tools=run_options["allowed_tools"],
+        dispatcher = get_acpx_harness_dispatcher(cwd=cwd)
+        prepared = await dispatcher.prepare_stream(
+            RunRequest(
+                provider=platform,
+                session_key=request.session or "default",
+                prompt=prompt_text,
+                user_id=str(options.get("user_id") or options.get("username") or ""),
+                workspace_id=str(options.get("workspace_id") or ""),
+                run_id=str(options.get("run_id") or ""),
+                cwd=cwd,
+                system_prompt=options.get("system_prompt"),
+                attachments=attachments or [],
+                secret_refs=list(options.get("secret_refs") or options.get("env_refs") or []),
+                options=RunOptions(**run_options),
+            )
         )
         return PreparedAgentStream(
             connect_type="acp",
             platform=platform,
             session=request.session,
             timeout_sec=run_options["timeout_sec"],
-            cmd=cmd,
-            temp_path=temp_path,
-            adapter=adapter,
+            cmd=prepared.command,
+            temp_path=prepared.temp_path,
+            adapter=prepared.adapter,
+            env_overlay=prepared.env_overlay,
         )

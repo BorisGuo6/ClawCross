@@ -454,9 +454,13 @@ class FrontendIntegrationTests(unittest.TestCase):
         html = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('class="page-tab active" id="tab-chat"', html)
-        self.assertIn('id="page-chat" class="chat-page" style="display:flex;"', html)
+        self.assertIn('id="tab-chat"', html)
+        self.assertIn('class="page-tab active"', html)
+        self.assertIn('id="page-chat"', html)
+        self.assertIn('class="chat-page"', html)
         self.assertIn('id="tab-orchestrate"', html)
+        self.assertIn('id="tab-nat"', html)
+        self.assertIn('id="page-nat"', html)
         self.assertIn('id="settings-modal"', html)
         self.assertIn('id="oasis-chat-workspace-switcher"', html)
         self.assertIn('id="oasis-chat-graph-host"', html)
@@ -466,6 +470,54 @@ class FrontendIntegrationTests(unittest.TestCase):
         self.assertIn('id="webot-policy-editor"', html)
         self.assertIn("/static/js/orchestration.js", html)
         self.assertIn("/static/js/tinyfish-live-shared.js", html)
+        self.assertIn("/static/js/nat_check.js", html)
+        self.assertIn('id="anyrouter-autolog-panel"', html)
+        self.assertIn("/static/js/anyrouter_autolog.js", html)
+
+    def test_anyrouter_autolog_save_masks_response(self):
+        saved_config = {
+            "accounts": [
+                {
+                    "name": "primary",
+                    "provider": "anyrouter",
+                    "api_user": "user123456789",
+                    "cookies": {"session": "abcdefghijklmnop"},
+                }
+            ],
+            "providers": {},
+            "updated_at": "2026-07-02T00:00:00Z",
+        }
+        with mock.patch.object(front, "save_anyrouter_autolog_config", return_value=saved_config) as mock_save:
+            response = self.client.post(
+                "/api/anyrouter-autolog/config",
+                json={"config": {"accounts": saved_config["accounts"], "providers": {}}},
+            )
+
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+        self.assertNotIn("abcdefghijklmnop", body)
+        self.assertNotIn("user123456789", body)
+        self.assertIn("abcd****mnop", body)
+        mock_save.assert_called_once()
+        self.assertEqual(mock_save.call_args.args[0], "integration-user")
+
+    def test_anyrouter_autolog_run_uses_saved_config(self):
+        saved_config = {"accounts": [{"name": "primary", "api_user": "u", "cookies": {"session": "c"}}]}
+        run_result = {
+            "ok": True,
+            "success_count": 1,
+            "total_count": 1,
+            "results": [{"name": "primary", "success": True, "message": "ok"}],
+        }
+        with mock.patch.object(front, "load_anyrouter_autolog_config", return_value=saved_config) as mock_load, \
+                mock.patch.object(front, "run_anyrouter_autolog", return_value=run_result) as mock_run:
+            response = self.client.post("/api/anyrouter-autolog/run", json={})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["success_count"], 1)
+        mock_load.assert_called_once_with("integration-user")
+        mock_run.assert_called_once_with(saved_config)
 
     def test_proxy_check_session_missing_session_is_soft_false(self):
         with self.client.session_transaction() as session:

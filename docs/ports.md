@@ -1,18 +1,19 @@
 # Clawcross 端口大全
 
-> 最后更新：2026-04-01
+> 最后更新：2026-07-05
 
 ## 端口总览
 
-| 端口 | 环境变量 | 服务文件 | 说明 | 绑定地址 | 对外暴露 |
-|------|----------|----------|------|----------|----------|
-| **51200** | `PORT_AGENT` | `src/mainagent.py` | AI Agent 主服务（OpenAI 兼容 API） | `127.0.0.1` | 否 |
-| **51201** | `PORT_SCHEDULER` | `src/utils/scheduler_service.py` | 定时任务调度中心 | `127.0.0.1` | 否 |
-| **51202** | `PORT_OASIS` | `oasis/server.py` | OASIS 论坛 / Agent 管理与编排中心 | `127.0.0.1` | 否 |
-| **51209** | `PORT_FRONTEND` | `src/front.py` | 前端 Web UI（Flask） | `0.0.0.0` | 是 Tunnel |
-| **51210** | —（硬编码） | `visual/main.py` | 可视化编排系统（开发用） | `0.0.0.0` | 否 |
-| **58010** | `PORT_BARK` | 外部二进制 `bin/bark-server` | Bark 推送服务器 | — | 是 Tunnel |
-| **18789** | `OPENCLAW_API_URL`（可选） | 外部服务 | OpenClaw 后端（外部集成） | 不适用 | 不适用 |
+| 端口      | 环境变量                                      | 服务文件                          | 说明                                                       | 绑定地址    | 对外暴露  |
+| --------- | --------------------------------------------- | --------------------------------- | ---------------------------------------------------------- | ----------- | --------- |
+| **51200** | `PORT_AGENT`                                  | `src/mainagent.py`                | AI Agent 主服务（OpenAI 兼容 API）                         | `127.0.0.1` | 否        |
+| **51201** | `PORT_SCHEDULER`                              | `src/utils/scheduler_service.py`  | 定时任务调度中心                                           | `127.0.0.1` | 否        |
+| **51202** | `PORT_OASIS`                                  | `oasis/server.py`                 | OASIS 论坛 / Agent 管理与编排中心                          | `127.0.0.1` | 否        |
+| **51209** | `PORT_FRONTEND`                               | `src/front.py`                    | 前端 Web UI（Flask）                                       | `0.0.0.0`   | 是 Tunnel |
+| **51210** | —（硬编码）                                   | `visual/main.py`                  | 可视化编排系统（开发用）                                   | `0.0.0.0`   | 否        |
+| **58010** | `PORT_BARK`                                   | 外部二进制 `bin/bark-server`      | Bark 推送服务器                                            | —           | 是 Tunnel |
+| **18789** | `OPENCLAW_API_URL`（可选）                    | 外部服务                          | OpenClaw 后端（外部集成）                                  | 不适用      | 不适用    |
+| **18080** | `CLAWCROSS_DMROBOT_GITLAB_SOCKS_PORT`（可选） | `scripts/dmrobot_gitlab_socks.py` | dmrobot GitLab SOCKS 跳板（Mac → Tailscale → dm-26zj-020） | `127.0.0.1` | 否        |
 
 ## 详细说明
 
@@ -87,19 +88,49 @@
 - **浏览器入口**：`http://127.0.0.1:18789/`
 - **HTTP API**：`http://127.0.0.1:18789/v1/chat/completions`
 
+### 18080 — dmrobot GitLab SOCKS 跳板（可选）
+
+- **文件**：`scripts/dmrobot_gitlab_socks.py`
+- **职责**：
+  - 在本机 `127.0.0.1:18080` 启动 SOCKS5 动态转发
+  - 通过 `lenovo@100.77.85.105` / `dm-26zj-020` 访问 `gitlab.dmrobot.com`
+  - 提供 `start`、`stop`、`status`、`check`、`daemon`、`install-launch-agent` 子命令
+- **常用命令**：
+
+```bash
+python3 scripts/dmrobot_gitlab_socks.py start
+python3 scripts/dmrobot_gitlab_socks.py check --json
+python3 scripts/dmrobot_gitlab_socks.py stop
+```
+
+- **安装为 macOS LaunchAgent**：
+
+```bash
+python3 scripts/dmrobot_gitlab_socks.py install-launch-agent --load
+```
+
+- **验证 GitLab Git 路由**：
+
+```bash
+GIT_TERMINAL_PROMPT=0 git -c http.proxy=socks5h://127.0.0.1:18080 \
+  ls-remote --heads http://gitlab.dmrobot.com/shenrui.liu/tacsim_collect.git RobOmni_v1.0
+```
+
+- **注意**：这个端口只绑定 `127.0.0.1`，不通过 Cloudflare Tunnel 或 ClawCross frontend 暴露。
+
 ## 启动顺序
 
 由 `scripts/launcher.py` 定义：
 
 在 1/5 之前，如果本机已安装 OpenClaw，launcher 会先尝试预热 OpenClaw gateway，确保 `/v1/chat/completions` 可用，并刷新 `OPENCLAW_*` 运行时配置。
 
-| 步骤 | 服务 | 端口 | 等待时间 |
-|------|------|------|----------|
-| 1/5 | 定时调度中心 | 51201 | 2s |
-| 2/5 | OASIS 论坛 | 51202 | 2s |
-| 3/5 | AI Agent | 51200 | 3s |
-| 4/5 | Chatbot 配置 | — | 交互式 |
-| 5/5 | 前端 Web UI | 51209 | 1s |
+| 步骤 | 服务         | 端口  | 等待时间 |
+| ---- | ------------ | ----- | -------- |
+| 1/5  | 定时调度中心 | 51201 | 2s       |
+| 2/5  | OASIS 论坛   | 51202 | 2s       |
+| 3/5  | AI Agent     | 51200 | 3s       |
+| 4/5  | Chatbot 配置 | —     | 交互式   |
+| 5/5  | 前端 Web UI  | 51209 | 1s       |
 
 ## Tunnel 暴露策略
 
@@ -180,6 +211,18 @@ PORT_FRONTEND=51209
 - `POST /proxy_groups/<id>/unmute` — 取消静音（→ `/groups/<id>/unmute`）
 - `GET /proxy_groups/<id>/mute_status` — 静音状态（→ `/groups/<id>/mute_status`）
 - `GET /proxy_groups/<id>/sessions` — 群组会话（→ `/groups/<id>/sessions`）
+
+### Project Harness 代理（→ :51200）
+
+- `GET /proxy_harness_state` — 移动端 Project Harness 状态（→ `/harness/state`）
+- `POST /proxy_harness_event` — 以当前 Flask session 用户提交 harness event（→ `/harness/event`）
+- `POST /proxy_harness_channel_ticket` — 为移动端 basic terminal pane 申请一次性 runner channel WebSocket ticket（→ `/harness/runners/{runner_id}/channels/{channel_kind}/{channel_id}/ticket`）
+- `POST /proxy_harness_channel_session` — 为移动端 basic terminal pane 创建同源 HTTP relay（→ `/harness/runners/{runner_id}/channels/{channel_kind}/{channel_id}/sessions`）
+- `GET /proxy_harness_channel_session/<id>/events` — 轮询 relay channel 事件（→ `/harness/runner-channels/{id}/events`）
+- `POST /proxy_harness_channel_session/<id>/send` — 向 relay channel 发送终端输入（→ `/harness/runner-channels/{id}/send`）
+- `POST /proxy_harness_channel_session/<id>/close` — 关闭 relay channel（→ `/harness/runner-channels/{id}/close`）
+
+浏览器只访问 `front.py` 的同源代理；`X-Internal-Token` 和用户密码留在 Flask 后端到 `:51200` 的内部 hop 中。
 
 ### OASIS 代理（→ :51202）
 
@@ -317,11 +360,11 @@ else → 要求登录
 
 ### 判定结果
 
-| 场景 | 结果 |
-|------|------|
-| 本地浏览器 `127.0.0.1` 直连 | 通过 |
-| 本地 agent / MCP 工具直连 | 通过 |
-| Cloudflare Tunnel 转发（带 `Cf-Ray`） | 需登录 |
+| 场景                                   | 结果   |
+| -------------------------------------- | ------ |
+| 本地浏览器 `127.0.0.1` 直连            | 通过   |
+| 本地 agent / MCP 工具直连              | 通过   |
+| Cloudflare Tunnel 转发（带 `Cf-Ray`）  | 需登录 |
 | Nginx 反代转发（带 `X-Forwarded-For`） | 需登录 |
-| Caddy / Traefik / HAProxy 转发 | 需登录 |
-| 外网 IP 直连 | 需登录 |
+| Caddy / Traefik / HAProxy 转发         | 需登录 |
+| 外网 IP 直连                           | 需登录 |

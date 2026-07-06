@@ -21,7 +21,12 @@ import sys as _sys
 from pathlib import Path
 from io import BytesIO
 
-from integrations.acpx_cli_tools import acpx_agent_command_names
+from integrations.acpx_cli_tools import acpx_agent_tags_with_legacy
+from integrations.acpx_harness.auth_status import provider_auth_status
+from integrations.acpx_harness.capabilities import omnigent_harness_capabilities_to_dict
+from integrations.acpx_harness.registry import list_provider_specs
+from integrations.acpx_provider_registry import paseo_provider_status_for, paseo_provider_status_key, paseo_provider_status_report
+from harness.store import get_harness_state
 from integrations.agent_sender import PreparedAgentStream, SendToAgentRequest, prepare_send_to_agent_stream, send_to_agent
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
@@ -46,6 +51,12 @@ from services.tinyfish_monitor_service import (
     probe_api_access,
     stream_live_run,
     submit_monitor_run,
+)
+from services.anyrouter_autolog_service import (
+    load_saved_config as load_anyrouter_autolog_config,
+    masked_config as mask_anyrouter_autolog_config,
+    run_check_in as run_anyrouter_autolog,
+    save_config as save_anyrouter_autolog_config,
 )
 from services.team_creator_service import (
     build_from_roles,
@@ -977,6 +988,71 @@ def tinyfish_site_latest(site_key):
         return jsonify({"ok": True, "site": data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+def _anyrouter_autolog_owner_id() -> str | None:
+    owner_id = str(session.get("user_id") or "").strip()
+    if owner_id:
+        return owner_id
+    header_uid = request.headers.get("X-User-Id", "").strip()
+    if header_uid:
+        return header_uid
+    return None
+
+
+@app.route("/api/anyrouter-autolog/config")
+def anyrouter_autolog_get_config():
+    """Return saved AnyRouter check-in config with secrets masked."""
+    owner_id = _anyrouter_autolog_owner_id()
+    if not owner_id:
+        return jsonify({"ok": False, "error": "login required"}), 401
+    config = load_anyrouter_autolog_config(owner_id)
+    masked = mask_anyrouter_autolog_config(config)
+    return jsonify({
+        "ok": True,
+        "config": masked,
+        "has_saved_config": bool(masked.get("accounts")),
+    })
+
+
+@app.route("/api/anyrouter-autolog/config", methods=["POST"])
+def anyrouter_autolog_save_config():
+    """Persist AnyRouter check-in config for the current ClawCross user."""
+    owner_id = _anyrouter_autolog_owner_id()
+    if not owner_id:
+        return jsonify({"ok": False, "error": "login required"}), 401
+    body = request.get_json(silent=True) or {}
+    config = body.get("config") if isinstance(body.get("config"), dict) else body
+    try:
+        saved = save_anyrouter_autolog_config(owner_id, config)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({
+        "ok": True,
+        "config": mask_anyrouter_autolog_config(saved),
+        "has_saved_config": True,
+    })
+
+
+@app.route("/api/anyrouter-autolog/run", methods=["POST"])
+def anyrouter_autolog_run():
+    """Run AnyRouter / AgentRouter check-in once."""
+    owner_id = _anyrouter_autolog_owner_id()
+    if not owner_id:
+        return jsonify({"ok": False, "error": "login required"}), 401
+    body = request.get_json(silent=True) or {}
+    config = body.get("config") if isinstance(body.get("config"), dict) else None
+    if not config:
+        config = load_anyrouter_autolog_config(owner_id)
+    try:
+        result = run_anyrouter_autolog(config)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify(result)
 
 
 @app.route("/creator")
@@ -3593,12 +3669,12 @@ def _acpx_prompt_and_attachments_from_openai_messages(messages: list) -> tuple[s
 
 
 def _list_acpx_tools() -> list[str]:
-    """Agent subcommands from `acpx --help` (cached)."""
-    return sorted(acpx_agent_command_names())
+    """Agent tags from `acpx --help` plus Paseo ACP agent manifests."""
+    return sorted(acpx_agent_tags_with_legacy())
 
 
 def _normalize_acpx_tool(body: dict) -> str | None:
-    supported = acpx_agent_command_names()
+    supported = acpx_agent_tags_with_legacy()
     raw = (body.get("tool") or "").strip().lower()
     if raw in supported:
         return raw
@@ -3675,7 +3751,110 @@ def proxy_acpx_status():
     import shutil
 
     available = bool(shutil.which("acpx"))
-    return jsonify({"available": available, "tools": _list_acpx_tools() if available else []})
+    user_id = str(request.args.get("user_id") or session.get("user_id") or "").strip()
+    probes: dict[str, dict[str, Any]] = {}
+    if user_id:
+        try:
+            probes = {
+                str(item.get("provider_id") or ""): _acpx_provider_probe_summary(item)
+                for item in get_harness_state(user_id).get("provider_probes", [])
+                if isinstance(item, dict) and str(item.get("provider_id") or "")
+            }
+        except Exception:
+            probes = {}
+    provider_specs = []
+    paseo_report = paseo_provider_status_report()
+    paseo_statuses = paseo_report.get("providers") if isinstance(paseo_report.get("providers"), dict) else {}
+    matched_paseo_ids: set[str] = set()
+    missing_paseo_ids: list[str] = []
+    if available:
+        for spec in list_provider_specs():
+            last_probe = probes.get(spec.id)
+            auth_status = provider_auth_status(spec, last_probe)
+            paseo_key = paseo_provider_status_key(spec.id, spec.aliases, paseo_statuses)
+            paseo_status = paseo_provider_status_for(spec.id, spec.aliases, paseo_statuses)
+            if paseo_key:
+                matched_paseo_ids.add(paseo_key)
+            elif spec.installed and spec.enabled:
+                missing_paseo_ids.append(spec.id)
+            provider_specs.append(
+                {
+                    "id": spec.id,
+                    "label": spec.label,
+                    "integration_mode": spec.integration_mode,
+                    "source": spec.source,
+                    "installed": spec.installed,
+                    "enabled": spec.enabled,
+                    "status": spec.status,
+                    "aliases": list(spec.aliases),
+                    "harness_capabilities": omnigent_harness_capabilities_to_dict(
+                        provider=spec.id,
+                        integration_mode=spec.integration_mode,
+                        profile=spec.capabilities,
+                    ),
+                    "last_probe": last_probe,
+                    "auth_status": auth_status,
+                    "paseo_status": paseo_status,
+                    "paseo_status_key": paseo_key,
+                }
+            )
+    auth_counts: dict[str, int] = {}
+    for item in provider_specs:
+        status = str((item.get("auth_status") or {}).get("status") or "unknown")
+        auth_counts[status] = auth_counts.get(status, 0) + 1
+    paseo_counts = paseo_report.get("counts") if isinstance(paseo_report.get("counts"), dict) else {}
+    return jsonify(
+        {
+            "available": available,
+            "tools": _list_acpx_tools() if available else [],
+            "providers": provider_specs,
+            "paseo": {
+                "available": bool(paseo_report.get("available")),
+                "error": str(paseo_report.get("error") or ""),
+                "counts": paseo_counts,
+                "unmapped": sorted(
+                    provider_id
+                    for provider_id in paseo_statuses
+                    if provider_id not in matched_paseo_ids
+                ),
+                "missing_installed": sorted(set(missing_paseo_ids)),
+            },
+            "provider_proof": {
+                "user_bound": bool(user_id),
+                "last_probes": len(probes),
+                "runtime_smoke": sum(1 for item in probes.values() if item.get("stage") == "runtime_smoke"),
+                "runtime_proven": auth_counts.get("runtime_proven", 0),
+                "auth_status": auth_counts,
+                "paseo_available": int(paseo_counts.get("available") or 0),
+                "paseo_errors": int(paseo_counts.get("error") or 0),
+                "paseo_matched": len(matched_paseo_ids),
+                "paseo_missing": len(set(missing_paseo_ids)),
+            },
+        }
+    )
+
+
+_ACPX_PROBE_SECRET_RE = re.compile(r"(?i)(token|secret|password|api[_-]?key)=([^\s,&]+)")
+
+
+def _acpx_provider_probe_summary(probe: dict[str, Any]) -> dict[str, Any]:
+    details = probe.get("details") if isinstance(probe.get("details"), dict) else {}
+    observations = details.get("observations") if isinstance(details.get("observations"), dict) else {}
+    return {
+        "provider_id": str(probe.get("provider_id") or ""),
+        "ok": bool(probe.get("ok")),
+        "stage": str(probe.get("stage") or ""),
+        "status": str(probe.get("status") or ""),
+        "error": _ACPX_PROBE_SECRET_RE.sub(r"\1=<redacted>", str(probe.get("error") or ""))[:500],
+        "error_class": str(details.get("error_class") or ""),
+        "updated_at": str(probe.get("updated_at") or ""),
+        "elapsed_ms": details.get("elapsed_ms") if isinstance(details.get("elapsed_ms"), int) else None,
+        "observations": {
+            str(key): {"verdict": str(value.get("verdict") or "")}
+            for key, value in observations.items()
+            if isinstance(value, dict)
+        },
+    }
 
 
 def _session_in_current_acpx_cwd(row: dict) -> bool:
@@ -3697,7 +3876,7 @@ def proxy_acpx_sessions():
         return jsonify({"ok": False, "error": "acpx not found in PATH", "sessions": []}), 503
 
     tool = (request.args.get("tool") or "").strip().lower()
-    if tool not in acpx_agent_command_names():
+    if tool not in acpx_agent_tags_with_legacy():
         return jsonify({"ok": False, "error": "unsupported tool", "sessions": []}), 400
 
     try:
@@ -3741,7 +3920,7 @@ def proxy_acpx_sessions_all():
         return jsonify({"ok": False, "error": str(e), "sessions": []}), 500
 
     adapter = get_acpx_adapter(cwd=ACPX_WORKING_DIR)
-    supported_tools = sorted(acpx_agent_command_names())
+    supported_tools = sorted(acpx_agent_tags_with_legacy())
 
     async def _list_all() -> list[dict]:
         out: list[dict] = []
@@ -3793,7 +3972,7 @@ def proxy_acpx_session_delete():
 
     async def _resolve_tool() -> tuple[str, str]:
         """Returns (tool, actual_session_name) tuple."""
-        valid_tools = acpx_agent_command_names()
+        valid_tools = acpx_agent_tags_with_legacy()
         # Even if tool is provided, still look up actual session name
         search_tools = [tool] if tool in valid_tools else valid_tools
         for candidate in search_tools:
@@ -3836,7 +4015,7 @@ def proxy_acpx_session_show():
 
     tool = (request.args.get("tool") or "").strip().lower()
     name = str(request.args.get("name") or "").strip()
-    if tool not in acpx_agent_command_names():
+    if tool not in acpx_agent_tags_with_legacy():
         return jsonify({"ok": False, "error": "unsupported tool"}), 400
     if not name:
         return jsonify({"ok": False, "error": "name is required"}), 400
@@ -3868,7 +4047,7 @@ def proxy_acpx_session_history():
         limit = max(1, min(200, int(request.args.get("limit", "20"))))
     except Exception:
         limit = 20
-    if tool not in acpx_agent_command_names():
+    if tool not in acpx_agent_tags_with_legacy():
         return jsonify({"ok": False, "error": "unsupported tool"}), 400
     if not name:
         return jsonify({"ok": False, "error": "name is required"}), 400
@@ -3903,7 +4082,7 @@ def proxy_acpx_session_read():
             tail = max(1, min(500, int(tail_raw)))
         except Exception:
             tail = None
-    if tool not in acpx_agent_command_names():
+    if tool not in acpx_agent_tags_with_legacy():
         return jsonify({"ok": False, "error": "unsupported tool"}), 400
     if not name:
         return jsonify({"ok": False, "error": "name is required"}), 400
@@ -4057,6 +4236,7 @@ def proxy_acpx_chat():
                 cwd=runtime_working_dir,
                 stdout=subprocess.PIPE,
                 stderr=None,
+                env={**os.environ, **(prepared_stream.env_overlay or {})},
                 text=True,
                 encoding="utf-8",
                 errors="replace",

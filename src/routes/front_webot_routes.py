@@ -406,7 +406,7 @@ def register_webot_routes(
                     "weekdays": body.get("weekdays", "MTWRFSU"),
                     "use_caffeinate": bool(body.get("use_caffeinate", False)),
                     "force_sleep_at_quiet_hours": bool(body.get("force_sleep_at_quiet_hours", False)),
-                    "monitor_command": body.get("monitor_command", "claude-monitor --clear"),
+                    "monitor_command": body.get("monitor_command", "claude-monitor --once --output json --no-header --no-emoji --clear"),
                     "timeout_seconds": body.get("timeout_seconds", 90),
                     "metadata": body.get("metadata") or {},
                 },

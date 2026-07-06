@@ -624,6 +624,142 @@ def register_group_routes(app, *, port_agent: int, internal_token: str) -> None:
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    @app.route("/proxy_harness_channel_ticket", methods=["POST"])
+    def proxy_harness_channel_ticket():
+        """Issue a short-lived runner channel ticket without exposing internal auth to the browser."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        body = request.get_json(silent=True) or {}
+        runner_id = str(body.get("runner_id") or "").strip()
+        channel_kind = str(body.get("channel_kind") or "terminal").strip().lower() or "terminal"
+        channel_id = str(body.get("channel_id") or "default").strip().strip("/") or "default"
+        if not runner_id:
+            return jsonify({"ok": False, "error": "runner_id is required"}), 400
+        try:
+            ttl_seconds = int(body.get("ttl_seconds") or 60)
+        except (TypeError, ValueError):
+            ttl_seconds = 60
+        try:
+            r = requests.post(
+                "http://127.0.0.1:{port}/harness/runners/{runner}/channels/{kind}/{channel}/ticket".format(
+                    port=port_agent,
+                    runner=quote(runner_id, safe=""),
+                    kind=quote(channel_kind, safe=""),
+                    channel=quote(channel_id, safe=""),
+                ),
+                json={"user_id": user_id, "ttl_seconds": max(5, min(ttl_seconds, 300))},
+                headers={"X-Internal-Token": internal_token},
+                timeout=10,
+            )
+            try:
+                data = r.json()
+            except Exception:
+                data = {"ok": False, "error": r.text or "invalid backend response"}
+            if r.status_code >= 400:
+                return jsonify(data), r.status_code
+            data["websocket_url"] = data.get("websocket_path", "")
+            return jsonify(data), r.status_code
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route("/proxy_harness_channel_session", methods=["POST"])
+    def proxy_harness_channel_session():
+        """Open a frontend-reachable HTTP relay session for a runner channel."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        body = request.get_json(silent=True) or {}
+        runner_id = str(body.get("runner_id") or "").strip()
+        channel_kind = str(body.get("channel_kind") or "terminal").strip().lower() or "terminal"
+        channel_id = str(body.get("channel_id") or "default").strip().strip("/") or "default"
+        if not runner_id:
+            return jsonify({"ok": False, "error": "runner_id is required"}), 400
+        try:
+            ttl_seconds = int(body.get("ttl_seconds") or 900)
+        except (TypeError, ValueError):
+            ttl_seconds = 900
+        try:
+            r = requests.post(
+                "http://127.0.0.1:{port}/harness/runners/{runner}/channels/{kind}/{channel}/sessions".format(
+                    port=port_agent,
+                    runner=quote(runner_id, safe=""),
+                    kind=quote(channel_kind, safe=""),
+                    channel=quote(channel_id, safe=""),
+                ),
+                json={"user_id": user_id, "ttl_seconds": max(30, min(ttl_seconds, 3600))},
+                headers={"X-Internal-Token": internal_token},
+                timeout=10,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route("/proxy_harness_channel_session/<path:channel_session_id>/events", methods=["GET"])
+    def proxy_harness_channel_session_events(channel_session_id):
+        """Poll runner channel events through the logged-in frontend session."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        try:
+            after = int(request.args.get("after", "0") or "0")
+        except ValueError:
+            after = 0
+        try:
+            r = requests.get(
+                "http://127.0.0.1:{port}/harness/runner-channels/{session_id}/events".format(
+                    port=port_agent,
+                    session_id=quote(str(channel_session_id or ""), safe=""),
+                ),
+                params={"user_id": user_id, "after": max(0, after)},
+                headers={"X-Internal-Token": internal_token},
+                timeout=15,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e), "events": []}), 500
+
+    @app.route("/proxy_harness_channel_session/<path:channel_session_id>/send", methods=["POST"])
+    def proxy_harness_channel_session_send(channel_session_id):
+        """Send terminal text through a frontend-reachable runner channel relay."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        body = request.get_json(silent=True) or {}
+        try:
+            r = requests.post(
+                "http://127.0.0.1:{port}/harness/runner-channels/{session_id}/send".format(
+                    port=port_agent,
+                    session_id=quote(str(channel_session_id or ""), safe=""),
+                ),
+                json={"user_id": user_id, "text": str(body.get("text") or "")},
+                headers={"X-Internal-Token": internal_token},
+                timeout=10,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.route("/proxy_harness_channel_session/<path:channel_session_id>/close", methods=["POST"])
+    def proxy_harness_channel_session_close(channel_session_id):
+        """Close a runner channel relay opened for the current frontend user."""
+        user_id = session.get("user_id", "")
+        if not user_id:
+            return jsonify({"ok": False, "error": "未登录"}), 401
+        try:
+            r = requests.post(
+                "http://127.0.0.1:{port}/harness/runner-channels/{session_id}/close".format(
+                    port=port_agent,
+                    session_id=quote(str(channel_session_id or ""), safe=""),
+                ),
+                json={"user_id": user_id},
+                headers={"X-Internal-Token": internal_token},
+                timeout=10,
+            )
+            return jsonify(r.json()), r.status_code
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
 
     @app.route("/proxy_sessions_delete", methods=["POST"])
     def proxy_sessions_delete():

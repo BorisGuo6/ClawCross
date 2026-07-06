@@ -167,7 +167,7 @@ class WeBotClaudeKeepaliveUpdateRequest(WeBotSessionRuntimeRequest):
     weekdays: str = "MTWRFSU"
     use_caffeinate: bool = False
     force_sleep_at_quiet_hours: bool = False
-    monitor_command: str = "claude-monitor --clear"
+    monitor_command: str = "claude-monitor --once --output json --no-header --no-emoji --clear"
     timeout_seconds: int = 90
     metadata: dict = Field(default_factory=dict)
 

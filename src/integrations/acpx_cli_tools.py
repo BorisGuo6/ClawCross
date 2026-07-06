@@ -7,25 +7,57 @@ import shutil
 import subprocess
 from functools import lru_cache
 
+from integrations.acpx_provider_registry import acp_agent_alias_ids, acp_agent_manifest_ids
+
 # When `acpx --help` is unavailable, keep routing in sync with common installs.
 _FALLBACK: frozenset[str] = frozenset(
     {
         "openclaw",
+        "agoragentic",
+        "amp",
         "codex",
         "claude",
         "gemini",
+        "autohand",
+        "cline",
+        "codebuddy",
+        "codewhale",
+        "cortex-code",
+        "corust-agent",
+        "crow-cli",
         "cursor",
         "copilot",
+        "deepagents",
+        "devin",
+        "dimcode",
+        "dirac",
         "droid",
+        "factory-droid",
+        "fast-agent",
+        "glm-agent",
+        "goose",
+        "grok",
+        "hermes",
         "iflow",
+        "junie",
+        "kilo",
         "kilocode",
         "kimi",
         "kiro",
+        "minion-code",
+        "mistral-vibe",
+        "nova",
+        "omp",
         "opencode",
         "pi",
+        "poolside",
         "qoder",
         "qwen",
+        "qwen-code",
+        "sigit",
+        "stakpak",
         "trae",
+        "vt-code",
         "aider",
         "claude-code",
         "gemini-cli",
@@ -66,4 +98,9 @@ def acpx_agent_command_names() -> frozenset[str]:
 
 def acpx_agent_tags_with_legacy() -> frozenset[str]:
     """Tags allowed for acpx `tool` argument (includes legacy aliases not always in --help)."""
-    return acpx_agent_command_names() | frozenset({"aider", "claude-code", "gemini-cli"})
+    return (
+        acpx_agent_command_names()
+        | acp_agent_manifest_ids()
+        | acp_agent_alias_ids()
+        | frozenset({"aider", "claude-code", "gemini-cli"})
+    )

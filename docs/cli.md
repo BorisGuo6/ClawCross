@@ -29,8 +29,8 @@ uv run scripts/cli.py [-u USER] <子命令> [参数...]
 
 **全局参数：**
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
+| 参数           | 说明                                         | 默认值                            |
+| -------------- | -------------------------------------------- | --------------------------------- |
 | `-u`, `--user` | 用户名（通过 `X-User-Id` header 传递给后端） | 环境变量 `CLI_USER`，默认 `admin` |
 
 > `-u` 对所有走 front.py 的命令生效（internal-agents / teams / visual / openclaw-snapshot 等）。
@@ -67,8 +67,9 @@ uv run scripts/cli.py [-u USER] <子命令> [参数...]
 26. [codegraph](#26-codegraph) — CodeGraph 本地代码智能
 27. [presentation-skill](#27-presentation-skill) — AI PPT / slide-deck skill helpers
 28. [ideacheck](#28-ideacheck) — alphaXiv prior-art / idea novelty checker
-29. [token](#29-token) — Token 生成与验证
-30. [status](#30-status) — 服务状态检查
+29. [claude-keepalive](#29-claude-keepalive) — Claude keepalive scheduler
+30. [token](#30-token) — Token 生成与验证
+31. [status](#31-status) — 服务状态检查
 
 ---
 
@@ -82,10 +83,10 @@ uv run scripts/cli.py -u Avalon_01 chat "你好" -s mysession
 
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `message` | 消息内容（位置参数） | 是 | — |
-| `-s`, `--session` | 会话 ID | 是 | — |
+| 参数              | 说明                 | 必填 | 默认值 |
+| ----------------- | -------------------- | ---- | ------ |
+| `message`         | 消息内容（位置参数） | 是   | —      |
+| `-s`, `--session` | 会话 ID              | 是   | —      |
 
 ---
 
@@ -121,9 +122,9 @@ uv run scripts/cli.py sessions-status
 uv run scripts/cli.py session-status -s mysession
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `-s`, `--session` | 会话 ID | 否 | `default` |
+| 参数              | 说明    | 必填 | 默认值    |
+| ----------------- | ------- | ---- | --------- |
+| `-s`, `--session` | 会话 ID | 否   | `default` |
 
 ---
 
@@ -142,11 +143,11 @@ uv run scripts/cli.py -u Avalon_01 history -s mysession -n 5
 uv run scripts/cli.py -u Avalon_01 history -s mysession --full
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `-s`, `--session` | 会话 ID | 否 | `default` |
-| `-n`, `--limit` | 最近 N 条 | 否 | 全部 |
-| `--full` | 不截断长消息 | 否 | `False` |
+| 参数              | 说明         | 必填 | 默认值    |
+| ----------------- | ------------ | ---- | --------- |
+| `-s`, `--session` | 会话 ID      | 否   | `default` |
+| `-n`, `--limit`   | 最近 N 条    | 否   | 全部      |
+| `--full`          | 不截断长消息 | 否   | `False`   |
 
 ---
 
@@ -158,9 +159,9 @@ uv run scripts/cli.py -u Avalon_01 history -s mysession --full
 uv run scripts/cli.py -u Avalon_01 delete-session mysession
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `session` | 会话 ID（位置参数） | 是 | — |
+| 参数      | 说明                | 必填 | 默认值 |
+| --------- | ------------------- | ---- | ------ |
+| `session` | 会话 ID（位置参数） | 是   | —      |
 
 ---
 
@@ -179,10 +180,10 @@ uv run scripts/cli.py settings --full
 uv run scripts/cli.py settings --set model gpt-4o
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `--full` | 显示完整设置 | 否 | `False` |
-| `--set KEY VALUE` | 修改设置项 | 否 | — |
+| 参数              | 说明         | 必填 | 默认值  |
+| ----------------- | ------------ | ---- | ------- |
+| `--full`          | 显示完整设置 | 否   | `False` |
+| `--set KEY VALUE` | 修改设置项   | 否   | —       |
 
 > `LLM_MODEL`、`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_BASE_URL`、`NONEBOT_ADAPTERS`、`WHITELIST_FILE` 以及相关 `*_BOTS` 配置通常需要重启 ClawCross 后才会生效。
 
@@ -200,9 +201,9 @@ uv run scripts/cli.py tools
 uv run scripts/cli.py tools --brief
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `--brief` | 仅显示工具名称 | 否 | `False` |
+| 参数      | 说明           | 必填 | 默认值  |
+| --------- | -------------- | ---- | ------- |
+| `--brief` | 仅显示工具名称 | 否   | `False` |
 
 ---
 
@@ -214,11 +215,11 @@ uv run scripts/cli.py tools --brief
 uv run scripts/cli.py tts "你好世界" -o hello.mp3 --voice alloy
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `text` | 要转换的文本（位置参数） | 是 | — |
-| `-o`, `--output` | 输出文件 | 否 | `tts_output.mp3` |
-| `--voice` | 语音角色 | 否 | — |
+| 参数             | 说明                     | 必填 | 默认值           |
+| ---------------- | ------------------------ | ---- | ---------------- |
+| `text`           | 要转换的文本（位置参数） | 是   | —                |
+| `-o`, `--output` | 输出文件                 | 否   | `tts_output.mp3` |
+| `--voice`        | 语音角色                 | 否   | —                |
 
 ---
 
@@ -230,9 +231,9 @@ uv run scripts/cli.py tts "你好世界" -o hello.mp3 --voice alloy
 uv run scripts/cli.py cancel -s mysession
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `-s`, `--session` | 会话 ID | 否 | `default` |
+| 参数              | 说明    | 必填 | 默认值    |
+| ----------------- | ------- | ---- | --------- |
+| `-s`, `--session` | 会话 ID | 否   | `default` |
 
 ---
 
@@ -313,16 +314,14 @@ uv run scripts/cli.py groups mute-status --group-id abc123
 uv run scripts/cli.py groups sessions --group-id abc123
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `list` |
-| `--group-id` | 群组 ID | 视操作而定 | — |
-| `--name` | 群组名称 | create 时 | — |
-| `--message` | 消息内容 | send 时 | — |
-| `--data` | JSON 数据 | 否 | — |
-| `--after-id` | 增量消息起点 | 否 | — |
-
-
+| 参数         | 说明         | 必填       | 默认值 |
+| ------------ | ------------ | ---------- | ------ |
+| `action`     | 操作         | 否         | `list` |
+| `--group-id` | 群组 ID      | 视操作而定 | —      |
+| `--name`     | 群组名称     | create 时  | —      |
+| `--message`  | 消息内容     | send 时    | —      |
+| `--data`     | JSON 数据    | 否         | —      |
+| `--after-id` | 增量消息起点 | 否         | —      |
 
 ---
 
@@ -369,16 +368,15 @@ uv run scripts/cli.py openclaw update-config --data '{"name":"mybot","config":{.
 uv run scripts/cli.py openclaw remove --name mybot
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `sessions` |
-| `--filter` | 过滤关键词 | 否 | — |
-| `--name` | Agent 名称 | 视操作 | — |
-| `--agent` | Agent 名称 | 视操作 | — |
-| `--workspace` | 工作区路径 | 视操作 | — |
-| `--filename` | 文件名 | 视操作 | — |
-| `--data` | JSON 数据 | 视操作 | — |
-
+| 参数          | 说明       | 必填   | 默认值     |
+| ------------- | ---------- | ------ | ---------- |
+| `action`      | 操作       | 否     | `sessions` |
+| `--filter`    | 过滤关键词 | 否     | —          |
+| `--name`      | Agent 名称 | 视操作 | —          |
+| `--agent`     | Agent 名称 | 视操作 | —          |
+| `--workspace` | 工作区路径 | 视操作 | —          |
+| `--filename`  | 文件名     | 视操作 | —          |
+| `--data`      | JSON 数据  | 视操作 | —          |
 
 ---
 
@@ -406,14 +404,13 @@ uv run scripts/cli.py -u Avalon_01 openclaw-snapshot restore --team myteam --sho
 uv run scripts/cli.py -u Avalon_01 openclaw-snapshot restore-all --team myteam
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `get` |
-| `--team` | Team 名称 | 是 | — |
-| `--agent-name` | Agent 全名 | export 时 | — |
-| `--short-name` | 显示名 | export/restore 时 | — |
-| `--target-name` | 恢复目标 Agent 名 | restore 时 | — |
-
+| 参数            | 说明              | 必填              | 默认值 |
+| --------------- | ----------------- | ----------------- | ------ |
+| `action`        | 操作              | 否                | `get`  |
+| `--team`        | Team 名称         | 是                | —      |
+| `--agent-name`  | Agent 全名        | export 时         | —      |
+| `--short-name`  | 显示名            | export/restore 时 | —      |
+| `--target-name` | 恢复目标 Agent 名 | restore 时        | —      |
 
 ---
 
@@ -447,13 +444,13 @@ uv run scripts/cli.py -u Avalon_01 visual upload-yaml --data '{"name":"myflow","
 uv run scripts/cli.py -u Avalon_01 visual sessions-status
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `personas` |
-| `--team` | Team 名称 | 否 | — |
-| `--tag` | 人设 tag | delete-persona 时 | — |
-| `--name` | 布局名称 | load/delete 时 | — |
-| `--data` | JSON 数据 | 视操作 | — |
+| 参数     | 说明      | 必填              | 默认值     |
+| -------- | --------- | ----------------- | ---------- |
+| `action` | 操作      | 否                | `personas` |
+| `--team` | Team 名称 | 否                | —          |
+| `--tag`  | 人设 tag  | delete-persona 时 | —          |
+| `--name` | 布局名称  | load/delete 时    | —          |
+| `--data` | JSON 数据 | 视操作            | —          |
 
 ---
 
@@ -476,13 +473,13 @@ uv run scripts/cli.py -u Avalon_01 internal-agents update --sid s1 --team myteam
 uv run scripts/cli.py -u Avalon_01 internal-agents delete --sid s1 --team myteam
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `list` |
-| `--team` | Team 名称 | 否 | — |
-| `--sid` | Session ID | update/delete 时必填 | — |
-| `--session` | Session ID（add 时自动补入 data） | 否 | — |
-| `--data` | JSON 数据 | add/update 时 | — |
+| 参数        | 说明                              | 必填                 | 默认值 |
+| ----------- | --------------------------------- | -------------------- | ------ |
+| `action`    | 操作                              | 否                   | `list` |
+| `--team`    | Team 名称                         | 否                   | —      |
+| `--sid`     | Session ID                        | update/delete 时必填 | —      |
+| `--session` | Session ID（add 时自动补入 data） | 否                   | —      |
+| `--data`    | JSON 数据                         | add/update 时        | —      |
 
 ---
 
@@ -527,15 +524,15 @@ uv run scripts/cli.py -u Avalon_01 teams snapshot-download --team-name myteam \
 uv run scripts/cli.py -u Avalon_01 teams snapshot-upload --team-name myteam --file snapshot.zip
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 (`list`, `info`, `create`, `delete`, `members`, `snapshot-preview`, `snapshot-download`, ...) | 否 | `list` |
-| `--team-name` | Team 名称 | 视操作 | — |
-| `--tag` | 人设 tag | update-persona/delete-persona 时 | — |
-| `--data` | JSON 数据 | 视操作 | — |
-| `-o`, `--output` | 输出文件路径 | 否 | `team_{name}_snapshot.zip` |
-| `--file` | 上传文件路径 | snapshot-upload 时 | — |
-| `--include` | 选择性导出 JSON（snapshot-download 时） | 否 | 全量导出 |
+| 参数             | 说明                                                                                               | 必填                             | 默认值                     |
+| ---------------- | -------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------------- |
+| `action`         | 操作 (`list`, `info`, `create`, `delete`, `members`, `snapshot-preview`, `snapshot-download`, ...) | 否                               | `list`                     |
+| `--team-name`    | Team 名称                                                                                          | 视操作                           | —                          |
+| `--tag`          | 人设 tag                                                                                           | update-persona/delete-persona 时 | —                          |
+| `--data`         | JSON 数据                                                                                          | 视操作                           | —                          |
+| `-o`, `--output` | 输出文件路径                                                                                       | 否                               | `team_{name}_snapshot.zip` |
+| `--file`         | 上传文件路径                                                                                       | snapshot-upload 时               | —                          |
+| `--include`      | 选择性导出 JSON（snapshot-download 时）                                                            | 否                               | 全量导出                   |
 
 > `info` 命令一次性聚合调用多个 API（成员、人设、workflows、话题、OpenClaw 快照），美化输出该 team 的完整信息快照，不直接对应单个接口。
 
@@ -548,6 +545,7 @@ uv run scripts/cli.py -u Avalon_01 teams snapshot-preview --team-name myteam
 ```
 
 输出示例：
+
 ```
 ════════════════════════════════════════════════════════════
 📋 Team 'myteam' 可导出内容预览
@@ -593,22 +591,22 @@ uv run scripts/cli.py -u Avalon_01 teams snapshot-preview --team-name myteam
 
 #### 可选的 section
 
-| Section | 说明 | 对应文件 |
-|---------|------|----------|
-| `agents` | 内部 Agent 配置 | `internal_agents.json` |
-| `personas` | 自定义人设 | `oasis_experts.json` |
-| `skills` | OpenClaw Agent 技能文件夹 | `external_agents.json` + workspace skills |
-| `cron` | 定时任务 | `external_agents.json` + `cron_jobs.json` |
-| `workflows` | YAML workflow 文件 | `oasis/yaml/*.yaml` |
+| Section     | 说明                      | 对应文件                                  |
+| ----------- | ------------------------- | ----------------------------------------- |
+| `agents`    | 内部 Agent 配置           | `internal_agents.json`                    |
+| `personas`  | 自定义人设                | `oasis_experts.json`                      |
+| `skills`    | OpenClaw Agent 技能文件夹 | `external_agents.json` + workspace skills |
+| `cron`      | 定时任务                  | `external_agents.json` + `cron_jobs.json` |
+| `workflows` | YAML workflow 文件        | `oasis/yaml/*.yaml`                       |
 
 #### `skills` 的 3 种选择模式
 
 `skills` 字段支持层级 JSON，可以精确到每个 Agent 和每个 Skill：
 
-| 模式 | 格式 | 含义 |
-|------|------|------|
-| 全量 | `"skills": true` | 导出所有 Agent 的所有 skill |
-| 按 Agent | `"skills": {"OpenClaw助手": true}` | 只导出该 Agent 的全部 skill |
+| 模式     | 格式                                                   | 含义                          |
+| -------- | ------------------------------------------------------ | ----------------------------- |
+| 全量     | `"skills": true`                                       | 导出所有 Agent 的所有 skill   |
+| 按 Agent | `"skills": {"OpenClaw助手": true}`                     | 只导出该 Agent 的全部 skill   |
 | 按 Skill | `"skills": {"OpenClaw助手": ["Clawcross", "ChatBot"]}` | 只导出该 Agent 下指定的 skill |
 
 #### 使用示例
@@ -673,18 +671,18 @@ uv run scripts/cli.py topics purge --topic-id t123
 uv run scripts/cli.py topics delete-all
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 (`list`, `show`, `watch`, `cancel`, `purge`, `delete-all`) | 否 | `list` |
-| `--topic-id` | 话题 ID | show/watch/cancel/purge 时必填 | — |
-| `--raw` | 输出原始 JSON (show 时) | 否 | `False` |
-| `--full` | 不截断长发言内容 (show 时) | 否 | `False` |
+| 参数         | 说明                                                            | 必填                           | 默认值  |
+| ------------ | --------------------------------------------------------------- | ------------------------------ | ------- |
+| `action`     | 操作 (`list`, `show`, `watch`, `cancel`, `purge`, `delete-all`) | 否                             | `list`  |
+| `--topic-id` | 话题 ID                                                         | show/watch/cancel/purge 时必填 | —       |
+| `--raw`      | 输出原始 JSON (show 时)                                         | 否                             | `False` |
+| `--full`     | 不截断长发言内容 (show 时)                                      | 否                             | `False` |
 
 > 三种查看方式的区别：
+>
 > - `show` — 一次性获取话题的完整快照（时间线 + 所有发言 + 结论），适合话题结束后回顾
 > - `watch` — 实时流式输出讨论进展（连接后端 SSE），适合启动 workflow 后实时跟踪
 > - `conclusion` (在 workflows 子命令中) — 阻塞等待直到讨论结束并返回结论
-
 
 ## 20. personas
 
@@ -712,14 +710,15 @@ uv run scripts/cli.py -u Avalon_01 personas update --tag my_analyst --persona-na
 uv run scripts/cli.py -u Avalon_01 personas delete --tag my_analyst
 uv run scripts/cli.py -u Avalon_01 personas delete --tag my_lawyer --team team2
 ```
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `list` |
-| `--tag` | 人设标签（唯一标识） | add/update/delete 时必填 | — |
-| `--persona-name` | 人设显示名称 | add 时必填，update 时可选（不传则保持原值） | — |
-| `--persona` | 人设描述 | 否 | — |
-| `--temperature` | 温度参数 (0-2) | 否 | 0.7 |
-| `--team` | Team 名称 | 否 | — |
+
+| 参数             | 说明                 | 必填                                        | 默认值 |
+| ---------------- | -------------------- | ------------------------------------------- | ------ |
+| `action`         | 操作                 | 否                                          | `list` |
+| `--tag`          | 人设标签（唯一标识） | add/update/delete 时必填                    | —      |
+| `--persona-name` | 人设显示名称         | add 时必填，update 时可选（不传则保持原值） | —      |
+| `--persona`      | 人设描述             | 否                                          | —      |
+| `--temperature`  | 温度参数 (0-2)       | 否                                          | 0.7    |
+| `--team`         | Team 名称            | 否                                          | —      |
 
 ---
 
@@ -785,22 +784,22 @@ uv run scripts/cli.py -u Avalon_01 workflows conclusion --topic-id abc12345
 uv run scripts/cli.py -u Avalon_01 workflows conclusion --topic-id abc12345 --timeout 600
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `list` |
-| `--team` | Team 名称 | 否 | — |
-| `--type` | workflow 类型：`all`/`yaml`/`python` | 否 | `all` |
-| `--name` | Workflow 文件名（YAML 可省略 `.yaml`，Python 可省略 `.py`） | show/save 时必填, run 时可选 | — |
-| `--python-file` | Python workflow 文件路径 | run 时可选（与 `--name` 二选一） | — |
-| `--yaml` | 直接传入 YAML 内容 | save/run 时可选（与 `--yaml-file` 二选一） | — |
-| `--yaml-file` | YAML 文件路径 | save/run 时可选（与 `--yaml`/`--name` 二选一） | — |
-| `--description` | Workflow 描述 | 否 | — |
-| `--question` | 讨论问题/任务 | run 时必填 | — |
-| `--max-rounds` | 最大讨论轮数 (1-20) | 否 | 5 |
-| `--discussion` | 讨论模式 (true=讨论, false=执行) | 否 | YAML 中设定 |
-| `--early-stop` | 提前终止 | 否 | false |
-| `--topic-id` | 话题 ID | conclusion 时必填 | — |
-| `--timeout` | 等待超时秒数 | 否 | 300 |
+| 参数            | 说明                                                        | 必填                                           | 默认值      |
+| --------------- | ----------------------------------------------------------- | ---------------------------------------------- | ----------- |
+| `action`        | 操作                                                        | 否                                             | `list`      |
+| `--team`        | Team 名称                                                   | 否                                             | —           |
+| `--type`        | workflow 类型：`all`/`yaml`/`python`                        | 否                                             | `all`       |
+| `--name`        | Workflow 文件名（YAML 可省略 `.yaml`，Python 可省略 `.py`） | show/save 时必填, run 时可选                   | —           |
+| `--python-file` | Python workflow 文件路径                                    | run 时可选（与 `--name` 二选一）               | —           |
+| `--yaml`        | 直接传入 YAML 内容                                          | save/run 时可选（与 `--yaml-file` 二选一）     | —           |
+| `--yaml-file`   | YAML 文件路径                                               | save/run 时可选（与 `--yaml`/`--name` 二选一） | —           |
+| `--description` | Workflow 描述                                               | 否                                             | —           |
+| `--question`    | 讨论问题/任务                                               | run 时必填                                     | —           |
+| `--max-rounds`  | 最大讨论轮数 (1-20)                                         | 否                                             | 5           |
+| `--discussion`  | 讨论模式 (true=讨论, false=执行)                            | 否                                             | YAML 中设定 |
+| `--early-stop`  | 提前终止                                                    | 否                                             | false       |
+| `--topic-id`    | 话题 ID                                                     | conclusion 时必填                              | —           |
+| `--timeout`     | 等待超时秒数                                                | 否                                             | 300         |
 
 > `list` 在 **未指定 `--team` 时**，会自动聚合：
 >
@@ -838,9 +837,9 @@ uv run scripts/cli.py tunnel start
 uv run scripts/cli.py tunnel stop
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 | 否 | `status` |
+| 参数     | 说明 | 必填 | 默认值   |
+| -------- | ---- | ---- | -------- |
+| `action` | 操作 | 否   | `status` |
 
 无 HTTP 请求。
 
@@ -857,9 +856,9 @@ uv run scripts/cli.py opencli-status --query ponytail
 uv run scripts/cli.py opencli-status --query deepseek
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `--query` | 按能力名或标签过滤 | 否 | 空 |
+| 参数      | 说明               | 必填 | 默认值 |
+| --------- | ------------------ | ---- | ------ |
+| `--query` | 按能力名或标签过滤 | 否   | 空     |
 
 ---
 
@@ -874,13 +873,13 @@ uv run scripts/cli.py opencli -- browser deepseek-plus-plus bind
 uv run scripts/cli.py opencli -- browser deepseek-plus-plus state
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `--profile` | 远端 `OPENCLI_PROFILE` 覆盖值 | 否 | 空 |
-| `--allow-mutating` | 允许显式批准的变更型命令 | 否 | `False` |
-| `--max-output-chars` | stdout/stderr 最大返回字符数 | 否 | `20000` |
-| `--timeout-seconds` | 远端执行超时秒数 | 否 | `60` |
-| `opencli_args` | 要转发的 OpenCLI 参数；若参数本身包含 `--foo`，建议先写一个 `--` 分隔符 | 是 | — |
+| 参数                 | 说明                                                                    | 必填 | 默认值  |
+| -------------------- | ----------------------------------------------------------------------- | ---- | ------- |
+| `--profile`          | 远端 `OPENCLI_PROFILE` 覆盖值                                           | 否   | 空      |
+| `--allow-mutating`   | 允许显式批准的变更型命令                                                | 否   | `False` |
+| `--max-output-chars` | stdout/stderr 最大返回字符数                                            | 否   | `20000` |
+| `--timeout-seconds`  | 远端执行超时秒数                                                        | 否   | `60`    |
+| `opencli_args`       | 要转发的 OpenCLI 参数；若参数本身包含 `--foo`，建议先写一个 `--` 分隔符 | 是   | —       |
 
 能力边界：
 
@@ -929,14 +928,14 @@ uv run scripts/cli.py codegraph callers build_parser --path /path/to/repo
 
 常用参数：
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--path` | repo 路径 | 当前工作目录 |
-| `--json` | 输出 JSON payload | false |
-| `--timeout` | 覆盖 `CODEGRAPH_TIMEOUT` | 环境变量或 60 |
+| 参数          | 说明                              | 默认值           |
+| ------------- | --------------------------------- | ---------------- |
+| `--path`      | repo 路径                         | 当前工作目录     |
+| `--json`      | 输出 JSON payload                 | false            |
+| `--timeout`   | 覆盖 `CODEGRAPH_TIMEOUT`          | 环境变量或 60    |
 | `--max-chars` | 覆盖 `CODEGRAPH_MAX_OUTPUT_CHARS` | 环境变量或 50000 |
-| `--limit` | `node/search/callers` 返回限制 | 命令默认 |
-| `--offset` | `node` 文件读取起始行 | 0 |
+| `--limit`     | `node/search/callers` 返回限制    | 命令默认         |
+| `--offset`    | `node` 文件读取起始行             | 0                |
 
 未安装 CodeGraph 或 repo 未初始化时，命令会返回 inactive guidance，不会自动索引。
 
@@ -962,19 +961,19 @@ uv run scripts/cli.py -u admin presentation-skill install --team "Research" --ov
 
 常用参数：
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `action` | `catalog`, `scaffold`, `install` | `catalog` |
-| `--json` | 输出 JSON payload | false |
-| `--topic` | deck topic for scaffold | — |
-| `--audience` | target audience | — |
-| `--format` | `html`, `pptx`, `images`, `research-pack`, `motion` | `html` |
-| `--sources` | URLs/files/notes to ground the deck | — |
-| `--style` | visual direction preference | — |
-| `--constraints` | length/export/brand/time constraints | — |
-| `--team` | install into team skill scope | — |
-| `--name` | managed skill name | `ai-presentation-maker` |
-| `--overwrite` | update an existing managed skill | false |
+| 参数            | 说明                                                | 默认值                  |
+| --------------- | --------------------------------------------------- | ----------------------- |
+| `action`        | `catalog`, `scaffold`, `install`                    | `catalog`               |
+| `--json`        | 输出 JSON payload                                   | false                   |
+| `--topic`       | deck topic for scaffold                             | —                       |
+| `--audience`    | target audience                                     | —                       |
+| `--format`      | `html`, `pptx`, `images`, `research-pack`, `motion` | `html`                  |
+| `--sources`     | URLs/files/notes to ground the deck                 | —                       |
+| `--style`       | visual direction preference                         | —                       |
+| `--constraints` | length/export/brand/time constraints                | —                       |
+| `--team`        | install into team skill scope                       | —                       |
+| `--name`        | managed skill name                                  | `ai-presentation-maker` |
+| `--overwrite`   | update an existing managed skill                    | false                   |
 
 `install` only writes the ClawCross managed skill through `webot.skills`; it does not clone or vendor upstream GitHub projects. See [`presentation-skills.md`](./presentation-skills.md).
 
@@ -1004,21 +1003,21 @@ uv run scripts/cli.py ideacheck serve-command --port 8000
 
 常用参数：
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `action` | `doctor`, `status`, `check`, `serve-command` | `status` |
-| `idea` | `check` 的 idea 文本 | — |
-| `--idea-file` | 从文件读取 idea | — |
-| `--out-dir` | report 输出目录 | `CLAWCROSS_DATA_DIR/ideacheck/runs` |
-| `--before` | 只检索该日期前的论文，格式 `YYYY-MM-DD` | — |
-| `--backend` | `claude` 或 `openai` | `claude` |
-| `--base-url` | OpenAI-compatible backend base URL | — |
-| `--model` | OpenAI-compatible backend model | — |
-| `--api-key` | OpenAI-compatible backend key；ClawCross 通过环境变量传给子进程，不在命令输出里打印 | — |
-| `--open` | run 完成后让官方 CLI 打开 HTML 报告 | false |
-| `--timeout` | 覆盖 `IDEACHECK_TIMEOUT` | 环境变量或 1800 |
-| `--max-chars` | 覆盖 `IDEACHECK_MAX_OUTPUT_CHARS` | 环境变量或 80000 |
-| `--json` | 输出 JSON payload | false |
+| 参数          | 说明                                                                                | 默认值                              |
+| ------------- | ----------------------------------------------------------------------------------- | ----------------------------------- |
+| `action`      | `doctor`, `status`, `check`, `serve-command`                                        | `status`                            |
+| `idea`        | `check` 的 idea 文本                                                                | —                                   |
+| `--idea-file` | 从文件读取 idea                                                                     | —                                   |
+| `--out-dir`   | report 输出目录                                                                     | `CLAWCROSS_DATA_DIR/ideacheck/runs` |
+| `--before`    | 只检索该日期前的论文，格式 `YYYY-MM-DD`                                             | —                                   |
+| `--backend`   | `claude` 或 `openai`                                                                | `claude`                            |
+| `--base-url`  | OpenAI-compatible backend base URL                                                  | —                                   |
+| `--model`     | OpenAI-compatible backend model                                                     | —                                   |
+| `--api-key`   | OpenAI-compatible backend key；ClawCross 通过环境变量传给子进程，不在命令输出里打印 | —                                   |
+| `--open`      | run 完成后让官方 CLI 打开 HTML 报告                                                 | false                               |
+| `--timeout`   | 覆盖 `IDEACHECK_TIMEOUT`                                                            | 环境变量或 1800                     |
+| `--max-chars` | 覆盖 `IDEACHECK_MAX_OUTPUT_CHARS`                                                   | 环境变量或 80000                    |
+| `--json`      | 输出 JSON payload                                                                   | false                               |
 
 未安装时会返回 inactive guidance。官方安装方式：
 
@@ -1031,7 +1030,38 @@ See [`ideacheck.md`](./ideacheck.md).
 
 ---
 
-## 29. token
+## 29. claude-keepalive
+
+**Claude keepalive 调度器**
+
+读取 WeBot Claude keepalive 配置，按 active window 发送 Claude kickoff prompt，并用 `claude-monitor --once --output json` 的 reset time 安排下一次 re-prime。
+
+```bash
+# 查看 enabled 记录
+uv run scripts/cli.py claude-keepalive status
+
+# dry-run，不调用 Claude
+uv run scripts/cli.py claude-keepalive run-once --dry-run
+
+# 安装并加载 macOS LaunchAgent
+uv run scripts/cli.py claude-keepalive install-launch-agent --load
+```
+
+常用子命令：
+
+| 子命令                 | 说明                                                       |
+| ---------------------- | ---------------------------------------------------------- |
+| `status`               | 输出 enabled keepalive 记录、active/due 状态和 next_run_at |
+| `enable`               | 创建或更新一条 keepalive 记录                              |
+| `run-once`             | 执行一次 due 记录；`--dry-run` 只检查                      |
+| `daemon`               | 常驻循环                                                   |
+| `install-launch-agent` | 生成 macOS LaunchAgent，可加 `--load` 立即加载             |
+
+See [`claude-keepalive-scheduler.md`](./claude-keepalive-scheduler.md).
+
+---
+
+## 30. token
 
 **Token 生成与验证**
 
@@ -1054,19 +1084,19 @@ uv run scripts/cli.py token verify --token "xxx"
 uv run scripts/cli.py token decode --token "xxx"
 ```
 
-| 参数 | 说明 | 必填 | 默认值 |
-|------|------|------|--------|
-| `action` | 操作 (`generate`, `verify`, `decode`) | 否 | `generate` |
-| `--user` | 用户名 (generate 时，也可通过 `-u` 指定) | 否 | — |
-| `--users` | 多用户列表，逗号分隔 | 否 | — |
-| `--token` | Token 字符串 (verify/decode 时) | 视操作 | — |
-| `--valid-hours` | Token 有效期 (小时) | 否 | 24 |
+| 参数            | 说明                                     | 必填   | 默认值     |
+| --------------- | ---------------------------------------- | ------ | ---------- |
+| `action`        | 操作 (`generate`, `verify`, `decode`)    | 否     | `generate` |
+| `--user`        | 用户名 (generate 时，也可通过 `-u` 指定) | 否     | —          |
+| `--users`       | 多用户列表，逗号分隔                     | 否     | —          |
+| `--token`       | Token 字符串 (verify/decode 时)          | 视操作 | —          |
+| `--valid-hours` | Token 有效期 (小时)                      | 否     | 24         |
 
 无 HTTP 请求，纯本地操作。
 
 ---
 
-## 30. status
+## 31. status
 
 **检查各服务状态**
 

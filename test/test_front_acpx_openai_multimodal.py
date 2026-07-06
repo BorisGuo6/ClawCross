@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -77,3 +78,111 @@ def test_acpx_openai_text_file_inlined():
     prompt, attachments = front._acpx_prompt_and_attachments_from_openai_messages(messages)
     assert raw in prompt
     assert attachments == []
+
+
+def test_acpx_tool_normalization_accepts_manifest_provider(monkeypatch):
+    monkeypatch.setattr(front, "acpx_agent_tags_with_legacy", lambda: frozenset({"codex", "qwen-code"}))
+
+    assert front._normalize_acpx_tool({"tool": "qwen-code"}) == "qwen-code"
+    assert front._normalize_acpx_tool({"model": "acp:qwen-code"}) == "qwen-code"
+
+
+def test_proxy_acpx_status_merges_redacted_provider_probe(monkeypatch):
+    monkeypatch.setattr(front.shutil, "which", lambda name: "/tmp/acpx" if name == "acpx" else None)
+    monkeypatch.setattr(front, "_list_acpx_tools", lambda: ["fake-provider"])
+    monkeypatch.setattr(
+        front,
+        "list_provider_specs",
+        lambda: [
+            SimpleNamespace(
+                id="fake-provider",
+                label="Fake Provider",
+                integration_mode="acpx-raw-agent",
+                source="manifest",
+                installed=True,
+                enabled=True,
+                status="installed",
+                aliases=("fake-provider-acp",),
+                capabilities=SimpleNamespace(auth="external-cli"),
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        front,
+        "get_harness_state",
+        lambda user_id: {
+            "provider_probes": [
+                {
+                    "provider_id": "fake-provider",
+                    "ok": False,
+                    "stage": "runtime_smoke",
+                    "status": "failed",
+                    "error": "Unauthorized token=actual-secret",
+                    "details": {
+                        "error_class": "permission",
+                        "elapsed_ms": 12,
+                        "observations": {"minimal_turn": {"verdict": "fail", "raw": "omit"}},
+                    },
+                    "updated_at": "2026-07-06T00:00:00Z",
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        front,
+        "paseo_provider_status_report",
+        lambda: {
+            "available": True,
+            "error": "",
+            "providers": {
+                "fake-provider-acp": {
+                    "id": "fake-provider-acp",
+                    "provider": "fake-provider-acp",
+                    "label": "Fake Provider",
+                    "status": "available",
+                    "enabled": True,
+                    "enabled_label": "Enabled",
+                    "default_mode": "default",
+                    "modes": ["Default"],
+                    "source": "paseo-provider-ls",
+                },
+                "unmapped-provider": {
+                    "id": "unmapped-provider",
+                    "provider": "unmapped-provider",
+                    "label": "Unmapped",
+                    "status": "error",
+                    "enabled": True,
+                    "enabled_label": "Enabled",
+                    "default_mode": "default",
+                    "modes": [],
+                    "source": "paseo-provider-ls",
+                },
+            },
+            "counts": {"providers": 2, "available": 1, "error": 1, "enabled": 2},
+        },
+    )
+
+    front.app.config.update(TESTING=True)
+    with front.app.test_client() as client:
+        response = client.get("/proxy_acpx_status?user_id=alice")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["provider_proof"]["runtime_smoke"] == 1
+    assert body["provider_proof"]["runtime_proven"] == 0
+    assert body["provider_proof"]["paseo_available"] == 1
+    assert body["provider_proof"]["paseo_errors"] == 1
+    assert body["provider_proof"]["paseo_matched"] == 1
+    assert body["provider_proof"]["paseo_missing"] == 0
+    assert body["paseo"]["unmapped"] == ["unmapped-provider"]
+    provider = body["providers"][0]
+    assert provider["last_probe"]["stage"] == "runtime_smoke"
+    assert provider["last_probe"]["error"] == "Unauthorized token=<redacted>"
+    assert provider["last_probe"]["observations"]["minimal_turn"] == {"verdict": "fail"}
+    assert provider["auth_status"]["status"] == "auth_required"
+    assert provider["auth_status"]["verified"] is False
+    assert provider["paseo_status"]["status"] == "available"
+    assert provider["paseo_status_key"] == "fake-provider-acp"
+    assert provider["harness_capabilities"]["integration_mode"] == "acp-subprocess"
+    assert provider["harness_capabilities"]["auth"] == "own-auth"
+    assert "actual-secret" not in response.get_data(as_text=True)

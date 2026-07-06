@@ -130,6 +130,7 @@ WEBOT_RUNTIME_TOOLS = (
     "ultrareview_start",
     "ultrareview_status",
     "list_tool_approvals",
+    "create_git_change_request",
 )
 
 

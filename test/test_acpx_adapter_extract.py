@@ -161,6 +161,38 @@ def test_send_prompt_file_retries_without_unadvertised_model(tmp_path):
     assert run_calls == [["cmd-with-model"], ["cmd-default-model"]]
 
 
+def test_prompt_forwards_env_overlay_to_prompt_subprocess():
+    adapter = AcpxAdapter.__new__(AcpxAdapter)
+    adapter._pending_initial_prompt = {}
+    captured = {}
+
+    async def fake_close_session(**kwargs):
+        return None
+
+    async def fake_ensure_session(**kwargs):
+        return False
+
+    async def fake_send_prompt_file(**kwargs):
+        captured.update(kwargs)
+        return '{"reply":"ok"}'
+
+    adapter.close_session = fake_close_session
+    adapter.ensure_session = fake_ensure_session
+    adapter._send_prompt_file = fake_send_prompt_file
+
+    out = asyncio.run(
+        adapter.prompt(
+            tool="codex",
+            session_key="session",
+            prompt_text="hi",
+            env_overlay={"FAKE_AGENT_TOKEN": "secret-value"},
+        )
+    )
+
+    assert out == "ok"
+    assert captured["env_overlay"] == {"FAKE_AGENT_TOKEN": "secret-value"}
+
+
 def test_normalize_acpx_run_options_defaults_to_short_idle_ttl(monkeypatch):
     monkeypatch.delenv("ACPX_APPROVE_ALL", raising=False)
     monkeypatch.delenv("ACPX_NON_INTERACTIVE_PERMISSIONS", raising=False)

@@ -9,6 +9,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from integrations.acpx_cli_tools import acpx_agent_command_names
+from integrations.acpx_provider_registry import acpx_raw_agent_command, normalize_acpx_provider_id
 from utils.oasis_acp_log import mark as _acp_mark
 
 
@@ -191,6 +193,17 @@ def _is_unavailable_model_error(exc: Exception) -> bool:
     )
 
 
+def _merged_env(env_overlay: dict[str, str] | None) -> dict[str, str] | None:
+    if not env_overlay:
+        return None
+    env = os.environ.copy()
+    for key, value in env_overlay.items():
+        clean = str(key or "").strip()
+        if clean:
+            env[clean] = str(value)
+    return env
+
+
 def acpx_options_from_agent(
     agent_info: dict[str, Any] | None,
     *,
@@ -262,6 +275,7 @@ class AcpxAdapter:
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
         allowed_tools: str | None = None,
+        env_overlay: dict[str, str] | None = None,
     ) -> bool:
         existed_before = await self._session_exists(tool=tool, acpx_session=acpx_session)
         args = self._command_prefix(tool=tool, session_key=session_key) + ["sessions", "ensure", "--name", acpx_session]
@@ -277,6 +291,7 @@ class AcpxAdapter:
                 permission_policy=permission_policy,
                 non_interactive_permissions=non_interactive_permissions,
                 allowed_tools=allowed_tools,
+                env_overlay=env_overlay,
             )
         except AcpxError as exc:
             if not model or not _is_unavailable_model_error(exc):
@@ -297,6 +312,7 @@ class AcpxAdapter:
                 permission_policy=permission_policy,
                 non_interactive_permissions=non_interactive_permissions,
                 allowed_tools=allowed_tools,
+                env_overlay=env_overlay,
             )
         created = existed_before is False
         if created and system_prompt and system_prompt.strip():
@@ -459,6 +475,7 @@ class AcpxAdapter:
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
         allowed_tools: str | None = None,
+        env_overlay: dict[str, str] | None = None,
     ) -> str:
         """Ops-only: ``--format quiet`` (control output is not JSON-RPC)."""
         assert self._acpx_bin is not None
@@ -489,6 +506,7 @@ class AcpxAdapter:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=_merged_env(env_overlay),
             )
         except FileNotFoundError as e:
             raise AcpxError(f"acpx executable missing: {e}") from e
@@ -630,6 +648,7 @@ class AcpxAdapter:
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
         allowed_tools: str | None = None,
+        env_overlay: dict[str, str] | None = None,
     ) -> str:
         """
         Send a prompt to the agent.
@@ -657,6 +676,7 @@ class AcpxAdapter:
                 permission_policy=permission_policy,
                 non_interactive_permissions=non_interactive_permissions,
                 allowed_tools=allowed_tools,
+                env_overlay=env_overlay,
             )
 
         # Ensure transport session on every call
@@ -673,6 +693,7 @@ class AcpxAdapter:
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
             allowed_tools=allowed_tools,
+            env_overlay=env_overlay,
         )
 
         pending_prompt = self._pending_initial_prompt.pop(
@@ -697,6 +718,7 @@ class AcpxAdapter:
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
             allowed_tools=allowed_tools,
+            env_overlay=env_overlay,
         )
 
         text = self._extract_text(output)
@@ -721,6 +743,7 @@ class AcpxAdapter:
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
         allowed_tools: str | None = None,
+        env_overlay: dict[str, str] | None = None,
     ) -> AcpxPromptTrace:
         acpx_session = self.to_acpx_session_name(tool=tool, session_key=session_key)
         if reset_session:
@@ -733,6 +756,7 @@ class AcpxAdapter:
                 permission_policy=permission_policy,
                 non_interactive_permissions=non_interactive_permissions,
                 allowed_tools=allowed_tools,
+                env_overlay=env_overlay,
             )
 
         await self.ensure_session(
@@ -748,6 +772,7 @@ class AcpxAdapter:
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
             allowed_tools=allowed_tools,
+            env_overlay=env_overlay,
         )
 
         pending_prompt = self._pending_initial_prompt.pop(
@@ -772,6 +797,7 @@ class AcpxAdapter:
             permission_policy=permission_policy,
             non_interactive_permissions=non_interactive_permissions,
             allowed_tools=allowed_tools,
+            env_overlay=env_overlay,
         )
         return self._extract_trace(output)
 
@@ -805,6 +831,7 @@ class AcpxAdapter:
         permission_policy: str | None,
         non_interactive_permissions: str | None,
         allowed_tools: str | None,
+        env_overlay: dict[str, str] | None = None,
     ) -> str:
         prompt_args, temp_path = self.prepare_prompt_command(
             tool=tool,
@@ -826,6 +853,7 @@ class AcpxAdapter:
                     prompt_args,
                     timeout_sec=timeout_sec,
                     allow_nonzero=False,
+                    env_overlay=env_overlay,
                 )
             except AcpxError as exc:
                 if not model or not _is_unavailable_model_error(exc):
@@ -854,6 +882,7 @@ class AcpxAdapter:
                         fallback_args,
                         timeout_sec=timeout_sec,
                         allow_nonzero=False,
+                        env_overlay=env_overlay,
                     )
                 finally:
                     try:
@@ -970,6 +999,7 @@ class AcpxAdapter:
         permission_policy: str | None = None,
         non_interactive_permissions: str | None = None,
         allowed_tools: str | None = None,
+        env_overlay: dict[str, str] | None = None,
     ) -> str:
         assert self._acpx_bin is not None
         # Headless subprocess: no TTY for permission prompts — default --approve-all so tool/exec turns can finish.
@@ -1010,6 +1040,7 @@ class AcpxAdapter:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_merged_env(env_overlay),
         )
         _acp_mark("acpx.aux.spawn.post", pid=proc.pid, op=_aux_tail)
         try:
@@ -1044,6 +1075,7 @@ class AcpxAdapter:
         *,
         timeout_sec: int | None,
         allow_nonzero: bool,
+        env_overlay: dict[str, str] | None = None,
     ) -> str:
         # Cheap fingerprint of the command for trace correlation without leaking prompts.
         _cmd_tail = " ".join(cmd[-4:]) if len(cmd) > 4 else " ".join(cmd)
@@ -1052,6 +1084,7 @@ class AcpxAdapter:
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=None,
+            env=_merged_env(env_overlay),
         )
         _acp_mark("acpx.spawn.post", pid=proc.pid)
         stdout_chunks: list[bytes] = []
@@ -1135,12 +1168,17 @@ class AcpxAdapter:
     def _command_prefix(*, tool: str, session_key: str) -> list[str]:
         aliases = {
             "claude-code": "claude",
-            "gemini-cli": "gemini",
+            "claudecode": "claude",
         }
-        tool = aliases.get((tool or "").strip().lower(), (tool or "").strip().lower())
+        tool = aliases.get((tool or "").strip().lower(), normalize_acpx_provider_id(tool))
         # openclaw must use raw --agent command in this environment.
         if tool == "openclaw":
             raw = f"openclaw acp --session {shlex.quote(session_key)}"
+            return ["--agent", raw]
+        if tool in acpx_agent_command_names():
+            return [tool]
+        raw = acpx_raw_agent_command(tool)
+        if raw:
             return ["--agent", raw]
         return [tool]
 

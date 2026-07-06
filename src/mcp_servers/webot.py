@@ -27,6 +27,8 @@ import httpx
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
+from harness.git_runtime import GitRuntimeError, create_remote_change_request
+from harness.secret_refs import resolve_secret_env
 from webot.bridge import get_bridge_runtime_payload, issue_bridge_session
 from webot.buddy import apply_buddy_action, serialize_buddy_state
 from webot.claude_code import detect_claude_code_cached, probe_claude_acp, run_claude_cli_prompt
@@ -89,7 +91,7 @@ from webot.subagents import (
 )
 from webot.voice import get_voice_state as get_voice_runtime_state
 from webot.workflow_presets import get_workflow_preset, list_workflow_presets
-from webot.workspace import describe_session_workspace
+from webot.workspace import describe_session_workspace, resolve_session_workspace
 from utils.runtime_paths import ENV_FILE, USER_FILES_DIR
 
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -149,6 +151,9 @@ def _safe_json_loads(value: str | None) -> dict:
     except Exception:
         return {}
     return loaded if isinstance(loaded, dict) else {}
+
+def _json_result(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
 def _extract_result_field(text: str, field_name: str) -> str:
     prefix = f"{field_name}:"
@@ -1575,7 +1580,7 @@ async def configure_claude_keepalive(
         f"session_id: {record.session_id}\n"
         f"enabled: {record.enabled}\n"
         f"window: {record.start_time}-{record.sleep_time} {record.timezone or '(local)'}\n"
-        "说明：ClawCross 只保存和执行安全的一次性 kickoff，不会自动安装系统唤醒/睡眠任务。"
+        "说明：这里保存配置；常驻调度和 LaunchAgent 由 `clawcross claude-keepalive` 显式启用。"
     )
 
 @mcp.tool()
@@ -2505,6 +2510,89 @@ async def ultrareview_status(
     if summary_text:
         lines.append(f"summary:\n{_trim(summary_text, 2200)}")
     return "\n".join(lines)
+
+@mcp.tool()
+async def create_git_change_request(
+    username: str,
+    title: str,
+    body: str = "",
+    session_id: str = "",
+    cwd: str = "",
+    remote: str = "origin",
+    source_branch: str = "",
+    target_branch: str = "",
+    draft: bool = True,
+    token_env: str = "",
+    token_secret_ref: str = "",
+    allow_remote_write: bool = False,
+    dry_run: bool = True,
+) -> str:
+    """
+    Build or create a GitHub/GitLab/Bitbucket/Azure DevOps PR/MR for the current session workspace.
+
+    Defaults to dry-run. A remote write happens only when both allow_remote_write=true
+    and dry_run=false are provided, the git preflight passes, and a token is available.
+    """
+    workspace = resolve_session_workspace(username, session_id, explicit_cwd=cwd)
+    resolved_token = ""
+    resolved_secret_refs: list[str] = []
+    if token_secret_ref:
+        secret_env = resolve_secret_env(
+            user_id=username,
+            secret_refs=[token_secret_ref],
+        )
+        if secret_env.missing_required:
+            return _json_result(
+                {
+                    "ok": False,
+                    "error": f"missing required secret refs: {', '.join(secret_env.missing_required)}",
+                    "resolved_secret_refs": list(secret_env.resolved_ids),
+                }
+            )
+        resolved_secret_refs = list(secret_env.resolved_ids)
+        if secret_env.env:
+            env_name, resolved_token = next(iter(secret_env.env.items()))
+            token_env = token_env or env_name
+    try:
+        result = create_remote_change_request(
+            str(workspace.cwd),
+            title=title,
+            body=body,
+            remote=remote,
+            source_branch=source_branch,
+            target_branch=target_branch,
+            draft=draft,
+            token=resolved_token,
+            token_env=token_env,
+            allow_remote_write=allow_remote_write,
+            dry_run=dry_run,
+        )
+    except GitRuntimeError as exc:
+        return _json_result(
+            {
+                "ok": False,
+                "error": str(exc),
+                "workspace": {
+                    "cwd": str(workspace.cwd),
+                    "root": str(workspace.root),
+                    "mode": workspace.mode,
+                    "remote": workspace.remote,
+                },
+            }
+        )
+    return _json_result(
+        {
+            "ok": bool(result.get("ok")),
+            "workspace": {
+                "cwd": str(workspace.cwd),
+                "root": str(workspace.root),
+                "mode": workspace.mode,
+                "remote": workspace.remote,
+            },
+            "resolved_secret_refs": resolved_secret_refs,
+            "result": result,
+        }
+    )
 
 if __name__ == "__main__":
     mcp.run()

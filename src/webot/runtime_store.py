@@ -407,7 +407,7 @@ def _connect(db_path: str | os.PathLike | None = None) -> sqlite3.Connection:
             weekdays TEXT NOT NULL DEFAULT 'MTWRFSU',
             use_caffeinate INTEGER NOT NULL DEFAULT 0,
             force_sleep_at_quiet_hours INTEGER NOT NULL DEFAULT 0,
-            monitor_command TEXT NOT NULL DEFAULT 'claude-monitor --clear',
+            monitor_command TEXT NOT NULL DEFAULT 'claude-monitor --once --output json --no-header --no-emoji --clear',
             timeout_seconds INTEGER NOT NULL DEFAULT 90,
             next_run_at TEXT NOT NULL DEFAULT '',
             last_run_at TEXT NOT NULL DEFAULT '',
@@ -2377,7 +2377,7 @@ def _default_claude_keepalive(user_id: str, session_id: str) -> ClaudeKeepaliveR
         weekdays="MTWRFSU",
         use_caffeinate=False,
         force_sleep_at_quiet_hours=False,
-        monitor_command="claude-monitor --clear",
+        monitor_command="claude-monitor --once --output json --no-header --no-emoji --clear",
         timeout_seconds=90,
         next_run_at="",
         last_run_at="",
@@ -2407,6 +2407,23 @@ def get_claude_keepalive_state(
     return _row_to_claude_keepalive(row) or _default_claude_keepalive(user_id, session_id or "default")
 
 
+def list_claude_keepalive_states(
+    *,
+    enabled_only: bool = False,
+    db_path: str | os.PathLike | None = None,
+) -> list[ClaudeKeepaliveRecord]:
+    query = "SELECT * FROM webot_claude_keepalive"
+    params: tuple[Any, ...] = ()
+    if enabled_only:
+        query += " WHERE enabled = ?"
+        params = (1,)
+    query += " ORDER BY user_id, session_id"
+    with _connect(db_path) as conn:
+        rows = conn.execute(query, params).fetchall()
+    records = [_row_to_claude_keepalive(row) for row in rows]
+    return [record for record in records if record is not None]
+
+
 def save_claude_keepalive_state(
     user_id: str,
     session_id: str,
@@ -2421,7 +2438,7 @@ def save_claude_keepalive_state(
     weekdays: str = "MTWRFSU",
     use_caffeinate: bool = False,
     force_sleep_at_quiet_hours: bool = False,
-    monitor_command: str = "claude-monitor --clear",
+    monitor_command: str = "claude-monitor --once --output json --no-header --no-emoji --clear",
     timeout_seconds: int = 90,
     next_run_at: str = "",
     last_run_at: str = "",
@@ -2447,7 +2464,7 @@ def save_claude_keepalive_state(
         weekdays=(weekdays or existing.weekdays or "MTWRFSU").strip().upper() or "MTWRFSU",
         use_caffeinate=bool(use_caffeinate),
         force_sleep_at_quiet_hours=bool(force_sleep_at_quiet_hours),
-        monitor_command=(monitor_command or existing.monitor_command or "claude-monitor --clear").strip(),
+        monitor_command=(monitor_command or existing.monitor_command or "claude-monitor --once --output json --no-header --no-emoji --clear").strip(),
         timeout_seconds=max(10, min(int(timeout_seconds or existing.timeout_seconds or 90), 600)),
         next_run_at=next_run_at if next_run_at is not None else existing.next_run_at,
         last_run_at=last_run_at if last_run_at is not None else existing.last_run_at,

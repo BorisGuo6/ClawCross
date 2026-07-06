@@ -92,6 +92,7 @@ _TOOL_ACCESS_MODES: dict[str, ToolAccessMode] = {
     "send_private_cli": ToolAccessMode.WRITE,
     "enter_plan_mode": ToolAccessMode.WRITE,
     "exit_plan_mode": ToolAccessMode.WRITE,
+    "create_git_change_request": ToolAccessMode.WRITE,
     "skill_manage": ToolAccessMode.WRITE,
     "skill_evolution_apply": ToolAccessMode.WRITE,
     "manage_personality": ToolAccessMode.WRITE,
