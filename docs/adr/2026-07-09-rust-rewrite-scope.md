@@ -72,4 +72,5 @@ Accepted.
 
 - [COMPUTED] `./.venv/bin/python scripts/clawcross.py platforms --coverage` reported `covered=48 requested=48 missing=0 not_ready=0` on 2026-07-09.
 - [COMPUTED] Targeted runtime/harness tests passed after fixing FastAPI test-stub isolation: `104 passed, 2 subtests passed`.
+- [COMPUTED] Full ClawCross test suite passed after the background-command output grace fix: `900 passed, 38 subtests passed`.
 - [COMPUTED] CCometixLine was cloned from `https://github.com/Haleclipse/CCometixLine.git` at `master` with latest local commit `a73b166`.
