@@ -52,6 +52,17 @@ If the issue is model detection or provider-specific behavior, inspect:
 - `src/services/llm_factory.py`
 - `src/api/ops_service.py`
 
+## CLI Utilities
+
+For repo-local command-line behavior, inspect these first:
+
+| Path                          | Purpose                                                                           |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| `scripts/clawcross.py`        | Codex-style shell, platform commands, and repo-local `clawcross` parser           |
+| `clawcross_cli/main.py`       | lightweight npm-wrapper entrypoint                                                |
+| `clawcross_cli/statusline.py` | CCometixLine-compatible Claude Code statusline renderer and Rust target contracts |
+| `docs/clawcross-shell.md`     | shell and statusline usage examples                                               |
+
 ## Runtime Entry Points
 
 These are the main services Clawcross runs:

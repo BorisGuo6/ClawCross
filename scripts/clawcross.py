@@ -2964,6 +2964,21 @@ def build_parser() -> argparse.ArgumentParser:
     channel = sub.add_parser("channel", help="List / setup chatbot channels (Telegram, Discord, ...)")
     channel.add_argument("args", nargs="*", help="[list|status|show <id>|setup [<id>]|clear <id>]")
 
+    statusline = sub.add_parser("statusline", help="Render a Claude Code compatible statusline from stdin JSON")
+    statusline.add_argument("--theme", choices=("plain", "compact"), default="plain")
+    statusline.add_argument(
+        "--segments",
+        default="model,directory,git,context",
+        help="Comma-separated segment list. Known: model,directory,git,context,cost,session,output-style",
+    )
+    statusline.add_argument("--show-sha", action="store_true", help="Append short git SHA when available")
+    statusline.add_argument("--context-limit", type=int, default=None, help="Override context window size")
+    statusline.add_argument(
+        "--rust-candidates",
+        action="store_true",
+        help="List measured Rust leaf-module candidates instead of reading stdin",
+    )
+
     sync = sub.add_parser("sync", help="Sync WeChat File Transfer Helper links to Notion Reading List")
     sync.add_argument("args", nargs="*", help="[reading-list] [--dry-run] [--no-preflight] [--codex|--local] ...")
 
@@ -3052,6 +3067,22 @@ def main() -> int:
         out = handle_channel_command(list(args.args or []), interactive=True)
         if out:
             print(out)
+        return 0
+    if args.command == "statusline":
+        from clawcross_cli.statusline import handle_statusline_command
+        forwarded = [
+            "--theme",
+            args.theme,
+            "--segments",
+            args.segments,
+        ]
+        if args.show_sha:
+            forwarded.append("--show-sha")
+        if args.context_limit is not None:
+            forwarded.extend(["--context-limit", str(args.context_limit)])
+        if args.rust_candidates:
+            forwarded.append("--rust-candidates")
+        print(handle_statusline_command(forwarded, stdin=sys.stdin))
         return 0
     if args.command == "sync":
         print(_run_reading_list_sync(list(args.args or []), prefix="clawcross sync"))

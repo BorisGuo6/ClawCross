@@ -36,6 +36,28 @@ Use a single prompt without entering the shell:
 ./clawcross run -p codex "review the current diff"
 ```
 
+Render a Claude Code compatible statusline from stdin JSON:
+
+```bash
+./clawcross statusline
+./clawcross statusline --theme compact --show-sha
+./clawcross statusline --rust-candidates
+```
+
+Claude Code `settings.json` example:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/Users/boris/workspace/ClawCross/clawcross statusline --theme compact",
+    "padding": 0
+  }
+}
+```
+
+The statusline command ports the CCometixLine-compatible core behavior: it reads Claude Code statusLine JSON, renders model, directory, Git state, and transcript context-window usage, and can optionally include cost, session, or output-style segments through `--segments`.
+
 Upgrade the globally installed npm package:
 
 ```bash

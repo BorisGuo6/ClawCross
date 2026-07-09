@@ -16,6 +16,8 @@ Accepted.
 - `src/ui/*`: `ratatui`/`crossterm` configuration UI.
 - `src/utils/claude_code_patcher.rs`: JavaScript AST patching for Claude Code CLI behavior.
 
+[COMPUTED] ClawCross now implements the portable CCometixLine statusline core in `clawcross_cli/statusline.py`: Claude Code stdin JSON parsing, model/directory/Git/context-window segments, optional cost/session/output-style segments, and a `--rust-candidates` surface.
+
 [COMPUTED] CCometixLine does not implement the ClawCross surfaces that dominate ClawCross complexity: Flask/FastAPI services, browser runtime UI, OASIS workflows, GraphRAG memory, Teams, WeBot subagents, MCP servers, ACPX provider harness, runner tunnels, workspace lifecycle, bot integrations, TinyFish, or dashboard/task sync.
 
 [INFERRED] Rust is appropriate for ClawCross only at measured hot-path boundaries, not as a whole-application rewrite target.
@@ -25,7 +27,7 @@ Accepted.
 | Area                      | CCometixLine evidence                                                                                  | ClawCross evidence                                                                                                                         | Rust rewrite decision                                                                                       |
 | ------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
 | Process entrypoint        | [COMPUTED] Single Rust binary reads CLI flags or Claude Code stdin JSON.                               | [COMPUTED] Multi-service Python/JS app: `src/mainagent.py`, `src/front.py`, `oasis/server.py`, `scripts/launcher.py`.                      | [INFERRED] Do not rewrite wholesale; service orchestration is I/O-bound and already split by process.       |
-| Statusline rendering      | [COMPUTED] `StatusLineGenerator` renders ANSI segments and TUI preview lines.                          | [COMPUTED] ClawCross has browser panels and CLI shell surfaces, but no equivalent Rust statusline core.                                    | [INFERRED] Candidate Rust leaf module if ClawCross adds high-frequency terminal statusline rendering.       |
+| Statusline rendering      | [COMPUTED] `StatusLineGenerator` renders ANSI segments and TUI preview lines.                          | [COMPUTED] `clawcross_cli/statusline.py` now provides the Python golden contract behind `clawcross statusline`.                            | [INFERRED] Candidate Rust leaf module after profiling or if shell startup/render latency matters.           |
 | Git state                 | [COMPUTED] `GitSegment` shells out to `git --no-optional-locks` for branch, status, ahead/behind, SHA. | [COMPUTED] ClawCross Git logic lives in `src/harness/git_runtime.py` and conversation/workspace APIs.                                      | [INFERRED] Candidate only if profiling shows Git polling latency in harness boards or CLI.                  |
 | Transcript/token scanning | [COMPUTED] `ContextWindowSegment` scans JSONL transcript files and normalizes usage.                   | [COMPUTED] ClawCross context and runtime stores live in `src/webot/context.py`, `src/webot/runtime_store.py`, and SQLite-backed histories. | [INFERRED] Candidate for Rust if large transcript scans become CPU-bound; keep JSON/SQLite contract stable. |
 | Interactive UI            | [COMPUTED] Terminal TUI uses `ratatui`/`crossterm`.                                                    | [COMPUTED] ClawCross UI is browser-first with Flask proxy routes and frontend JS/CSS.                                                      | [INFERRED] No full Rust rewrite; browser UI should stay web-native.                                         |
@@ -47,9 +49,9 @@ Accepted.
 
 ## Recommended Rust Targets
 
-1. [INFERRED] `clawcross-statusline`: optional CLI/statusline renderer inspired by CCometixLine if ClawCross needs a terminal-native runtime summary.
+1. [INFERRED] `clawcross-statusline`: replace the Python statusline renderer with a small Rust stdin-JSON to stdout-line binary while preserving `test/test_statusline.py` fixtures.
 2. [INFERRED] `clawcross-transcript-scan`: JSONL transcript/context scanner for large histories if profiling proves Python parsing is hot.
-3. [INFERRED] `clawcross-git-probe`: batch Git status/branch/ahead-behind probe for harness dashboards if frequent polling becomes slow.
+3. [INFERRED] `clawcross-git-probe`: batch Git status/branch/ahead-behind probe for statusline and harness dashboards if frequent polling becomes slow.
 4. [INFERRED] `clawcross-frame-codec`: runner tunnel/event-stream frame validation if signed tunnel parsing becomes a CPU or safety bottleneck.
 
 ## Non-Targets
@@ -67,6 +69,14 @@ Accepted.
 - [COMPUTED] Golden input/output fixtures.
 - [COMPUTED] Python fallback or explicit fail-closed behavior.
 - [COMPUTED] CI coverage through repo-local validation commands.
+
+## Statusline Contract Added From CCometixLine
+
+- [COMPUTED] Command: `clawcross statusline [--theme plain|compact] [--segments ...] [--show-sha] [--context-limit N]`.
+- [COMPUTED] Input: Claude Code statusLine JSON on stdin with `model`, `workspace.current_dir`, `transcript_path`, optional `cost`, and optional `output_style`.
+- [COMPUTED] Output: one ASCII statusline on stdout.
+- [COMPUTED] Default segments match the useful CCometixLine core: model, directory, Git state, and context-window usage.
+- [COMPUTED] Non-adopted CCometixLine surfaces: terminal TUI configuration, theme editor, auto-updater, credentials helpers, and Claude Code patcher.
 
 ## Verification Snapshot
 

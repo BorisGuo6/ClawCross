@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ClawCross CLI entrypoint — model, team, workflow, skill, cron.
+ClawCross CLI entrypoint - model, team, workflow, skill, cron.
 
 Invoked by ``scripts/clawcross`` bash wrapper (or directly via
 ``python3 -m clawcross_cli.main``).
@@ -11,6 +11,7 @@ Subcommands:
   workflow [show <name> | run <name> team <T> question <Q>]
   skill [<agent>]
   cron [<team>]
+  statusline [--theme plain|compact]
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from clawcross_cli.model_cmd import handle_model_command
 
 
 def usage() -> None:
-    print("Usage: clawcross <model|team|workflow|skill|cron> [...]")
+    print("Usage: clawcross <model|team|workflow|skill|cron|statusline> [...]")
     print()
     print("  model                       interactive picker / list")
     print("  model list                  list configured profiles")
@@ -41,6 +42,9 @@ def usage() -> None:
     print("  channel setup [<id>]        guided channel setup (writes <ID>_BOTS in .env)")
     print("  channel show <id>           show channel JSON entries currently in .env")
     print("  channel clear <id>          drop the env_key for a channel")
+    print("  statusline                  render Claude Code statusLine JSON from stdin")
+    print("  statusline --rust-candidates")
+    print("                              list Rust leaf-module rewrite candidates")
     sys.exit(2)
 
 
@@ -79,6 +83,11 @@ def main() -> None:
     elif cmd == "channel":
         from clawcross_cli.channel_cmd import handle_channel_command
         out = handle_channel_command(rest, interactive=True)
+        if out:
+            print(out)
+    elif cmd == "statusline":
+        from clawcross_cli.statusline import handle_statusline_command
+        out = handle_statusline_command(rest, stdin=sys.stdin)
         if out:
             print(out)
     else:
