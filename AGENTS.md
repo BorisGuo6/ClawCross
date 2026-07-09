@@ -69,15 +69,18 @@ CodeGraph MCP/CLI tools for code exploration before grep/read. Never run
 **Do NOT load all docs by default.** Follow this 3-layer protocol:
 
 **Layer 0 — This file (AGENTS.md)**
+
 - Behavior rules and deny invariants
 - Task Router: which doc to open for the current task
 - Repository indexing pointer
 
 **Layer 1 — Task-specific docs**
+
 - Install / configure / debug → [`SKILL.md`](./SKILL.md)
 - Find the right doc for any other task → [`docs/index.md`](./docs/index.md)
 
 **Layer 2 — Deep-dive references (open only when needed)**
+
 - Codebase map → [`docs/repo-index.md`](./docs/repo-index.md)
 - Topic docs under `docs/*.md` (CLI, OASIS, Teams, OpenClaw, etc.)
 
@@ -87,22 +90,23 @@ Use [`README.md`](./README.md) for product overview and user-facing positioning,
 
 Read only the docs relevant to the current task:
 
-| Task | Read First | Then Read |
-|---|---|---|
-| Install / configure / start | [`SKILL.md`](./SKILL.md) | [`docs/ports.md`](./docs/ports.md) if ports matter |
-| Understand what Clawcross is | [`docs/overview.md`](./docs/overview.md) | [`README.md`](./README.md) |
-| Build a Team / use ClawCross Creator | [`docs/team-creator.md`](./docs/team-creator.md) | [`docs/build_team.md`](./docs/build_team.md) |
-| OASIS / Town Mode / GraphRAG | [`docs/oasis-reference.md`](./docs/oasis-reference.md) | [`docs/create_workflow.md`](./docs/create_workflow.md) |
-| Runtime architecture / auth | [`docs/runtime-reference.md`](./docs/runtime-reference.md) | [`docs/ports.md`](./docs/ports.md) |
-| CLI commands | [`docs/cli.md`](./docs/cli.md) | `uv run scripts/cli.py <cmd> --help` |
-| Workflow YAML | [`docs/create_workflow.md`](./docs/create_workflow.md) | [`docs/example_team.md`](./docs/example_team.md) |
-| OpenClaw integration | [`docs/openclaw-commands.md`](./docs/openclaw-commands.md) | [`docs/build_team.md`](./docs/build_team.md) |
-| ACP / acpx | [`docs/runtime-reference.md`](./docs/runtime-reference.md) | [`docs/oasis-reference.md`](./docs/oasis-reference.md) |
-| TinyFish internet search | [`docs/tinyfish-monitor.md`](./docs/tinyfish-monitor.md) | [`docs/runtime-reference.md`](./docs/runtime-reference.md) |
-| Uploaded files / MarkItDown preprocessing | [`docs/upload-file-preprocessing.md`](./docs/upload-file-preprocessing.md) | [`docs/cli.md`](./docs/cli.md), [`docs/repo-index.md`](./docs/repo-index.md) |
-| AI PPT / slide-deck skill workflows | [`docs/presentation-skills.md`](./docs/presentation-skills.md) | [`docs/cli.md`](./docs/cli.md) |
-| IdeaCheck / alphaXiv prior-art / idea novelty checks | [`docs/ideacheck.md`](./docs/ideacheck.md) | [`docs/cli.md`](./docs/cli.md), [`docs/repo-index.md`](./docs/repo-index.md) |
-| Debug ports / proxies | [`docs/ports.md`](./docs/ports.md) | [`docs/repo-index.md`](./docs/repo-index.md) |
+| Task                                                 | Read First                                                                                 | Then Read                                                                                                                |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Install / configure / start                          | [`SKILL.md`](./SKILL.md)                                                                   | [`docs/ports.md`](./docs/ports.md) if ports matter                                                                       |
+| Understand what Clawcross is                         | [`docs/overview.md`](./docs/overview.md)                                                   | [`README.md`](./README.md)                                                                                               |
+| Build a Team / use ClawCross Creator                 | [`docs/team-creator.md`](./docs/team-creator.md)                                           | [`docs/build_team.md`](./docs/build_team.md)                                                                             |
+| OASIS / Town Mode / GraphRAG                         | [`docs/oasis-reference.md`](./docs/oasis-reference.md)                                     | [`docs/create_workflow.md`](./docs/create_workflow.md)                                                                   |
+| Runtime architecture / auth                          | [`docs/runtime-reference.md`](./docs/runtime-reference.md)                                 | [`docs/ports.md`](./docs/ports.md)                                                                                       |
+| Rust rewrite / performance boundary decisions        | [`docs/adr/2026-07-09-rust-rewrite-scope.md`](./docs/adr/2026-07-09-rust-rewrite-scope.md) | [`docs/webot-claude-gap-analysis.md`](./docs/webot-claude-gap-analysis.md), [`docs/repo-index.md`](./docs/repo-index.md) |
+| CLI commands                                         | [`docs/cli.md`](./docs/cli.md)                                                             | `uv run scripts/cli.py <cmd> --help`                                                                                     |
+| Workflow YAML                                        | [`docs/create_workflow.md`](./docs/create_workflow.md)                                     | [`docs/example_team.md`](./docs/example_team.md)                                                                         |
+| OpenClaw integration                                 | [`docs/openclaw-commands.md`](./docs/openclaw-commands.md)                                 | [`docs/build_team.md`](./docs/build_team.md)                                                                             |
+| ACP / acpx                                           | [`docs/runtime-reference.md`](./docs/runtime-reference.md)                                 | [`docs/oasis-reference.md`](./docs/oasis-reference.md)                                                                   |
+| TinyFish internet search                             | [`docs/tinyfish-monitor.md`](./docs/tinyfish-monitor.md)                                   | [`docs/runtime-reference.md`](./docs/runtime-reference.md)                                                               |
+| Uploaded files / MarkItDown preprocessing            | [`docs/upload-file-preprocessing.md`](./docs/upload-file-preprocessing.md)                 | [`docs/cli.md`](./docs/cli.md), [`docs/repo-index.md`](./docs/repo-index.md)                                             |
+| AI PPT / slide-deck skill workflows                  | [`docs/presentation-skills.md`](./docs/presentation-skills.md)                             | [`docs/cli.md`](./docs/cli.md)                                                                                           |
+| IdeaCheck / alphaXiv prior-art / idea novelty checks | [`docs/ideacheck.md`](./docs/ideacheck.md)                                                 | [`docs/cli.md`](./docs/cli.md), [`docs/repo-index.md`](./docs/repo-index.md)                                             |
+| Debug ports / proxies                                | [`docs/ports.md`](./docs/ports.md)                                                         | [`docs/repo-index.md`](./docs/repo-index.md)                                                                             |
 
 ## Repository Indexing
 

@@ -11,21 +11,22 @@ Use this file when an agent needs to **index the repo before reading code**. It 
 
 ## Top-Level Layout
 
-| Path                 | What Lives Here                                          |
-| -------------------- | -------------------------------------------------------- |
-| `SKILL.md`           | Agent entrypoint and task router                         |
-| `README.md`          | Product overview                                         |
-| `docs/`              | Task docs, maintainer docs, repo index                   |
-| `selfskill/scripts/` | Preferred install / configure / run entrypoints          |
-| `scripts/`           | Legacy setup/start helpers and launcher pieces           |
-| `tools/`             | build helpers and manual utilities                       |
-| `src/`               | Main backend, frontend proxy, MCP tools, frontend assets |
-| `oasis/`             | OASIS engine and OpenClaw routes                         |
-| `chatbot/`           | Telegram / QQ bot integrations                           |
-| `config/`            | `.env`, TinyFish target files, requirements, users       |
-| `data/`              | runtime DBs, prompts, user files, workflow files         |
-| `test/`              | automated Python, Node, and browser smoke tests          |
-| `visual/`            | standalone visual orchestrator app                       |
+| Path                 | What Lives Here                                           |
+| -------------------- | --------------------------------------------------------- |
+| `SKILL.md`           | Agent entrypoint and task router                          |
+| `README.md`          | Product overview                                          |
+| `docs/`              | Task docs, maintainer docs, repo index                    |
+| `docs/adr/`          | Architecture decisions, including Rust rewrite boundaries |
+| `selfskill/scripts/` | Preferred install / configure / run entrypoints           |
+| `scripts/`           | Legacy setup/start helpers and launcher pieces            |
+| `tools/`             | build helpers and manual utilities                        |
+| `src/`               | Main backend, frontend proxy, MCP tools, frontend assets  |
+| `oasis/`             | OASIS engine and OpenClaw routes                          |
+| `chatbot/`           | Telegram / QQ bot integrations                            |
+| `config/`            | `.env`, TinyFish target files, requirements, users        |
+| `data/`              | runtime DBs, prompts, user files, workflow files          |
+| `test/`              | automated Python, Node, and browser smoke tests           |
+| `visual/`            | standalone visual orchestrator app                        |
 
 ## Install and Configuration
 
@@ -364,6 +365,12 @@ When changing code, check the nearest validation surface:
 | `python -m py_compile <file>`                          | quick syntax check for touched Python files                                      |
 | `node --check frontend/js/creator.js`                  | quick ClawCross Creator syntax check                                             |
 | `node --check frontend/js/main.js`                     | quick JS syntax check                                                            |
+
+## Architecture Decisions
+
+| Path                                        | Purpose                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `docs/adr/2026-07-09-rust-rewrite-scope.md` | CCometixLine comparison, Rust rewrite non-goals, and targeted Rust leaf-module policy |
 
 ## Task-to-File Lookup
 

@@ -150,6 +150,8 @@ MAX_OUTPUT_LENGTH = int(os.getenv("MAX_OUTPUT_LENGTH", "8000"))
 MAX_CAPTURE_LENGTH = int(os.getenv("MAX_CAPTURE_LENGTH", str(max(MAX_OUTPUT_LENGTH, 20000))))
 DEFAULT_BACKGROUND_READ_CHARS = 12000
 MAX_BACKGROUND_READ_CHARS = 50000
+BACKGROUND_OUTPUT_GRACE_SECONDS = 1.0
+BACKGROUND_OUTPUT_POLL_SECONDS = 0.05
 _BACKGROUND_JOBS: dict[str, "BackgroundJob"] = {}
 _DETACHED_RUNNERS: list[subprocess.Popen] = []
 
@@ -303,6 +305,13 @@ def _resolve_background_job(job_id: str, username: str = "", session_id: str = "
     if job is None:
         return None
     return _refresh_background_job(job)
+
+
+def _read_background_output_slice(path: str, offset: int, limit: int) -> tuple[str, int]:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        handle.seek(offset)
+        content = handle.read(limit)
+        return content, handle.tell()
 
 
 def _write_runner_script(jobs_dir: Path) -> Path:
@@ -1093,10 +1102,12 @@ async def read_background_command_output(
     safe_offset = max(0, int(offset or 0))
     safe_limit = _bounded_int(limit, DEFAULT_BACKGROUND_READ_CHARS, 256, MAX_BACKGROUND_READ_CHARS)
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as handle:
-            handle.seek(safe_offset)
-            content = handle.read(safe_limit)
-            next_offset = handle.tell()
+        deadline = time.monotonic() + BACKGROUND_OUTPUT_GRACE_SECONDS
+        content, next_offset = _read_background_output_slice(path, safe_offset, safe_limit)
+        while not content and job.status == "running" and time.monotonic() < deadline:
+            await asyncio.sleep(BACKGROUND_OUTPUT_POLL_SECONDS)
+            job = _resolve_background_job(job_id, username=username, session_id=session_id, cwd=cwd) or job
+            content, next_offset = _read_background_output_slice(path, safe_offset, safe_limit)
         if not content:
             return f"📄 {stream_name} 已读到末尾。\n🆔 job_id: {job.job_id}\n📍 offset: {safe_offset}"
         suffix = f"\n➡️ 下一段可用 `offset={next_offset}` 继续读取。"

@@ -10,7 +10,9 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-if "fastapi" not in sys.modules:
+try:
+    from fastapi import HTTPException as _FastAPIHTTPException  # noqa: F401
+except ImportError:
     fastapi_stub = types.ModuleType("fastapi")
 
     class HTTPException(Exception):
